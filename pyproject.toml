@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robonix-client"
+version = "0.1.0"
+description = "Operator-facing Web GUI client for Robonix."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "grpcio>=1.76",
+  "protobuf>=6.31.1",
+  "pydantic>=2.8",
+  "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+audio = [
+  "sounddevice>=0.4.6",
+]
+
+[project.scripts]
+robonix-client = "robonix_client.cli:main"
+robonix-audio-bridge = "robonix_client.audio_bridge.server_web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+robonix_client = [
+  "static/*.html",
+  "static/*.css",
+  "static/*.js",
+  "proto/*.py",
+  "audio_bridge/*.py",
+  "audio_bridge/requirements.txt",
+]
+

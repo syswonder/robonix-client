@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Robonix Client</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="nav-rail">
+        <div class="brand">Robonix Client</div>
+        <nav class="nav-list" aria-label="Workspace">
+          <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
+          <button class="nav-item" type="button" data-page="voice"><span>Voice</span></button>
+          <button class="nav-item" type="button" data-page="vision"><span>Vision</span></button>
+          <button class="nav-item" type="button" data-page="rtdl"><span>RTDL</span></button>
+          <button class="nav-item" type="button" data-page="plan"><span>Plan</span></button>
+          <button class="nav-item" type="button" data-page="scene"><span>Scene</span></button>
+          <button class="nav-item" type="button" data-page="robot"><span>Robot</span></button>
+          <button class="nav-item" type="button" data-page="devices"><span>Devices</span></button>
+          <button class="nav-item" type="button" data-page="logs"><span>Logs</span></button>
+          <button class="nav-item" type="button" data-page="settings"><span>Settings</span></button>
+        </nav>
+        <div class="operator-card">
+          <div class="operator-avatar">OP</div>
+          <div>
+            <strong>Operator</strong>
+            <span id="operatorId">local</span>
+          </div>
+        </div>
+        <div class="version">v2.4.1</div>
+      </aside>
+
+      <main class="workspace">
+        <header class="command-bar">
+          <div class="select-field wide">
+            <span>Session</span>
+            <button type="button" id="newSession">Morning Ops</button>
+          </div>
+          <label class="select-field endpoint">
+            <span>Atlas</span>
+            <input id="atlasEndpoint" autocomplete="off" />
+          </label>
+          <label class="select-field">
+            <span>Robot</span>
+            <input id="userId" autocomplete="off" placeholder="voice:operator" />
+          </label>
+          <button class="status-chip" id="refreshSystem" type="button">
+            <span class="dot"></span>
+            <span id="connectionState">offline</span>
+          </button>
+          <div class="wake-word">
+            <span>Wake Word</span>
+            <button class="toggle-button active" id="voiceButton" type="button">ON</button>
+          </div>
+          <button class="danger-button" type="button" id="endSession">End Session</button>
+          <button class="icon-button" type="button" title="Settings" data-page-link="settings">Settings</button>
+        </header>
+
+        <section class="page dashboard-page active" data-page-panel="dashboard">
+          <section class="dashboard-grid">
+            <section class="panel conversation-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Conversation History</h2>
+                <span id="promptTitle">What should Robonix do?</span>
+              </div>
+              <div class="panel-actions">
+                <button class="ghost-button" id="renameSession" type="button">Rename</button>
+                <button class="ghost-button" id="clearHistory" type="button">Clear</button>
+              </div>
+            </div>
+            <div class="chat-body">
+              <aside class="conversation-history" id="historyList"></aside>
+              <div class="messages" id="messages"></div>
+            </div>
+            <form class="composer" id="composer">
+              <div class="attachment-strip" id="attachmentStrip"></div>
+              <div class="composer-row">
+                <button class="tool-button" type="button" id="attachButton" title="Attach image">Attach</button>
+                <textarea id="taskInput" rows="1" placeholder="Type a message..."></textarea>
+                <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice session">Voice</button>
+                <button class="send-button" type="submit" id="sendButton" title="Send task">Send</button>
+              </div>
+              <input id="imageInput" type="file" accept="image/*" multiple hidden />
+            </form>
+            </section>
+
+            <section class="panel robot-panel">
+              <div class="panel-header">
+                <h2>Robot State</h2>
+                <button class="ghost-button" type="button" data-page-link="robot">More</button>
+              </div>
+              <div class="robot-content">
+                <div class="robot-states" data-robot-state-list></div>
+                <div class="robot-figure" aria-label="Robot visual">
+                  <div class="robot-scene">
+                    <div class="robot-cube head"><span></span></div>
+                    <div class="robot-cube chest"></div>
+                    <div class="robot-cube arm left"></div>
+                    <div class="robot-cube arm right"></div>
+                    <div class="robot-cube base"></div>
+                    <div class="nav-vector"></div>
+                  </div>
+                  <div class="robot-telemetry">
+                    <strong data-robot-mode>Ready</strong>
+                    <span>Atlas-backed readiness; body telemetry mocked.</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel trace-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Plan Trace</h2>
+                  <span data-event-summary>0</span>
+                </div>
+                <span data-current-task-label>Current Task: idle</span>
+              </div>
+              <div class="event-list" data-event-list></div>
+              <div class="rtdl-snapshot">
+                <div class="snapshot-header">
+                  <strong>RTDL Snapshot</strong>
+                  <span data-plan-summary>waiting for real plan</span>
+                </div>
+                <div class="snapshot-tree" data-plan-tree="compact"></div>
+              </div>
+            </section>
+
+            <section class="bottom-grid">
+              <section class="panel scene-panel">
+                <div class="panel-header compact">
+                  <h2>Scene State</h2>
+                  <span>2D Occupancy Map</span>
+                </div>
+                <div class="map-stage">
+                  <div class="map-grid"></div>
+                  <svg viewBox="0 0 240 160" aria-hidden="true">
+                    <path d="M40 120 L86 92 L124 105 L164 70 L204 38" />
+                    <circle cx="204" cy="38" r="6" />
+                    <polygon points="82,124 94,98 106,124" />
+                  </svg>
+                </div>
+              </section>
+
+              <section class="panel camera-panel">
+                <div class="panel-header compact">
+                  <h2>Camera (front_left)</h2>
+                  <span class="live-dot">Live</span>
+                </div>
+                <div class="camera-feed" data-camera-feed></div>
+              </section>
+
+              <section class="panel objects-panel">
+                <div class="panel-header compact">
+                  <h2>Detected Objects</h2>
+                  <span>mock until vision API lands</span>
+                </div>
+                <div class="object-table" data-object-table></div>
+              </section>
+
+              <section class="panel target-panel">
+                <div class="panel-header compact">
+                  <h2>Target / Goal</h2>
+                  <span>Selected Object</span>
+                </div>
+                <div class="goal-preview" data-goal-preview></div>
+              </section>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="voice">
+          <div class="page-heading">
+            <h1>Voice Console</h1>
+            <span>Voice session, speaker test, bridge health, and voiceprint enrollment.</span>
+          </div>
+          <section class="page-grid voice-grid">
+            <section class="panel audio-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Audio Session</h2>
+                  <span id="voiceState">ready</span>
+                </div>
+                <button class="button" type="button" data-page-action="voice-start">Start voice</button>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Record sec</span>
+                  <input id="recordSeconds" type="number" min="0" step="1" />
+                </label>
+                <label class="field">
+                  <span>Language</span>
+                  <input id="language" autocomplete="off" placeholder="auto" />
+                </label>
+                <label class="toggle">
+                  <input id="ttsEnabled" type="checkbox" />
+                  <span>TTS playback</span>
+                </label>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Mic node</span>
+                  <input id="micNodeId" autocomplete="off" placeholder="auto" />
+                </label>
+                <label class="field">
+                  <span>Speaker node</span>
+                  <input id="speakerNodeId" autocomplete="off" placeholder="auto" />
+                </label>
+              </div>
+              <div class="bridge-actions">
+                <button class="button" id="testSpeaker" type="button">Test speaker</button>
+                <button class="button" id="startBridge" type="button">Start bridge</button>
+                <button class="button" id="checkBridge" type="button">Check bridge</button>
+              </div>
+              <div class="bridge-status" id="bridgeStatus"></div>
+            </section>
+
+            <section class="panel enroll-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Voiceprint Enrollment</h2>
+                  <span id="enrollState">idle</span>
+                </div>
+                <button class="button" id="enrollVoice" type="button">Enroll voice</button>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Voice ID</span>
+                  <input id="enrollUserId" autocomplete="off" placeholder="alice" />
+                </label>
+                <label class="field">
+                  <span>Name</span>
+                  <input id="enrollUserName" autocomplete="off" placeholder="Alice" />
+                </label>
+              </div>
+              <div class="info-block">
+                Enrollment records microphone audio through the configured mic primitive, then calls the real voiceprint enroll contract when available.
+              </div>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="rtdl">
+          <div class="page-heading">
+            <h1>RTDL Execution</h1>
+            <span>Full Pilot plan tree, leaf-call status, provider routing, arguments, and result focus.</span>
+          </div>
+          <section class="panel rtdl-panel full-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Execution Tree</h2>
+                <span data-plan-summary>idle</span>
+              </div>
+              <div class="panel-actions">
+                <button class="ghost-button" type="button">Filter</button>
+              </div>
+            </div>
+            <div class="goal-line" id="goalLine">Goal: waiting for a task.</div>
+            <div class="execution-table">
+              <div class="table-head">
+                <span>Node</span>
+                <span>Type</span>
+                <span>Status</span>
+                <span>Provider / ID</span>
+                <span>Duration</span>
+                <span>Started</span>
+              </div>
+              <div class="plan-tree" data-plan-tree="full"></div>
+            </div>
+            <div class="execution-detail" id="executionDetail">
+              <div class="detail-title">Active operation</div>
+              <div class="detail-grid">
+                <div><span>Provider / ID</span><strong id="activeProvider">-</strong></div>
+                <div><span>Started</span><strong id="activeStarted">-</strong></div>
+                <div><span>Duration</span><strong id="activeDuration">-</strong></div>
+              </div>
+              <pre class="args" id="activeArgs">{}</pre>
+            </div>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="vision">
+          <div class="page-heading">
+            <h1>Vision</h1>
+            <span>Image input boundary and visual task context. Object detection is mocked until the backend surface lands.</span>
+          </div>
+          <section class="page-grid vision-grid">
+            <section class="panel camera-panel large">
+              <div class="panel-header">
+                <h2>Camera / Latest Attachment</h2>
+                <span class="live-dot">Live</span>
+              </div>
+              <div class="camera-feed" data-camera-feed></div>
+            </section>
+            <section class="panel objects-panel">
+              <div class="panel-header">
+                <h2>Detected Objects</h2>
+                <span>mock</span>
+              </div>
+              <div class="object-table" data-object-table></div>
+            </section>
+            <section class="panel target-panel">
+              <div class="panel-header">
+                <h2>Target / Goal</h2>
+                <span>mock</span>
+              </div>
+              <div class="goal-preview" data-goal-preview></div>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="plan">
+          <div class="page-heading">
+            <h1>Plan Trace</h1>
+            <span>Live task timeline built from frontend, Pilot, and Voice events.</span>
+          </div>
+          <section class="panel trace-panel full-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Trace</h2>
+                <span data-event-summary>0</span>
+              </div>
+              <span data-current-task-label>Current Task: idle</span>
+            </div>
+            <div class="event-list" data-event-list></div>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="scene">
+          <div class="page-heading">
+            <h1>Scene</h1>
+            <span>Map, camera context, and target preview. Map content is currently mocked.</span>
+          </div>
+          <section class="page-grid scene-grid">
+            <section class="panel scene-panel large">
+              <div class="panel-header">
+                <h2>2D Occupancy Map</h2>
+                <span>mock</span>
+              </div>
+              <div class="map-stage">
+                <div class="map-grid"></div>
+                <svg viewBox="0 0 240 160" aria-hidden="true">
+                  <path d="M40 120 L86 92 L124 105 L164 70 L204 38" />
+                  <circle cx="204" cy="38" r="6" />
+                  <polygon points="82,124 94,98 106,124" />
+                </svg>
+              </div>
+            </section>
+            <section class="panel target-panel">
+              <div class="panel-header">
+                <h2>Target</h2>
+                <span>mock</span>
+              </div>
+              <div class="goal-preview" data-goal-preview></div>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="robot">
+          <div class="page-heading">
+            <h1>Robot</h1>
+            <span>Robot readiness derived from Atlas and mocked body telemetry.</span>
+          </div>
+          <section class="panel robot-panel full-panel">
+            <div class="panel-header">
+              <h2>Robot State</h2>
+              <span>Atlas-backed readiness, mocked body values</span>
+            </div>
+            <div class="robot-content wide">
+              <div class="robot-states" data-robot-state-list></div>
+              <div class="robot-figure" aria-label="Robot visual">
+                <div class="robot-scene">
+                  <div class="robot-cube head"><span></span></div>
+                  <div class="robot-cube chest"></div>
+                  <div class="robot-cube arm left"></div>
+                  <div class="robot-cube arm right"></div>
+                  <div class="robot-cube base"></div>
+                  <div class="nav-vector"></div>
+                </div>
+                <div class="robot-telemetry">
+                  <strong data-robot-mode>Ready</strong>
+                  <span>Atlas-backed readiness; body telemetry mocked.</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="devices">
+          <div class="page-heading">
+            <h1>Devices</h1>
+            <span>Real Atlas providers and required Robonix contracts.</span>
+          </div>
+          <section class="page-grid devices-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>Runtime Summary</h2>
+                <span id="metricState">offline</span>
+              </div>
+              <div class="metrics-row">
+                <div class="metric"><span>Active</span><strong id="metricActive">0</strong></div>
+                <div class="metric"><span>Errors</span><strong id="metricErrors">0</strong></div>
+              </div>
+              <div class="contract-list" id="contractList"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-header">
+                <h2>Providers</h2>
+                <span>Atlas snapshot</span>
+              </div>
+              <div class="provider-list" id="providerList"></div>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="logs">
+          <div class="page-heading">
+            <h1>Logs</h1>
+            <span>Recent client-side stream events. Full backend logs are not wired yet.</span>
+          </div>
+          <section class="panel trace-panel full-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Recent Events</h2>
+                <span data-event-summary>0</span>
+              </div>
+              <span data-current-task-label>Current Task: idle</span>
+            </div>
+            <div class="event-list" data-event-list></div>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="settings">
+          <div class="page-heading">
+            <h1>Settings</h1>
+            <span>Connection profile and task identity settings saved locally in the browser.</span>
+          </div>
+          <section class="page-grid settings-page-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <h2>Connection</h2>
+                <span>localStorage</span>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Liaison</span>
+                  <input id="liaisonEndpoint" autocomplete="off" placeholder="auto" />
+                </label>
+              </div>
+              <div class="info-block">
+                Atlas and robot identity are pinned in the top command bar so they remain available from every page.
+              </div>
+            </section>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
