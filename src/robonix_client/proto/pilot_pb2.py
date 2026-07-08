@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bpilot.proto\x12\rrobonix.pilot\"\x8b\x01\n\x0b\x42\x61tchResult\x12\x0f\n\x07plan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\r\x12\x34\n\x07results\x18\x04 \x03(\x0b\x32#.robonix.pilot.CapabilityCallResult\x12\x12\n\nany_failed\x18\x05 \x01(\x08\"^\n\x0e\x43\x61pabilityCall\x12\x0f\n\x07\x63\x61ll_id\x18\x01 \x01(\t\x12\x13\n\x0bprovider_id\x18\x02 \x01(\t\x12\x13\n\x0b\x63ontract_id\x18\x03 \x01(\t\x12\x11\n\targs_json\x18\x04 \x01(\t\"\x81\x01\n\x14\x43\x61pabilityCallResult\x12\x0f\n\x07\x63\x61ll_id\x18\x01 \x01(\t\x12\x13\n\x0bprovider_id\x18\x02 \x01(\t\x12\x13\n\x0b\x63ontract_id\x18\x03 \x01(\t\x12\x0f\n\x07success\x18\x04 \x01(\x08\x12\x0e\n\x06output\x18\x05 \x01(\t\x12\r\n\x05\x65rror\x18\x06 \x01(\t\"\xe4\x01\n\nPilotEvent\x12\x12\n\nevent_kind\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x12\n\ntext_chunk\x18\x03 \x01(\t\x12!\n\x04plan\x18\x04 \x01(\x0b\x32\x13.robonix.pilot.Plan\x12\x30\n\x0c\x62\x61tch_result\x18\x05 \x01(\x0b\x32\x1a.robonix.pilot.BatchResult\x12\x31\n\x06status\x18\x06 \x01(\x0b\x32!.robonix.pilot.SessionStatusEvent\x12\x12\n\nfinal_text\x18\x07 \x01(\t\"v\n\x04Plan\x12\x0f\n\x07plan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\r\x12&\n\x05nodes\x18\x04 \x03(\x0b\x32\x17.robonix.pilot.RtdlNode\x12\x12\n\nroot_index\x18\x05 \x01(\r\"\\\n\x08RtdlNode\x12\x11\n\tnode_kind\x18\x01 \x01(\r\x12\x10\n\x08\x63hildren\x18\x02 \x03(\r\x12+\n\x04\x63\x61ll\x18\x03 \x01(\x0b\x32\x1d.robonix.pilot.CapabilityCall\"[\n\x0bSessionInfo\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\r\x12\x15\n\rcreated_at_ms\x18\x03 \x01(\x04\x12\x12\n\nturn_count\x18\x04 \x01(\r\"H\n\x12SessionStatusEvent\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\r\x12\x0f\n\x07message\x18\x03 \x01(\t\"\x89\x01\n\x04Task\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0e\n\x06source\x18\x03 \x01(\r\x12\x0c\n\x04text\x18\x04 \x01(\t\x12\x12\n\naudio_data\x18\x05 \x01(\x0c\x12\x14\n\x0c\x63ontext_json\x18\x06 \x01(\t\x12\x14\n\x0ctimestamp_ms\x18\x07 \x01(\x04\"7\n\x12SubmitTask_Request\x12!\n\x04task\x18\x01 \x01(\x0b\x32\x13.robonix.pilot.Task\"?\n\x13SubmitTask_Response\x12(\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x19.robonix.pilot.PilotEventb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bpilot.proto\x12\rrobonix.pilot\"\x84\x01\n\x0b\x42\x61tchResult\x12\x0f\n\x07plan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\r\x12-\n\x07results\x18\x04 \x03(\x0b\x32\x1c.robonix.pilot.RtdlNodeState\x12\x12\n\nany_failed\x18\x05 \x01(\x08\"^\n\x0e\x43\x61pabilityCall\x12\x0f\n\x07\x63\x61ll_id\x18\x01 \x01(\t\x12\x13\n\x0bprovider_id\x18\x02 \x01(\t\x12\x13\n\x0b\x63ontract_id\x18\x03 \x01(\t\x12\x11\n\targs_json\x18\x04 \x01(\t\"\x81\x01\n\x14\x43\x61pabilityCallResult\x12\x0f\n\x07\x63\x61ll_id\x18\x01 \x01(\t\x12\x13\n\x0bprovider_id\x18\x02 \x01(\t\x12\x13\n\x0b\x63ontract_id\x18\x03 \x01(\t\x12\x0f\n\x07success\x18\x04 \x01(\x08\x12\x0e\n\x06output\x18\x05 \x01(\t\x12\r\n\x05\x65rror\x18\x06 \x01(\t\"\xc9\x02\n\nPilotEvent\x12\x12\n\nevent_kind\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x12\n\ntext_chunk\x18\x03 \x01(\t\x12!\n\x04plan\x18\x04 \x01(\x0b\x32\x13.robonix.pilot.Plan\x12\x30\n\x0c\x62\x61tch_result\x18\x05 \x01(\x0b\x32\x1a.robonix.pilot.BatchResult\x12\x31\n\x06status\x18\x06 \x01(\x0b\x32!.robonix.pilot.SessionStatusEvent\x12\x12\n\nfinal_text\x18\x07 \x01(\t\x12\x30\n\nnode_state\x18\x08 \x01(\x0b\x32\x1c.robonix.pilot.RtdlNodeState\x12\x31\n\ntask_state\x18\t \x01(\x0b\x32\x1d.robonix.pilot.TaskStateEvent\"v\n\x04Plan\x12\x0f\n\x07plan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\r\n\x05round\x18\x03 \x01(\r\x12&\n\x05nodes\x18\x04 \x03(\x0b\x32\x17.robonix.pilot.RtdlNode\x12\x12\n\nroot_index\x18\x05 \x01(\r\"\x80\x01\n\x08RtdlNode\x12\x11\n\tnode_kind\x18\x01 \x01(\r\x12\x10\n\x08\x63hildren\x18\x02 \x03(\r\x12+\n\x04\x63\x61ll\x18\x03 \x01(\x0b\x32\x1d.robonix.pilot.CapabilityCall\x12\r\n\x05op_id\x18\x04 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x05 \x01(\t\"\xbe\x02\n\rRtdlNodeState\x12\x0f\n\x07plan_id\x18\x01 \x01(\t\x12\x12\n\nnode_index\x18\x02 \x01(\r\x12\x11\n\tnode_kind\x18\x03 \x01(\r\x12\r\n\x05state\x18\x04 \x01(\r\x12\x17\n\x0foperator_detail\x18\x05 \x01(\t\x12\x38\n\x0bleaf_result\x18\x06 \x01(\x0b\x32#.robonix.pilot.CapabilityCallResult\x12\r\n\x05op_id\x18\x07 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x08 \x01(\t\"o\n\x11RtdlNodeStateEnum\x12\x0b\n\x07PENDING\x10\x00\x12\x0b\n\x07RUNNING\x10\x01\x12\r\n\tSUCCEEDED\x10\x02\x12\n\n\x06\x46\x41ILED\x10\x03\x12\x0c\n\x08\x43\x41NCELED\x10\x04\x12\x0b\n\x07TIMEOUT\x10\x05\x12\n\n\x06PAUSED\x10\x06\"[\n\x0bSessionInfo\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\r\x12\x15\n\rcreated_at_ms\x18\x03 \x01(\x04\x12\x12\n\nturn_count\x18\x04 \x01(\r\"H\n\x12SessionStatusEvent\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\r\n\x05state\x18\x02 \x01(\r\x12\x0f\n\x07message\x18\x03 \x01(\t\"\x89\x01\n\x04Task\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0e\n\x06source\x18\x03 \x01(\r\x12\x0c\n\x04text\x18\x04 \x01(\t\x12\x12\n\naudio_data\x18\x05 \x01(\x0c\x12\x14\n\x0c\x63ontext_json\x18\x06 \x01(\t\x12\x14\n\x0ctimestamp_ms\x18\x07 \x01(\x04\"I\n\x0eTaskStateEvent\x12\x0c\n\x04goal\x18\x01 \x01(\t\x12\x19\n\x11success_criterion\x18\x02 \x01(\t\x12\x0e\n\x06status\x18\x03 \x01(\t\"7\n\x12SubmitTask_Request\x12!\n\x04task\x18\x01 \x01(\x0b\x32\x13.robonix.pilot.Task\"?\n\x13SubmitTask_Response\x12(\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x19.robonix.pilot.PilotEventb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,25 +32,31 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'pilot_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_BATCHRESULT']._serialized_start=31
-  _globals['_BATCHRESULT']._serialized_end=170
-  _globals['_CAPABILITYCALL']._serialized_start=172
-  _globals['_CAPABILITYCALL']._serialized_end=266
-  _globals['_CAPABILITYCALLRESULT']._serialized_start=269
-  _globals['_CAPABILITYCALLRESULT']._serialized_end=398
-  _globals['_PILOTEVENT']._serialized_start=401
-  _globals['_PILOTEVENT']._serialized_end=629
-  _globals['_PLAN']._serialized_start=631
-  _globals['_PLAN']._serialized_end=749
-  _globals['_RTDLNODE']._serialized_start=751
-  _globals['_RTDLNODE']._serialized_end=843
-  _globals['_SESSIONINFO']._serialized_start=845
-  _globals['_SESSIONINFO']._serialized_end=936
-  _globals['_SESSIONSTATUSEVENT']._serialized_start=938
-  _globals['_SESSIONSTATUSEVENT']._serialized_end=1010
-  _globals['_TASK']._serialized_start=1013
-  _globals['_TASK']._serialized_end=1150
-  _globals['_SUBMITTASK_REQUEST']._serialized_start=1152
-  _globals['_SUBMITTASK_REQUEST']._serialized_end=1207
-  _globals['_SUBMITTASK_RESPONSE']._serialized_start=1209
-  _globals['_SUBMITTASK_RESPONSE']._serialized_end=1272
+  _globals['_BATCHRESULT']._serialized_end=163
+  _globals['_CAPABILITYCALL']._serialized_start=165
+  _globals['_CAPABILITYCALL']._serialized_end=259
+  _globals['_CAPABILITYCALLRESULT']._serialized_start=262
+  _globals['_CAPABILITYCALLRESULT']._serialized_end=391
+  _globals['_PILOTEVENT']._serialized_start=394
+  _globals['_PILOTEVENT']._serialized_end=723
+  _globals['_PLAN']._serialized_start=725
+  _globals['_PLAN']._serialized_end=843
+  _globals['_RTDLNODE']._serialized_start=846
+  _globals['_RTDLNODE']._serialized_end=974
+  _globals['_RTDLNODESTATE']._serialized_start=977
+  _globals['_RTDLNODESTATE']._serialized_end=1295
+  _globals['_RTDLNODESTATE_RTDLNODESTATEENUM']._serialized_start=1184
+  _globals['_RTDLNODESTATE_RTDLNODESTATEENUM']._serialized_end=1295
+  _globals['_SESSIONINFO']._serialized_start=1297
+  _globals['_SESSIONINFO']._serialized_end=1388
+  _globals['_SESSIONSTATUSEVENT']._serialized_start=1390
+  _globals['_SESSIONSTATUSEVENT']._serialized_end=1462
+  _globals['_TASK']._serialized_start=1465
+  _globals['_TASK']._serialized_end=1602
+  _globals['_TASKSTATEEVENT']._serialized_start=1604
+  _globals['_TASKSTATEEVENT']._serialized_end=1677
+  _globals['_SUBMITTASK_REQUEST']._serialized_start=1679
+  _globals['_SUBMITTASK_REQUEST']._serialized_end=1734
+  _globals['_SUBMITTASK_RESPONSE']._serialized_start=1736
+  _globals['_SUBMITTASK_RESPONSE']._serialized_end=1799
 # @@protoc_insertion_point(module_scope)

@@ -10,6 +10,7 @@ const state = {
   timeline: [],
   plan: null,
   batches: [],
+  nodeStates: {},
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
@@ -25,6 +26,8 @@ const state = {
 };
 
 const DEFAULT_ATLAS_PORT = 50051;
+const AUDIO_LOG_MAX_LINES = 120;
+const AUDIO_LOG_MAX_CHARS = 260;
 
 const mockObjects = [
   { id: 1, label: "table", distance: "2.35", position: "(2.10, -1.24, 0.00)", confidence: "0.96" },
@@ -129,6 +132,7 @@ function loadConversations() {
       timeline: [],
       plan: null,
       batches: [],
+      nodeStates: {},
     }));
   } catch (_) {
     return [];
@@ -347,6 +351,7 @@ function newSession() {
   state.timeline = [];
   state.plan = null;
   state.batches = [];
+  state.nodeStates = {};
   state.activeAgentId = null;
   $("promptTitle").textContent = "What should Robonix do?";
   renderMessages();
@@ -427,8 +432,19 @@ function handlePilotEvent(event) {
     persistCurrentConversation();
   } else if (event.kind === "batch_result" && event.batchResult) {
     state.batches.unshift(event.batchResult);
+    (event.batchResult.results || []).forEach((result) => {
+      if (Number.isFinite(Number(result.nodeIndex))) state.nodeStates[String(result.nodeIndex)] = result;
+    });
     addTimeline(event.batchResult.anyFailed ? "error" : "result", `round ${event.batchResult.round} result`);
     renderPlan();
+    persistCurrentConversation();
+  } else if (event.kind === "node_state" && event.nodeState) {
+    state.nodeStates[String(event.nodeState.nodeIndex)] = event.nodeState;
+    addTimeline(event.nodeState.state === "FAILED" ? "error" : "status", `${event.nodeState.opId || `node ${event.nodeState.nodeIndex}`} ${event.nodeState.state}`);
+    renderPlan();
+    persistCurrentConversation();
+  } else if (event.kind === "task_state" && event.taskState) {
+    addTimeline("status", event.taskState.status || event.taskState.goal || "task update");
     persistCurrentConversation();
   } else if (event.kind === "status" && event.status) {
     addTimeline("status", event.status.message || `state ${event.status.state}`);
@@ -583,13 +599,14 @@ function renderPlan() {
     renderExecutionDetail(null, "PENDING");
     return;
   }
-  const resultByCall = new Map();
+  const nodeStateByIndex = new Map();
+  Object.entries(state.nodeStates || {}).forEach(([index, result]) => nodeStateByIndex.set(Number(index), result));
   state.batches.forEach((batch) => {
-    (batch.results || []).forEach((result) => resultByCall.set(result.callId || result.contractId || result.name, result));
+    (batch.results || []).forEach((result) => nodeStateByIndex.set(Number(result.nodeIndex), result));
   });
   const depths = computeNodeDepths(plan);
-  const runningIndex = pickRunningIndex(plan, resultByCall);
-  const rows = plan.nodes.map((node) => ({ node, status: nodeStatus(node, resultByCall, runningIndex) }));
+  const runningIndex = pickRunningIndex(plan, nodeStateByIndex);
+  const rows = plan.nodes.map((node) => ({ node, status: nodeStatus(node, nodeStateByIndex, runningIndex) }));
   roots.forEach((root) => {
     const compact = root.dataset.planTree === "compact";
     rows.slice(0, compact ? 8 : rows.length).forEach(({ node, status }) => {
@@ -606,7 +623,7 @@ function renderPlan() {
     }
   });
   const activeNode = plan.nodes.find((node) => node.index === runningIndex) || plan.nodes.find((node) => node.call) || plan.nodes[0];
-  renderExecutionDetail(activeNode, nodeStatus(activeNode, resultByCall, runningIndex));
+  renderExecutionDetail(activeNode, nodeStatus(activeNode, nodeStateByIndex, runningIndex), nodeStateByIndex.get(activeNode?.index));
 }
 
 function makePlanRow(node, status, depths, runningIndex) {
@@ -651,25 +668,17 @@ function computeNodeDepths(plan) {
   return depths;
 }
 
-function pickRunningIndex(plan, resultByCall) {
+function pickRunningIndex(plan, nodeStateByIndex) {
   const callable = plan.nodes.filter((node) => node.call);
-  const firstPending = callable.find((node) => !resultForNode(node, resultByCall));
+  const explicitRunning = plan.nodes.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
+  if (explicitRunning) return explicitRunning.index;
+  const firstPending = callable.find((node) => !nodeStateByIndex.has(node.index));
   return firstPending?.index ?? callable.at(-1)?.index ?? plan.rootIndex ?? 0;
 }
 
-function resultForNode(node, resultByCall) {
-  if (!node?.call) return null;
-  return (
-    resultByCall.get(node.call.callId) ||
-    resultByCall.get(node.call.contractId) ||
-    resultByCall.get(node.call.name) ||
-    null
-  );
-}
-
-function nodeStatus(node, resultByCall, runningIndex) {
-  const result = resultForNode(node, resultByCall);
-  if (result) return result.success ? "SUCCESS" : "FAILED";
+function nodeStatus(node, nodeStateByIndex, runningIndex) {
+  const result = nodeStateByIndex.get(node?.index);
+  if (result?.state) return result.state;
   if (node.index === runningIndex) return "RUNNING";
   if (!node.call && (node.children || []).length) {
     if (node.children.some((child) => child === runningIndex)) return "RUNNING";
@@ -690,12 +699,12 @@ function startedForNode(node, status) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function renderExecutionDetail(node, status) {
+function renderExecutionDetail(node, status, nodeState = null) {
   if (!maybe("activeProvider")) return;
   $("activeProvider").textContent = node?.call?.providerId || node?.call?.contractId || "pilot";
   $("activeStarted").textContent = node ? startedForNode(node, status) : "-";
   $("activeDuration").textContent = node ? durationForNode(node, status) : "-";
-  $("activeArgs").textContent = formatArgs(node?.call?.args || { state: status, source: state.plan ? "pilot" : "waiting" });
+  $("activeArgs").textContent = formatArgs(nodeState?.leafResult || node?.call?.args || { state: status, source: state.plan ? "pilot" : "waiting" });
 }
 
 function currentTaskLabel() {
@@ -884,7 +893,7 @@ function latestImageAttachment() {
 }
 
 function persistCurrentConversation(titleHint = "", force = false) {
-  const hasContent = state.sessionTitle || state.messages.length || state.timeline.length || state.plan || state.batches.length;
+  const hasContent = state.sessionTitle || state.messages.length || state.timeline.length || state.plan || state.batches.length || Object.keys(state.nodeStates || {}).length;
   if (!hasContent && !force) return;
   const existing = state.history.find((item) => item.id === state.sessionId);
   const title = state.sessionTitle || existing?.title || titleHint || firstUserMessage() || "Untitled chat";
@@ -897,6 +906,7 @@ function persistCurrentConversation(titleHint = "", force = false) {
     timeline: state.timeline.map((item) => ({ ...item })),
     plan: state.plan,
     batches: state.batches,
+    nodeStates: state.nodeStates,
   };
   state.history = [conversation, ...state.history.filter((item) => item.id !== state.sessionId)].slice(0, 30);
   saveConversations();
@@ -986,6 +996,7 @@ function deleteConversation(sessionId) {
     state.timeline = [];
     state.plan = null;
     state.batches = [];
+    state.nodeStates = {};
     state.activeAgentId = null;
     $("promptTitle").textContent = "What should Robonix do?";
     renderMessages();
@@ -1005,6 +1016,7 @@ function clearHistory() {
   state.timeline = [];
   state.plan = null;
   state.batches = [];
+  state.nodeStates = {};
   state.activeAgentId = null;
   $("promptTitle").textContent = "What should Robonix do?";
   renderMessages();
@@ -1025,6 +1037,7 @@ function openConversation(sessionId) {
   state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
   state.plan = conversation.plan || null;
   state.batches = conversation.batches || [];
+  state.nodeStates = conversation.nodeStates || {};
   state.activeAgentId = null;
   $("promptTitle").textContent = conversation.title || "What should Robonix do?";
   $("taskInput").value = "";
@@ -1189,11 +1202,14 @@ function startAudioLogStream() {
 }
 
 function renderAudioLevel(level) {
-  const clean = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
-  state.audio.levelHistory.push(clean);
+  const raw = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
+  const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
+  state.audio.levelHistory.push(display);
   state.audio.levelHistory = state.audio.levelHistory.slice(-28);
-  if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(clean * 100)}%`;
-  setText("audioLevelText", `${Math.round(clean * 100)}%`);
+  if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
+  const label = `${Math.round(display * 100)}%`;
+  setText("audioLevelText", label);
+  if (maybe("audioLevelText")) $("audioLevelText").title = `raw RMS ${raw.toFixed(4)}`;
   renderAudioBars();
 }
 
@@ -1211,12 +1227,32 @@ function renderAudioBars() {
 function appendAudioLog(line) {
   const root = maybe("audioLog");
   if (!root) return;
+  const text = normalizeAudioLogLine(line);
+  if (!text) return;
   const stamp = new Date().toLocaleTimeString();
-  root.textContent += `[${stamp}] ${line}\n`;
-  const lines = root.textContent.split("\n");
-  if (lines.length > 260) root.textContent = lines.slice(-260).join("\n");
+  const lines = root.textContent.trimEnd() ? root.textContent.trimEnd().split("\n") : [];
+  const next = `[${stamp}] ${text}`;
+  if (lines[lines.length - 1] === next) return;
+  lines.push(next);
+  root.textContent = `${lines.slice(-AUDIO_LOG_MAX_LINES).join("\n")}\n`;
   root.scrollTop = root.scrollHeight;
   setText("audioLogSummary", "Bridge connection log.");
+}
+
+function normalizeAudioLogLine(line) {
+  const text = String(line ?? "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join(" ");
+  if (!text) return "";
+  if (/^[<>]\s+(TEXT|BINARY|PING|PONG|CLOSE)\b/.test(text)) return "";
+  if (/^[=%]\s+/.test(text) && /(connection|keepalive|opcode|frame|close|open)/i.test(text)) return "";
+  if (/websockets\.(client|server|protocol|connection)/i.test(text)) return "";
+  if (/(^|\s)[<>]\s+TEXT\b/.test(text)) return "";
+  if (text.length <= AUDIO_LOG_MAX_CHARS) return text;
+  return `${text.slice(0, AUDIO_LOG_MAX_CHARS)} ... [${text.length} chars]`;
 }
 
 async function enrollVoice() {

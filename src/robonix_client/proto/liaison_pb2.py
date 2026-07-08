@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 import pilot_pb2 as pilot__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rliaison.proto\x12\x0frobonix.liaison\x1a\x0bpilot.proto\"\xce\x01\n\nVoiceEvent\x12\x12\n\nevent_kind\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x0f\n\x07user_id\x18\x04 \x01(\t\x12\x12\n\nconfidence\x18\x05 \x01(\x02\x12(\n\x05pilot\x18\x06 \x01(\x0b\x32\x19.robonix.pilot.PilotEvent\x12\r\n\x05\x65rror\x18\x07 \x01(\t\x12\x16\n\x0estatus_message\x18\x08 \x01(\t\x12\x14\n\x0ctimestamp_ms\x18\t \x01(\x04\"\x90\x02\n\x19StartVoiceSession_Request\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x16\n\x0e\x63lient_user_id\x18\x02 \x01(\t\x12\x16\n\x0erecord_seconds\x18\x03 \x01(\r\x12\x10\n\x08language\x18\x04 \x01(\t\x12\x13\n\x0btts_enabled\x18\x05 \x01(\x08\x12\x13\n\x0bmic_node_id\x18\x06 \x01(\t\x12\x13\n\x0b\x61sr_node_id\x18\x07 \x01(\t\x12\x1a\n\x12voiceprint_node_id\x18\x08 \x01(\t\x12\x13\n\x0btts_node_id\x18\t \x01(\t\x12\x17\n\x0fspeaker_node_id\x18\n \x01(\t\x12\x14\n\x0c\x63ontext_json\x18\x0b \x01(\t\"H\n\x1aStartVoiceSession_Response\x12*\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x1b.robonix.liaison.VoiceEvent\"7\n\x12SubmitTask_Request\x12!\n\x04task\x18\x01 \x01(\x0b\x32\x13.robonix.pilot.Task\"?\n\x13SubmitTask_Response\x12(\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x19.robonix.pilot.PilotEventb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rliaison.proto\x12\x0frobonix.liaison\x1a\x0bpilot.proto\"\x9d\x03\n\nVoiceEvent\x12\x12\n\nevent_kind\x18\x01 \x01(\r\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x0c\n\x04text\x18\x03 \x01(\t\x12\x0f\n\x07user_id\x18\x04 \x01(\t\x12\x12\n\nconfidence\x18\x05 \x01(\x02\x12(\n\x05pilot\x18\x06 \x01(\x0b\x32\x19.robonix.pilot.PilotEvent\x12\r\n\x05\x65rror\x18\x07 \x01(\t\x12\x16\n\x0estatus_message\x18\x08 \x01(\t\x12\x14\n\x0ctimestamp_ms\x18\t \x01(\x04\"\xcc\x01\n\x0eVoiceEventEnum\x12\x13\n\x0fSESSION_STARTED\x10\x00\x12\x15\n\x11RECORDING_STARTED\x10\x01\x12\x12\n\x0eRECORDING_DONE\x10\x02\x12\x0f\n\x0b\x41SR_PARTIAL\x10\x03\x12\r\n\tASR_FINAL\x10\x04\x12\x13\n\x0fUSER_IDENTIFIED\x10\x05\x12\t\n\x05PILOT\x10\x06\x12\x0f\n\x0bTTS_STARTED\x10\x07\x12\x0c\n\x08TTS_DONE\x10\x08\x12\x10\n\x0cSESSION_DONE\x10\t\x12\t\n\x05\x45RROR\x10\n\"\x90\x02\n\x19StartVoiceSession_Request\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x16\n\x0e\x63lient_user_id\x18\x02 \x01(\t\x12\x16\n\x0erecord_seconds\x18\x03 \x01(\r\x12\x10\n\x08language\x18\x04 \x01(\t\x12\x13\n\x0btts_enabled\x18\x05 \x01(\x08\x12\x13\n\x0bmic_node_id\x18\x06 \x01(\t\x12\x13\n\x0b\x61sr_node_id\x18\x07 \x01(\t\x12\x1a\n\x12voiceprint_node_id\x18\x08 \x01(\t\x12\x13\n\x0btts_node_id\x18\t \x01(\t\x12\x17\n\x0fspeaker_node_id\x18\n \x01(\t\x12\x14\n\x0c\x63ontext_json\x18\x0b \x01(\t\"H\n\x1aStartVoiceSession_Response\x12*\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x1b.robonix.liaison.VoiceEvent\"7\n\x12SubmitTask_Request\x12!\n\x04task\x18\x01 \x01(\x0b\x32\x13.robonix.pilot.Task\"?\n\x13SubmitTask_Response\x12(\n\x05\x65vent\x18\x01 \x01(\x0b\x32\x19.robonix.pilot.PilotEventb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,13 +33,15 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'liaison_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_VOICEEVENT']._serialized_start=48
-  _globals['_VOICEEVENT']._serialized_end=254
-  _globals['_STARTVOICESESSION_REQUEST']._serialized_start=257
-  _globals['_STARTVOICESESSION_REQUEST']._serialized_end=529
-  _globals['_STARTVOICESESSION_RESPONSE']._serialized_start=531
-  _globals['_STARTVOICESESSION_RESPONSE']._serialized_end=603
-  _globals['_SUBMITTASK_REQUEST']._serialized_start=605
-  _globals['_SUBMITTASK_REQUEST']._serialized_end=660
-  _globals['_SUBMITTASK_RESPONSE']._serialized_start=662
-  _globals['_SUBMITTASK_RESPONSE']._serialized_end=725
+  _globals['_VOICEEVENT']._serialized_end=461
+  _globals['_VOICEEVENT_VOICEEVENTENUM']._serialized_start=257
+  _globals['_VOICEEVENT_VOICEEVENTENUM']._serialized_end=461
+  _globals['_STARTVOICESESSION_REQUEST']._serialized_start=464
+  _globals['_STARTVOICESESSION_REQUEST']._serialized_end=736
+  _globals['_STARTVOICESESSION_RESPONSE']._serialized_start=738
+  _globals['_STARTVOICESESSION_RESPONSE']._serialized_end=810
+  _globals['_SUBMITTASK_REQUEST']._serialized_start=812
+  _globals['_SUBMITTASK_REQUEST']._serialized_end=867
+  _globals['_SUBMITTASK_RESPONSE']._serialized_start=869
+  _globals['_SUBMITTASK_RESPONSE']._serialized_end=932
 # @@protoc_insertion_point(module_scope)

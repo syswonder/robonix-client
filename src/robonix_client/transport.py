@@ -25,6 +25,7 @@ import voiceprint_pb2  # type: ignore  # noqa: E402
 
 CONSUMER_ID = "robonix-client/gui"
 DEFAULT_ATLAS = "127.0.0.1:50051"
+DEFAULT_ATLAS_PORT = 50051
 DEFAULT_LIAISON_PORT = 50081
 
 CONTRACT_LIAISON_SUBMIT = "robonix/system/liaison/submit"
@@ -44,6 +45,8 @@ PILOT_EVENT_NAMES = {
     2: "batch_result",
     3: "status",
     4: "final_text",
+    5: "node_state",
+    6: "task_state",
 }
 
 VOICE_EVENT_NAMES = {
@@ -64,6 +67,16 @@ NODE_KIND_NAMES = {
     0: "sequence",
     1: "parallel",
     2: "do",
+}
+
+RTDL_NODE_STATE_NAMES = {
+    0: "PENDING",
+    1: "RUNNING",
+    2: "SUCCEEDED",
+    3: "FAILED",
+    4: "CANCELED",
+    5: "TIMEOUT",
+    6: "PAUSED",
 }
 
 STATE_NAMES = {
@@ -108,8 +121,12 @@ class ClientSettings:
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ClientSettings":
         payload = payload or {}
+        atlas_endpoint = payload.get("atlasEndpoint") or ""
+        if not atlas_endpoint and payload.get("robotHost"):
+            atlas_port = payload.get("atlasPort") or DEFAULT_ATLAS_PORT
+            atlas_endpoint = f"{payload.get('robotHost')}:{atlas_port}"
         return cls(
-            atlas_endpoint=normalize_grpc_target(payload.get("atlasEndpoint") or DEFAULT_ATLAS),
+            atlas_endpoint=normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS),
             liaison_endpoint=normalize_grpc_target(payload.get("liaisonEndpoint") or ""),
             user_id=(payload.get("userId") or "").strip(),
             session_id=(payload.get("sessionId") or "").strip(),
@@ -326,11 +343,11 @@ async def _submit_text_once(
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
-            response_deserializer=pilot_pb2.PilotEvent.FromString,
+            response_deserializer=lambda raw: raw,
         )
         stream = call(task)
-        async for event in stream:
-            yield {"type": "pilot_event", "event": pilot_event_to_dict(event)}
+        async for raw in stream:
+            yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
 
 
 async def notify_session_end(settings: ClientSettings) -> None:
@@ -340,7 +357,7 @@ async def notify_session_end(settings: ClientSettings) -> None:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
-            response_deserializer=pilot_pb2.PilotEvent.FromString,
+            response_deserializer=lambda raw: raw,
         )
         async for _ in call(task):
             pass
@@ -365,11 +382,11 @@ async def start_voice_session(settings: ClientSettings) -> AsyncIterator[dict[st
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonVoice/StartVoiceSession",
             request_serializer=liaison_pb2.StartVoiceSession_Request.SerializeToString,
-            response_deserializer=liaison_pb2.VoiceEvent.FromString,
+            response_deserializer=lambda raw: raw,
         )
         stream = call(req)
-        async for event in stream:
-            yield {"type": "voice_event", "event": voice_event_to_dict(event)}
+        async for raw in stream:
+            yield {"type": "voice_event", "event": voice_event_to_dict(decode_voice_event(raw))}
 
 
 async def enroll_voiceprint(
@@ -527,6 +544,27 @@ def is_already_enrolled_error(error: str) -> bool:
     )
 
 
+def decode_submit_event(raw: bytes) -> Any:
+    """Decode liaison SubmitTask stream events.
+
+    Older/current liaison builds stream raw PilotEvent messages. The checked-in
+    liaison.proto also defines a SubmitTask_Response wrapper. Accept both so
+    the GUI does not depend on one deployment's generated shape.
+    """
+    wrapped = liaison_pb2.SubmitTask_Response.FromString(raw)
+    if wrapped.HasField("event"):
+        return wrapped.event
+    return pilot_pb2.PilotEvent.FromString(raw)
+
+
+def decode_voice_event(raw: bytes) -> Any:
+    """Decode liaison voice stream events in wrapper or raw format."""
+    wrapped = liaison_pb2.StartVoiceSession_Response.FromString(raw)
+    if wrapped.HasField("event"):
+        return wrapped.event
+    return liaison_pb2.VoiceEvent.FromString(raw)
+
+
 async def system_snapshot(atlas_endpoint: str) -> dict[str, Any]:
     atlas = normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS)
     providers = await query_atlas(atlas)
@@ -602,6 +640,14 @@ def provider_to_dict(provider: Any) -> dict[str, Any]:
 
 
 def pilot_event_to_dict(event: Any) -> dict[str, Any]:
+    if event is None:
+        return {
+            "kindId": -1,
+            "kind": "empty",
+            "sessionId": "",
+            "textChunk": "",
+            "finalText": "",
+        }
     data: dict[str, Any] = {
         "kindId": int(event.event_kind),
         "kind": PILOT_EVENT_NAMES.get(event.event_kind, f"unknown_{event.event_kind}"),
@@ -619,10 +665,30 @@ def pilot_event_to_dict(event: Any) -> dict[str, Any]:
         data["plan"] = plan_to_dict(event.plan)
     if event.HasField("batch_result"):
         data["batchResult"] = batch_result_to_dict(event.batch_result)
+    if hasattr(event, "node_state") and event.HasField("node_state"):
+        data["nodeState"] = node_state_to_dict(event.node_state)
+    if hasattr(event, "task_state") and event.HasField("task_state"):
+        data["taskState"] = {
+            "goal": event.task_state.goal,
+            "successCriterion": event.task_state.success_criterion,
+            "status": event.task_state.status,
+        }
     return data
 
 
 def voice_event_to_dict(event: Any) -> dict[str, Any]:
+    if event is None:
+        return {
+            "kindId": -1,
+            "kind": "empty",
+            "sessionId": "",
+            "text": "",
+            "userId": "",
+            "confidence": 0.0,
+            "error": "",
+            "statusMessage": "",
+            "timestampMs": 0,
+        }
     data: dict[str, Any] = {
         "kindId": int(event.event_kind),
         "kind": VOICE_EVENT_NAMES.get(event.event_kind, f"unknown_{event.event_kind}"),
@@ -660,6 +726,8 @@ def node_to_dict(index: int, node: Any) -> dict[str, Any]:
         "kindId": int(node.node_kind),
         "kind": NODE_KIND_NAMES.get(node.node_kind, f"kind_{node.node_kind}"),
         "children": [int(child) for child in node.children],
+        "opId": getattr(node, "op_id", ""),
+        "description": getattr(node, "description", ""),
     }
     if node.HasField("call"):
         out["call"] = call_to_dict(node.call)
@@ -683,16 +751,34 @@ def batch_result_to_dict(result: Any) -> dict[str, Any]:
         "sessionId": result.session_id,
         "round": int(result.round),
         "anyFailed": bool(result.any_failed),
-        "results": [
-            {
-                "callId": item.call_id,
-                "providerId": item.provider_id,
-                "contractId": item.contract_id,
-                "name": item.contract_id.rsplit("/", 1)[-1] if item.contract_id else "",
-                "success": bool(item.success),
-                "output": item.output,
-                "error": item.error,
-            }
-            for item in result.results
-        ],
+        "results": [node_state_to_dict(item) for item in result.results],
+    }
+
+
+def node_state_to_dict(state: Any) -> dict[str, Any]:
+    out = {
+        "planId": state.plan_id,
+        "nodeIndex": int(state.node_index),
+        "nodeKindId": int(state.node_kind),
+        "nodeKind": NODE_KIND_NAMES.get(state.node_kind, f"kind_{state.node_kind}"),
+        "stateId": int(state.state),
+        "state": RTDL_NODE_STATE_NAMES.get(state.state, str(state.state)),
+        "operatorDetail": state.operator_detail,
+        "opId": getattr(state, "op_id", ""),
+        "description": getattr(state, "description", ""),
+    }
+    if state.HasField("leaf_result"):
+        out["leafResult"] = call_result_to_dict(state.leaf_result)
+    return out
+
+
+def call_result_to_dict(result: Any) -> dict[str, Any]:
+    return {
+        "callId": result.call_id,
+        "providerId": result.provider_id,
+        "contractId": result.contract_id,
+        "name": result.contract_id.rsplit("/", 1)[-1] if result.contract_id else "",
+        "success": bool(result.success),
+        "output": result.output,
+        "error": result.error,
     }
