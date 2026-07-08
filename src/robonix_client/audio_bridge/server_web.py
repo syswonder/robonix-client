@@ -61,6 +61,8 @@ state = {
     "mic_clients": 0,
     "speaker_clients": 0,
 }
+inject_lock = threading.Lock()
+inject_frames: list[bytes] = []
 
 
 def _state(key):
@@ -95,6 +97,21 @@ async def serve_mic(ws) -> None:
     loop = asyncio.get_event_loop()
     q: stdlib_queue.Queue = stdlib_queue.Queue(maxsize=64)
     in_dev = _state("input_device")
+
+    with inject_lock:
+        frames = list(inject_frames)
+        inject_frames.clear()
+    if frames:
+        log.info("serving injected mic stream: %d frame(s)", len(frames))
+        try:
+            for frame in frames:
+                await ws.send(frame)
+                await asyncio.sleep(0.1)
+        except websockets.ConnectionClosed:
+            log.info("mic client disconnected during injected stream")
+        finally:
+            _set_state("mic_clients", _state("mic_clients") - 1)
+        return
 
     def callback(indata, frames, time_info, status):
         if status:
@@ -243,6 +260,46 @@ async def serve_set_device(ws) -> None:
             pass
 
 
+async def serve_inject_mic(ws) -> None:
+    """Accept one test PCM stream for the next /mic client.
+
+    This is intentionally a test hook, not a replacement for live capture:
+    the regular /mic path first consumes the queued frames once, then goes
+    straight back to CoreAudio on subsequent calls.
+    """
+    pending: list[bytes] = []
+    cleared = False
+    try:
+        async for msg in ws:
+            if isinstance(msg, bytes):
+                for i in range(0, len(msg), FRAME_BYTES):
+                    chunk = msg[i:i + FRAME_BYTES]
+                    if chunk:
+                        pending.append(chunk)
+                continue
+            try:
+                body = json.loads(msg)
+            except Exception:  # noqa: BLE001
+                body = {}
+            if body.get("clear"):
+                with inject_lock:
+                    inject_frames.clear()
+                cleared = True
+            if body.get("commit"):
+                if pending:
+                    with inject_lock:
+                        inject_frames.extend(pending)
+                await ws.send(json.dumps({
+                    "ok": True,
+                    "cleared": cleared,
+                    "frames": len(pending),
+                    "duration_s": round(len(pending) * FRAME_SAMPLES / SAMPLE_RATE, 3),
+                }))
+                return
+    except websockets.ConnectionClosed:
+        pass
+
+
 # ── /vu  (independent monitor capture) ─────────────────────────────────────
 class VuMonitor:
     def __init__(self) -> None:
@@ -354,6 +411,8 @@ async def handler(ws):
         await serve_devices(ws)
     elif path == "/set_device":
         await serve_set_device(ws)
+    elif path == "/inject_mic":
+        await serve_inject_mic(ws)
     elif path == "/vu":
         await serve_vu(ws)
     elif path == "/log":
