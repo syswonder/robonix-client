@@ -589,6 +589,7 @@ function renderPlan() {
   roots.forEach((root) => clear(root));
   setTextAll("[data-plan-summary]", plan ? `live round ${plan.round}` : "waiting for real plan");
   if (maybe("goalLine")) $("goalLine").textContent = `Goal: ${firstUserMessage() || "waiting for a task."}`;
+  renderSceneAssets();
   if (!plan) {
     roots.forEach((root) => {
       const empty = document.createElement("div");
@@ -829,6 +830,7 @@ function contractAvailable(contracts, label) {
 function renderSceneAssets() {
   renderObjectTable();
   const latest = latestImageAttachment();
+  const navGoal = latestNavigationGoal();
   document.querySelectorAll("[data-camera-feed]").forEach((camera) => {
     clear(camera);
     if (latest) {
@@ -847,15 +849,59 @@ function renderSceneAssets() {
       img.src = latest.dataUrl;
       img.alt = latest.name || "target attachment";
       goal.appendChild(img);
-    } else {
-      const title = document.createElement("strong");
-      title.textContent = "table (ID: 1)";
-      const pose = document.createElement("span");
-      pose.textContent = "Goal Pose (approach) x: 2.02 m, y: -1.18 m, theta: -1.57 rad";
-      goalCard.append(title, pose);
-      goal.appendChild(goalCard);
     }
+    const title = document.createElement("strong");
+    const pose = document.createElement("span");
+    if (navGoal) {
+      title.textContent = "Navigation target";
+      pose.textContent = `Goal pose x: ${formatMeters(navGoal.x)}, y: ${formatMeters(navGoal.y)}, theta: ${formatRadians(navGoal.yaw)}`;
+    } else {
+      title.textContent = "No active navigation goal";
+      pose.textContent = "A target will appear when Pilot emits a navigation RTDL call.";
+    }
+    goalCard.append(title, pose);
+    goal.appendChild(goalCard);
   });
+}
+
+function latestNavigationGoal() {
+  const nodes = state.plan?.nodes || [];
+  for (let i = nodes.length - 1; i >= 0; i -= 1) {
+    const call = nodes[i].call;
+    if (!call) continue;
+    const contract = String(call.contractId || "");
+    const name = String(call.name || "");
+    if (!contract.includes("navigation/navigate") && !name.includes("navigate")) continue;
+    const goal = call.args?.goal;
+    const pose = goal?.pose;
+    const position = pose?.position;
+    const orientation = pose?.orientation;
+    if (!position) continue;
+    const yaw = yawFromQuaternion(orientation);
+    return {
+      x: Number(position.x),
+      y: Number(position.y),
+      yaw: Number.isFinite(yaw) ? yaw : 0,
+    };
+  }
+  return null;
+}
+
+function yawFromQuaternion(q) {
+  if (!q) return 0;
+  const z = Number(q.z || 0);
+  const w = Number(q.w || 1);
+  return 2 * Math.atan2(z, w);
+}
+
+function formatMeters(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${n.toFixed(2)} m` : "-";
+}
+
+function formatRadians(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${n.toFixed(2)} rad` : "-";
 }
 
 function renderObjectTable() {

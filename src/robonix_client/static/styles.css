@@ -179,7 +179,7 @@ select {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .page {
@@ -226,6 +226,7 @@ h1 {
 
 .command-bar {
   min-width: 0;
+  min-height: 52px;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -1892,27 +1893,6 @@ select:focus {
 
   .dashboard-grid {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  }
-}
-
-@media (max-width: 1320px) {
-  html,
-  body {
-    overflow: auto;
-  }
-
-  .dashboard-grid {
-    overflow: visible;
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .dashboard-sidebar {
-    overflow: visible;
-  }
-
-  .conversation-panel {
-    min-height: 520px;
   }
 }
 
