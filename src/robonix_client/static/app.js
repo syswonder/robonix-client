@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const maybe = (id) => document.getElementById(id);
 
 const state = {
   settings: {},
@@ -12,7 +13,18 @@ const state = {
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
+  audio: {
+    port: 60000,
+    devices: [],
+    inputCurrent: null,
+    outputCurrent: null,
+    vuSocket: null,
+    logSocket: null,
+    levelHistory: Array(28).fill(0),
+  },
 };
+
+const DEFAULT_ATLAS_PORT = 50051;
 
 const mockObjects = [
   { id: 1, label: "table", distance: "2.35", position: "(2.10, -1.24, 0.00)", confidence: "0.96" },
@@ -54,8 +66,41 @@ function wsUrl(path) {
   return `${proto}//${location.host}${path}`;
 }
 
+function bridgeWsUrl(path) {
+  return `ws://127.0.0.1:${state.audio.port}${path}`;
+}
+
 function saveSettings() {
   localStorage.setItem("robonix.settings", JSON.stringify(collectSettings()));
+}
+
+function normalizeRobotHost(raw) {
+  return String(raw || "").trim();
+}
+
+function normalizeAtlasPort(raw) {
+  const port = Number.parseInt(String(raw || "").trim(), 10);
+  return Number.isFinite(port) && port > 0 ? port : DEFAULT_ATLAS_PORT;
+}
+
+function parseAtlasEndpoint(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return { host: "", port: DEFAULT_ATLAS_PORT };
+  const normalized = value.includes("://") ? value : `grpc://${value}`;
+  try {
+    const url = new URL(normalized);
+    return {
+      host: url.hostname || "",
+      port: url.port ? Number.parseInt(url.port, 10) : DEFAULT_ATLAS_PORT,
+    };
+  } catch (_) {
+    return { host: "", port: DEFAULT_ATLAS_PORT };
+  }
+}
+
+function buildAtlasEndpoint(host, port) {
+  const cleanHost = normalizeRobotHost(host);
+  return cleanHost ? `${cleanHost}:${normalizeAtlasPort(port)}` : "";
 }
 
 function loadStoredSettings() {
@@ -96,10 +141,14 @@ function saveConversations() {
 
 async function init() {
   const defaults = await fetch("/api/defaults").then((r) => r.json()).catch(() => ({}));
+  const stored = loadStoredSettings();
+  const atlas = parseAtlasEndpoint(defaults.atlasEndpoint || "");
   state.settings = {
-    atlasEndpoint: "127.0.0.1:50051",
+    robotHost: defaults.robotHost || atlas.host || "",
+    atlasPort: defaults.atlasPort || atlas.port || DEFAULT_ATLAS_PORT,
     liaisonEndpoint: "",
     userId: "",
+    sessionTitle: "",
     recordSeconds: 30,
     language: "",
     ttsEnabled: true,
@@ -107,11 +156,14 @@ async function init() {
     speakerNodeId: "",
     enrollUserId: "",
     enrollUserName: "",
+    ...stored,
     ...defaults,
-    ...loadStoredSettings(),
   };
+  if (defaults.sessionId) state.sessionId = defaults.sessionId;
+  if (defaults.sessionTitle) state.sessionTitle = defaults.sessionTitle;
   bindSettings();
   bindEvents();
+  renderAudioBars();
   renderHistory();
   renderMessages();
   renderTimeline();
@@ -122,20 +174,27 @@ async function init() {
 }
 
 function bindSettings() {
-  $("atlasEndpoint").value = state.settings.atlasEndpoint || "";
-  $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
-  $("userId").value = state.settings.userId || "";
-  $("recordSeconds").value = state.settings.recordSeconds || 30;
-  $("language").value = state.settings.language || "";
-  $("ttsEnabled").checked = state.settings.ttsEnabled !== false;
-  $("micNodeId").value = state.settings.micNodeId || "";
-  $("speakerNodeId").value = state.settings.speakerNodeId || "";
-  $("enrollUserId").value = state.settings.enrollUserId || "";
-  $("enrollUserName").value = state.settings.enrollUserName || "";
-  $("operatorId").textContent = state.settings.userId || "local";
+  if (maybe("robotHost")) $("robotHost").value = state.settings.robotHost || "";
+  if (maybe("robotHostSettings")) $("robotHostSettings").value = state.settings.robotHost || "";
+  if (maybe("atlasPort")) $("atlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
+  if (maybe("userId")) $("userId").value = state.settings.userId || "";
+  if (maybe("recordSeconds")) $("recordSeconds").value = state.settings.recordSeconds || 30;
+  if (maybe("language")) $("language").value = state.settings.language || "";
+  if (maybe("ttsEnabled")) $("ttsEnabled").checked = state.settings.ttsEnabled !== false;
+  if (maybe("micNodeId")) $("micNodeId").value = state.settings.micNodeId || "";
+  if (maybe("speakerNodeId")) $("speakerNodeId").value = state.settings.speakerNodeId || "";
+  if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
+  if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
+  if (maybe("operatorId")) $("operatorId").textContent = state.settings.userId || "local";
+  if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
 
   [
-    "atlasEndpoint",
+    "robotHost",
+    "robotHostSettings",
+    "atlasPort",
+    "atlasPortSettings",
     "liaisonEndpoint",
     "userId",
     "recordSeconds",
@@ -145,25 +204,42 @@ function bindSettings() {
     "speakerNodeId",
     "enrollUserId",
     "enrollUserName",
-  ].forEach((id) => $(id).addEventListener("change", saveSettings));
-  $("userId").addEventListener("input", () => {
-    $("operatorId").textContent = $("userId").value.trim() || "local";
+  ].forEach((id) => maybe(id)?.addEventListener("change", syncConnectionSettings));
+  maybe("userId")?.addEventListener("input", () => {
+    if (maybe("operatorId")) $("operatorId").textContent = $("userId").value.trim() || "local";
   });
+}
+
+function syncConnectionSettings() {
+  const hostSource = document.activeElement?.id === "robotHostSettings" && maybe("robotHostSettings") ? "robotHostSettings" : "robotHost";
+  const portSource = document.activeElement?.id === "atlasPortSettings" && maybe("atlasPortSettings") ? "atlasPortSettings" : "atlasPort";
+  const host = maybe(hostSource) ? normalizeRobotHost($(hostSource).value) : "";
+  const port = maybe(portSource) ? normalizeAtlasPort($(portSource).value) : DEFAULT_ATLAS_PORT;
+  if (maybe("robotHost")) $("robotHost").value = host;
+  if (maybe("robotHostSettings")) $("robotHostSettings").value = host;
+  if (maybe("atlasPort")) $("atlasPort").value = port;
+  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = port;
+  saveSettings();
 }
 
 function collectSettings() {
   return {
-    atlasEndpoint: $("atlasEndpoint").value.trim(),
-    liaisonEndpoint: $("liaisonEndpoint").value.trim(),
-    userId: $("userId").value.trim(),
+    robotHost: normalizeRobotHost(maybe("robotHost")?.value || state.settings.robotHost || ""),
+    atlasPort: normalizeAtlasPort(maybe("atlasPort")?.value || state.settings.atlasPort || DEFAULT_ATLAS_PORT),
+    atlasEndpoint: buildAtlasEndpoint(
+      maybe("robotHost")?.value || state.settings.robotHost || "",
+      maybe("atlasPort")?.value || state.settings.atlasPort || DEFAULT_ATLAS_PORT,
+    ),
+    liaisonEndpoint: maybe("liaisonEndpoint")?.value.trim() || state.settings.liaisonEndpoint || "",
+    userId: maybe("userId")?.value.trim() || state.settings.userId || "",
     sessionId: state.sessionId,
-    recordSeconds: Number($("recordSeconds").value || 30),
-    language: $("language").value.trim(),
-    ttsEnabled: $("ttsEnabled").checked,
-    micNodeId: $("micNodeId").value.trim(),
-    speakerNodeId: $("speakerNodeId").value.trim(),
-    enrollUserId: $("enrollUserId").value.trim(),
-    enrollUserName: $("enrollUserName").value.trim(),
+    recordSeconds: Number(maybe("recordSeconds")?.value || state.settings.recordSeconds || 30),
+    language: maybe("language")?.value.trim() || state.settings.language || "",
+    ttsEnabled: maybe("ttsEnabled") ? $("ttsEnabled").checked : state.settings.ttsEnabled !== false,
+    micNodeId: maybe("micNodeId")?.value.trim() || state.settings.micNodeId || "",
+    speakerNodeId: maybe("speakerNodeId")?.value.trim() || state.settings.speakerNodeId || "",
+    enrollUserId: maybe("enrollUserId")?.value.trim() || state.settings.enrollUserId || "",
+    enrollUserName: maybe("enrollUserName")?.value.trim() || state.settings.enrollUserName || "",
   };
 }
 
@@ -181,10 +257,18 @@ function bindEvents() {
   $("endSession").addEventListener("click", endSession);
   $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
   $("clearHistory").addEventListener("click", clearHistory);
-  $("startBridge").addEventListener("click", startBridge);
-  $("checkBridge").addEventListener("click", checkBridge);
-  $("enrollVoice").addEventListener("click", enrollVoice);
-  $("testSpeaker").addEventListener("click", testSpeaker);
+  maybe("connectNow")?.addEventListener("click", () => {
+    state.settings = collectSettings();
+    saveSettings();
+    addTimeline("system", `connecting to ${state.settings.robotHost}:${state.settings.atlasPort}`);
+    refreshSystem();
+  });
+  maybe("startBridge")?.addEventListener("click", startBridge);
+  maybe("checkBridge")?.addEventListener("click", checkBridge);
+  maybe("refreshAudioDevices")?.addEventListener("click", loadAudioDevices);
+  maybe("applyAudioDevices")?.addEventListener("click", applyAudioDevices);
+  maybe("enrollVoice")?.addEventListener("click", enrollVoice);
+  maybe("testSpeaker")?.addEventListener("click", testSpeaker);
   document.querySelectorAll("[data-page]").forEach((button) => {
     button.addEventListener("click", () => activatePage(button.dataset.page));
   });
@@ -249,6 +333,10 @@ function renderAttachments() {
 function activatePage(name) {
   document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
+  if (name === "audio") {
+    checkBridge();
+    startAudioBridgeStreams();
+  }
 }
 
 function newSession() {
@@ -302,7 +390,7 @@ function startVoice() {
   setBusy(true);
   $("voiceButton").classList.add("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.add("active"));
-  $("voiceState").textContent = "recording";
+  if (maybe("voiceState")) $("voiceState").textContent = "recording";
   addTimeline("voice", "voice session requested");
   const socket = new WebSocket(wsUrl("/ws/voice"));
   socket.onopen = () => socket.send(JSON.stringify({ settings: collectSettings() }));
@@ -310,7 +398,7 @@ function startVoice() {
     setBusy(false);
     $("voiceButton").classList.remove("active");
     document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
-    $("voiceState").textContent = "ready";
+    if (maybe("voiceState")) $("voiceState").textContent = "ready";
   });
 }
 
@@ -484,7 +572,7 @@ function renderPlan() {
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
   setTextAll("[data-plan-summary]", plan ? `live round ${plan.round}` : "waiting for real plan");
-  $("goalLine").textContent = `Goal: ${firstUserMessage() || "waiting for a task."}`;
+  if (maybe("goalLine")) $("goalLine").textContent = `Goal: ${firstUserMessage() || "waiting for a task."}`;
   if (!plan) {
     roots.forEach((root) => {
       const empty = document.createElement("div");
@@ -603,6 +691,7 @@ function startedForNode(node, status) {
 }
 
 function renderExecutionDetail(node, status) {
+  if (!maybe("activeProvider")) return;
   $("activeProvider").textContent = node?.call?.providerId || node?.call?.contractId || "pilot";
   $("activeStarted").textContent = node ? startedForNode(node, status) : "-";
   $("activeDuration").textContent = node ? durationForNode(node, status) : "-";
@@ -616,7 +705,7 @@ function currentTaskLabel() {
 }
 
 async function refreshSystem() {
-  const atlas = $("atlasEndpoint").value.trim() || "127.0.0.1:50051";
+  const atlas = buildAtlasEndpoint($("robotHost").value, $("atlasPort").value) || "127.0.0.1:50051";
   const data = await fetch(`/api/system?atlas=${encodeURIComponent(atlas)}`).then((r) => r.json()).catch((error) => ({ error: String(error) }));
   renderSystem(data);
 }
@@ -626,12 +715,15 @@ function renderSystem(data) {
   const stateLabel = data.error ? "offline" : summary.state || "unknown";
   $("connectionState").textContent = stateLabel;
   $("refreshSystem").classList.toggle("offline", stateLabel === "offline");
-  $("metricState").textContent = stateLabel;
-  $("metricActive").textContent = String(summary.active || 0);
-  $("metricErrors").textContent = String(summary.errors || 0);
+  if (maybe("systemStateLabel")) $("systemStateLabel").textContent = stateLabel;
+  if (maybe("vitalsSummary")) $("vitalsSummary").textContent = `${summary.active || 0} active, ${summary.errors || 0} error(s)`;
+  if (maybe("metricState")) $("metricState").textContent = stateLabel;
+  if (maybe("metricActive")) $("metricActive").textContent = String(summary.active || 0);
+  if (maybe("metricErrors")) $("metricErrors").textContent = String(summary.errors || 0);
   renderRobotState(data);
 
-  const contractRoot = $("contractList");
+  const contractRoot = maybe("contractList");
+  if (!contractRoot) return;
   clear(contractRoot);
   (data.requiredContracts || []).forEach((item) => {
     const row = document.createElement("div");
@@ -645,7 +737,8 @@ function renderSystem(data) {
     contractRoot.appendChild(row);
   });
 
-  const providerRoot = $("providerList");
+  const providerRoot = maybe("providerList");
+  if (!providerRoot) return;
   clear(providerRoot);
   if (data.error) {
     const row = document.createElement("div");
@@ -669,7 +762,7 @@ function renderSystem(data) {
 function renderRobotState(data) {
   const contracts = data.requiredContracts || [];
   const summary = data.summary || {};
-  const recording = $("voiceState").textContent === "recording";
+  const recording = maybe("voiceState") ? $("voiceState").textContent === "recording" : false;
   const audioReady = contractAvailable(contracts, "Speaker") || contractAvailable(contracts, "TTS");
   const rows = [
     { label: "Base", icon: "B", ok: contractAvailable(contracts, "Executor") || contractAvailable(contracts, "Liaison submit"), status: "OK", value: "0.00 m/s", source: "mock" },
@@ -679,7 +772,7 @@ function renderRobotState(data) {
     { label: "Localization", icon: "L", ok: !data.error, status: "OK", value: "0.04 m", source: "mock", separated: true },
     { label: "Navigation", icon: "N", ok: contractAvailable(contracts, "Executor"), status: state.busy ? "Moving" : "Ready", value: state.busy ? "0.32 m" : "0.00 m", source: "derived", warn: state.busy },
     { label: "Audio Input", icon: "M", ok: contractAvailable(contracts, "Mic") || contractAvailable(contracts, "ASR"), status: recording ? "Listening" : "Standby", value: "", source: "real", wave: recording },
-    { label: "Audio Output", icon: "S", ok: audioReady, status: $("ttsEnabled").checked ? "Speaking" : "Muted", value: "", source: "real", wave: $("ttsEnabled").checked },
+    { label: "Audio Output", icon: "S", ok: audioReady, status: maybe("ttsEnabled") && $("ttsEnabled").checked ? "Speaking" : "Muted", value: "", source: "real", wave: maybe("ttsEnabled") && $("ttsEnabled").checked },
     { label: "Connection", icon: "O", ok: !data.error, status: data.error ? "Offline" : "Online", value: "", source: "real", separated: true },
     { label: "Safety", icon: "!", ok: summary.errors === 0, status: summary.errors ? `${summary.errors} error(s)` : "OK", value: "", source: "derived", danger: summary.errors > 0 },
   ];
@@ -955,17 +1048,175 @@ function formatConversationTime(ms) {
 }
 
 async function startBridge() {
+  appendAudioLog("starting local audio bridge");
   const result = await fetch("/api/audio-bridge/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ host: "0.0.0.0", port: 60000, uiHost: "127.0.0.1" }),
   }).then((r) => r.json());
   renderBridge(result);
+  await checkBridge();
+  startAudioBridgeStreams();
+  loadAudioDevices();
 }
 
 async function checkBridge() {
   const result = await fetch("/api/audio-bridge/health").then((r) => r.json());
   renderBridge(result);
+  if (result.reachable || result.ok) {
+    startAudioBridgeStreams();
+    loadAudioDevices();
+  }
+}
+
+function bridgeOnce(path, body = null) {
+  return new Promise((resolve) => {
+    const socket = new WebSocket(bridgeWsUrl(path));
+    let settled = false;
+    const done = (payload) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.close();
+      } catch (_) {
+        // no-op
+      }
+      resolve(payload);
+    };
+    socket.onopen = () => {
+      if (body !== null) socket.send(JSON.stringify(body));
+    };
+    socket.onmessage = (event) => {
+      try {
+        done(JSON.parse(event.data));
+      } catch (_) {
+        done({ ok: false, error: String(event.data || "invalid bridge response") });
+      }
+    };
+    socket.onerror = () => done({ ok: false, error: `cannot connect ${bridgeWsUrl(path)}` });
+    socket.onclose = () => done({ ok: false, error: `closed ${bridgeWsUrl(path)}` });
+  });
+}
+
+async function loadAudioDevices() {
+  const result = await bridgeOnce("/devices");
+  if (!result || result.ok === false) {
+    appendAudioLog(`device refresh failed: ${result?.error || "unknown error"}`);
+    return;
+  }
+  state.audio.devices = Array.isArray(result.devices) ? result.devices : [];
+  state.audio.inputCurrent = result.input_current ?? result.input_default ?? null;
+  state.audio.outputCurrent = result.output_current ?? result.output_default ?? null;
+  renderAudioDevices(result);
+  appendAudioLog(`loaded ${state.audio.devices.length} audio devices`);
+}
+
+function renderAudioDevices(result = {}) {
+  const input = maybe("audioInputDevice");
+  const output = maybe("audioOutputDevice");
+  if (!input || !output) return;
+  clear(input);
+  clear(output);
+  const inputCurrent = result.input_current ?? result.input_default ?? state.audio.inputCurrent;
+  const outputCurrent = result.output_current ?? result.output_default ?? state.audio.outputCurrent;
+  const makeOption = (device, kind) => {
+    const opt = document.createElement("option");
+    opt.value = String(device.id);
+    const channels = kind === "input" ? device.max_input_channels : device.max_output_channels;
+    opt.textContent = `#${device.id} ${device.name} (${channels} ch)`;
+    return opt;
+  };
+  state.audio.devices
+    .filter((device) => Number(device.max_input_channels || 0) > 0)
+    .forEach((device) => input.appendChild(makeOption(device, "input")));
+  state.audio.devices
+    .filter((device) => Number(device.max_output_channels || 0) > 0)
+    .forEach((device) => output.appendChild(makeOption(device, "output")));
+  input.value = inputCurrent !== null && inputCurrent !== undefined ? String(inputCurrent) : "";
+  output.value = outputCurrent !== null && outputCurrent !== undefined ? String(outputCurrent) : "";
+}
+
+async function applyAudioDevices() {
+  const input = maybe("audioInputDevice")?.value;
+  const output = maybe("audioOutputDevice")?.value;
+  const body = {};
+  if (input !== undefined && input !== "") body.input = Number(input);
+  if (output !== undefined && output !== "") body.output = Number(output);
+  appendAudioLog(`applying devices ${JSON.stringify(body)}`);
+  const result = await bridgeOnce("/set_device", body);
+  appendAudioLog(result.ok ? "device selection applied" : `device selection failed: ${result.error || "unknown error"}`);
+  await loadAudioDevices();
+}
+
+function startAudioBridgeStreams() {
+  startAudioVuStream();
+  startAudioLogStream();
+}
+
+function startAudioVuStream() {
+  if (state.audio.vuSocket && state.audio.vuSocket.readyState <= WebSocket.OPEN) return;
+  const socket = new WebSocket(bridgeWsUrl("/vu"));
+  state.audio.vuSocket = socket;
+  socket.onopen = () => {
+    setText("audioLevelState", "live");
+    appendAudioLog("VU connected");
+  };
+  socket.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      renderAudioLevel(Number(payload.level || 0));
+    } catch (_) {
+      renderAudioLevel(0);
+    }
+  };
+  socket.onerror = () => setText("audioLevelState", "offline");
+  socket.onclose = () => {
+    setText("audioLevelState", "offline");
+    state.audio.vuSocket = null;
+  };
+}
+
+function startAudioLogStream() {
+  if (state.audio.logSocket && state.audio.logSocket.readyState <= WebSocket.OPEN) return;
+  const socket = new WebSocket(bridgeWsUrl("/log"));
+  state.audio.logSocket = socket;
+  socket.onopen = () => appendAudioLog("log stream connected");
+  socket.onmessage = (event) => appendAudioLog(event.data);
+  socket.onerror = () => appendAudioLog("log stream error");
+  socket.onclose = () => {
+    state.audio.logSocket = null;
+  };
+}
+
+function renderAudioLevel(level) {
+  const clean = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
+  state.audio.levelHistory.push(clean);
+  state.audio.levelHistory = state.audio.levelHistory.slice(-28);
+  if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(clean * 100)}%`;
+  setText("audioLevelText", `${Math.round(clean * 100)}%`);
+  renderAudioBars();
+}
+
+function renderAudioBars() {
+  const root = maybe("audioBars");
+  if (!root) return;
+  clear(root);
+  state.audio.levelHistory.forEach((level) => {
+    const bar = document.createElement("span");
+    bar.style.height = `${Math.max(8, Math.round(level * 100))}%`;
+    root.appendChild(bar);
+  });
+}
+
+function appendAudioLog(line) {
+  const root = maybe("audioLog");
+  if (!root) return;
+  const stamp = new Date().toLocaleTimeString();
+  root.textContent += `[${stamp}] ${line}\n`;
+  const lines = root.textContent.split("\n");
+  if (lines.length > 260) root.textContent = lines.slice(-260).join("\n");
+  root.scrollTop = root.scrollHeight;
+  setText("audioLogSummary", "Bridge connection log.");
 }
 
 async function enrollVoice() {
@@ -1057,20 +1308,30 @@ function normalizeVoiceId(rawUserId) {
 }
 
 function renderBridge(result) {
-  const root = $("bridgeStatus");
+  const root = maybe("bridgeStatus");
+  if (!root) return;
   clear(root);
+  const online = Boolean(result.ok || result.reachable);
+  setText("audioBridgeState", online ? "online" : "offline");
+  setText("audioBridgeSummary", online ? (result.url || result.wsUrl || "Bridge reachable.") : (result.error || "Bridge is offline."));
   const lines = [
-    result.ok || result.reachable ? "ok" : "not reachable",
+    online ? "ok" : "not reachable",
     result.error || "",
     result.uiUrl || result.url || "",
     result.logPath || "",
   ].filter(Boolean);
   lines.forEach((line) => {
     const div = document.createElement("div");
-    div.className = result.ok || result.reachable ? "ok" : "warn";
+    div.className = online ? "ok" : "warn";
     div.textContent = line;
     root.appendChild(div);
   });
+  appendAudioLog(lines.join(" | "));
+}
+
+function setText(id, text) {
+  const node = maybe(id);
+  if (node) node.textContent = text;
 }
 
 function setBusy(value) {

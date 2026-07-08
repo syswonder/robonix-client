@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import grpc
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
@@ -26,6 +27,14 @@ STATIC_DIR = Path(__file__).with_name("static")
 
 app = FastAPI(title="Robonix Client", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _split_default_atlas(raw: str) -> tuple[str, int]:
+    target = (raw or DEFAULT_ATLAS).strip()
+    parsed = urlparse(target if "://" in target else f"grpc://{target}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 50051
+    return host, port
 
 
 class BridgeStartRequest(BaseModel):
@@ -53,12 +62,29 @@ async def index() -> FileResponse:
 
 @app.get("/api/defaults")
 async def defaults() -> dict[str, Any]:
+    atlas_endpoint = os.environ.get("ROBONIX_ATLAS_ENDPOINT", DEFAULT_ATLAS)
+    robot_host, atlas_port = _split_default_atlas(atlas_endpoint)
+    launch_overrides = []
+    for key in (
+        "ROBONIX_ROBOT_HOST",
+        "ROBONIX_ATLAS_PORT",
+        "ROBONIX_CLIENT_USER_ID",
+        "ROBONIX_CLIENT_SESSION_ID",
+        "ROBONIX_CLIENT_SESSION_TITLE",
+    ):
+        if os.environ.get(key):
+            launch_overrides.append(key)
     return {
-        "atlasEndpoint": os.environ.get("ROBONIX_ATLAS_ENDPOINT", DEFAULT_ATLAS),
+        "atlasEndpoint": atlas_endpoint,
+        "robotHost": os.environ.get("ROBONIX_ROBOT_HOST", robot_host),
+        "atlasPort": int(os.environ.get("ROBONIX_ATLAS_PORT", str(atlas_port))),
         "liaisonEndpoint": os.environ.get("ROBONIX_LIAISON_ENDPOINT", ""),
         "userId": os.environ.get("ROBONIX_CLIENT_USER_ID", ""),
+        "sessionId": os.environ.get("ROBONIX_CLIENT_SESSION_ID", ""),
+        "sessionTitle": os.environ.get("ROBONIX_CLIENT_SESSION_TITLE", ""),
         "recordSeconds": int(os.environ.get("ROBONIX_CLIENT_RECORD_SECONDS", "30")),
         "ttsEnabled": os.environ.get("ROBONIX_CLIENT_TTS", "1").lower() not in {"0", "false", "no"},
+        "launchOverrides": launch_overrides,
     }
 
 

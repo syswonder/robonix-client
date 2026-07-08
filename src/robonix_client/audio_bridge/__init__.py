@@ -1,2 +1,2 @@
-"""Local macOS audio bridge daemon shipped with Robonix Client."""
+"""Local client audio bridge daemon shipped with Robonix Client."""
 

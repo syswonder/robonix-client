@@ -5,7 +5,6 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urlparse
@@ -139,6 +138,29 @@ def normalize_grpc_target(raw: str) -> str:
     return f"{host}{port}"
 
 
+def split_host_port(target: str) -> tuple[str, int | None]:
+    normalized = normalize_grpc_target(target)
+    if not normalized:
+        return "", None
+    parsed = urlparse(f"grpc://{normalized}")
+    return parsed.hostname or "", parsed.port
+
+
+def is_loopback_host(host: str) -> bool:
+    value = (host or "").strip().lower()
+    return value in {"", "127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def rewrite_remote_endpoint(endpoint: str, atlas_endpoint: str) -> str:
+    endpoint_host, endpoint_port = split_host_port(endpoint)
+    atlas_host, _ = split_host_port(atlas_endpoint)
+    if not endpoint_port or not endpoint_host:
+        return normalize_grpc_target(endpoint)
+    if is_loopback_host(endpoint_host) and atlas_host and not is_loopback_host(atlas_host):
+        return f"{atlas_host}:{endpoint_port}"
+    return normalize_grpc_target(endpoint)
+
+
 def _fallback_liaison(atlas_endpoint: str) -> str:
     atlas = normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS)
     parsed = urlparse(f"grpc://{atlas}")
@@ -216,7 +238,7 @@ async def connect_capability(
         req,
         atlas_pb2.ConnectCapabilityResponse,
     )
-    return normalize_grpc_target(resp.endpoint)
+    return rewrite_remote_endpoint(resp.endpoint, atlas_endpoint)
 
 
 async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> str:
@@ -289,19 +311,8 @@ async def submit_text(
     text: str,
     attachments: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    try:
-        async for item in _submit_text_once(settings, text, attachments):
-            yield item
-    except grpc.aio.AioRpcError as exc:
-        retry = retry_settings_for_voice_identity(settings, exc)
-        if retry is None:
-            raise
-        yield {
-            "type": "status",
-            "message": f"local identity denied; retrying as {retry.user_id}",
-        }
-        async for item in _submit_text_once(retry, text, attachments):
-            yield item
+    async for item in _submit_text_once(settings, text, attachments):
+        yield item
 
 
 async def _submit_text_once(
@@ -320,29 +331,6 @@ async def _submit_text_once(
         stream = call(task)
         async for event in stream:
             yield {"type": "pilot_event", "event": pilot_event_to_dict(event)}
-
-
-def retry_settings_for_voice_identity(
-    settings: ClientSettings,
-    exc: grpc.aio.AioRpcError,
-) -> ClientSettings | None:
-    details = exc.details() or ""
-    local_user = denied_local_user(details)
-    if not local_user:
-        return None
-    return replace(settings, user_id=f"voice:{local_user}")
-
-
-def denied_local_user(details: str) -> str:
-    marker = "access denied for user 'local:"
-    start = details.find(marker)
-    if start < 0:
-        return ""
-    start += len(marker)
-    end = details.find("'", start)
-    if end < 0:
-        return ""
-    return details[start:end].strip()
 
 
 async def notify_session_end(settings: ClientSettings) -> None:
@@ -459,8 +447,8 @@ async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
     pcm = b"".join(chunks)
     if not pcm:
         raise RobonixApiError(
-            "mic stream returned no audio. Start the macOS audio bridge and SSH reverse tunnel "
-            "so the Robonix audio_macos_bridge primitive can reach ws://127.0.0.1:60000/mic."
+            "mic stream returned no audio. Ensure the robot-side mic primitive is pointed at a "
+            "reachable audio bridge host and that the bridge is serving ws://<operator-host>:60000/mic."
         )
     return pcm
 

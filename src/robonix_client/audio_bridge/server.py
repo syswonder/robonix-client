@@ -3,7 +3,7 @@
 """Audio bridge daemon — runs on the macOS host that physically owns
 the mic + speakers, exposes both as WebSocket endpoints over LAN to
 the Linux side of the robonix stack (see
-`../audio_macos_bridge/main.py`).
+`../audio_client_bridge/main.py`).
 
 Three endpoints, all `ws://0.0.0.0:60000/...`:
 
@@ -29,7 +29,7 @@ Use `python3 server.py --list-devices` to see CoreAudio device IDs
 when the defaults aren't what you want.
 
 Local-only by convention; this script and the sibling
-audio_macos_bridge package are git-ignored at the repo root.
+audio_client_bridge package are git-ignored at the repo root.
 """
 from __future__ import annotations
 

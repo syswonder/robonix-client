@@ -113,8 +113,8 @@ This repository now contains the first Python WebUI scaffold:
 - RTDL plan, batch result, and live event panels populated from streamed
   `PilotEvent` / `VoiceEvent` messages.
 - Vitals-style dashboard based on the current Atlas heartbeat/lifecycle state.
-- Bundled macOS audio bridge daemon copied from the Robonix examples, exposed as
-  `robonix-audio-bridge`.
+- Bundled client audio bridge daemon copied from the Robonix examples, exposed as
+  `robonix-client-audio-bridge`.
 
 The client remains pure client-side software. Robonix core still owns Atlas,
 Liaison, Pilot, Executor, speech, voiceprint, and robot primitives.
@@ -122,8 +122,9 @@ Liaison, Pilot, Executor, speech, voiceprint, and robot primitives.
 ## Quick Start
 
 This is the recommended flow for a remote operator setup: Robonix runs on a
-Linux host, the browser and microphone/speaker are on an operator Mac, and the
-GUI is opened through SSH port forwarding.
+Linux host, while the browser, microphone, and speaker stay on the operator
+machine. The client connects to the robot host by IP and Atlas port. SSH,
+Tailscale, or LAN are only network paths.
 
 ### 1. Start the Robonix backend
 
@@ -138,15 +139,15 @@ rbnx boot
 # rbnx boot -f <manifest>
 ```
 
-When it is healthy, Atlas should be reachable at:
+When it is healthy, Atlas should be reachable from the operator machine at:
 
 ```text
-127.0.0.1:50051
+<robot-host>:50051
 ```
 
-### 2. Start the GUI on the Linux host
+### 2. Start the GUI on the operator machine
 
-From this repository on the Linux host:
+From this repository on the operator Mac or Linux desktop:
 
 ```bash
 python3 -m venv .venv
@@ -155,32 +156,22 @@ pip install -e ".[audio]"
 robonix-client --host 127.0.0.1 --port 7860
 ```
 
-Leave this terminal running.
-
-### 3. Forward the GUI to your Mac
-
-On the Mac, open a terminal and forward the Linux GUI port:
-
-```bash
-ssh -N -L 7860:127.0.0.1:7860 <linux-user>@<linux-host>
-```
-
-Then open the GUI in the Mac browser:
+Then open the GUI locally:
 
 ```text
 http://127.0.0.1:7860/
 ```
 
-### 4. Start the Mac audio bridge
+### 3. Start the local audio bridge
 
-On the Mac, start the audio bridge on the machine that owns the microphone and
-speaker. If running from this repository checkout:
+On the same operator machine, start the audio bridge that owns the microphone
+and speaker:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[audio]"
-robonix-audio-bridge --host 127.0.0.1 --port 60000 --ui-host 127.0.0.1
+robonix-client-audio-bridge --host 127.0.0.1 --port 60000 --ui-host 127.0.0.1
 ```
 
 Expected output includes:
@@ -192,25 +183,20 @@ websocket on ws://127.0.0.1:60000
 
 Keep this terminal running.
 
-### 5. Reverse-forward Mac audio to Robonix
+### 4. Point Robonix audio to the operator machine
 
-Open another Mac terminal and create the reverse tunnel so the Linux-side
-Robonix `audio_macos_bridge` primitive can reach the Mac audio bridge at
-`ws://127.0.0.1:60000`:
+Configure the robot-side `audio_client_bridge` primitive so it can reach the
+operator machine's audio bridge:
 
-```bash
-ssh -N -R 60000:127.0.0.1:60000 <linux-user>@<linux-host>
-```
+- `ws://<operator-host>:60000/mic`
+- `ws://<operator-host>:60000/speaker`
 
-Keep this terminal running too. If SSH prints `remote port forwarding failed`,
-an old tunnel is probably still holding port `60000`; stop the old tunnel and
-run the command again.
+### 5. Configure the WebUI
 
-### 6. Configure the WebUI
+In the top command bar or the `Settings` page:
 
-In the left `Connection` panel:
-
-- `Atlas`: keep `127.0.0.1:50051`
+- `Robot Host`: the reachable IP or hostname of the Robonix machine
+- `Atlas Port`: usually `50051`
 - `Liaison`: leave empty / `auto`
 - `User`: use the enrolled voice identity, for example `voice:<voice-id>`
 
@@ -227,7 +213,7 @@ In the right `Audio` panel:
 Click `Check` to test the audio bridge, `Enroll voice` to register the speaker,
 and `Test speaker` to verify TTS-to-speaker playback.
 
-### 7. Use the client
+### 6. Use the client
 
 - Type a task and click `Send` for text interaction.
 - Click `Voice` to start one voice session.
@@ -269,13 +255,16 @@ http://127.0.0.1:7860/
 
 Default endpoints:
 
-- Atlas: `127.0.0.1:50051`
-- Liaison: auto-discovered through Atlas, then falls back to `127.0.0.1:50081`
+- Robot Host: user-supplied in the GUI
+- Atlas Port: `50051`
+- Liaison: auto-discovered through Atlas, then falls back to `<robot-host>:50081`
 
 The same values can be set in the GUI or through:
 
 ```bash
-export ROBONIX_ATLAS_ENDPOINT=127.0.0.1:50051
+export ROBONIX_ROBOT_HOST=100.x.y.z
+export ROBONIX_ATLAS_PORT=50051
+export ROBONIX_ATLAS_ENDPOINT=100.x.y.z:50051
 export ROBONIX_LIAISON_ENDPOINT=127.0.0.1:50081
 ```
 
@@ -285,7 +274,7 @@ On the machine that owns the microphone and speaker:
 
 ```bash
 pip install -e ".[audio]"
-robonix-audio-bridge --host 0.0.0.0 --port 60000 --ui-host 127.0.0.1
+robonix-client-audio-bridge --host 0.0.0.0 --port 60000 --ui-host 127.0.0.1
 ```
 
 The bridge speaks the existing Robonix macOS audio protocol:
@@ -293,7 +282,7 @@ The bridge speaks the existing Robonix macOS audio protocol:
 - WebSocket audio bridge: `ws://<mac-host>:60000`
 - Device debug UI: `http://127.0.0.1:60001/`
 
-Point the Robonix deployment's `audio_macos_bridge` primitive at that host and
+Point the Robonix deployment's `audio_client_bridge` primitive at that host and
 port, then use the WebUI Voice button to call Liaison `StartVoiceSession`.
 
 To enroll a voiceprint, open the WebUI's Audio tab, fill `Voice ID` (for

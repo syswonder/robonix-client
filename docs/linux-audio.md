@@ -1,7 +1,7 @@
 # Linux Audio Integration Notes
 
 The initial GUI targets macOS voice operation by reusing the existing
-`audio_macos_bridge` protocol. Linux local audio should use the same Robonix
+`audio_client_bridge` protocol. Linux local audio should use the same Robonix
 primitive contracts as the macOS bridge:
 
 - `robonix/primitive/audio/mic`

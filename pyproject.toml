@@ -24,7 +24,7 @@ audio = [
 
 [project.scripts]
 robonix-client = "robonix_client.cli:main"
-robonix-audio-bridge = "robonix_client.audio_bridge.server_web:main"
+robonix-client-audio-bridge = "robonix_client.audio_bridge.server_web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
