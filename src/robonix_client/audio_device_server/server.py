@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MulanPSL-2.0
-"""Audio bridge daemon — runs on the macOS host that physically owns
+"""Audio device server daemon — runs on the macOS host that physically owns
 the mic + speakers, exposes both as WebSocket endpoints over LAN to
 the Linux side of the robonix stack (see
 `../audio_client_bridge/main.py`).

@@ -9,18 +9,24 @@ const state = {
   messages: [],
   timeline: [],
   plan: null,
+  taskState: null,
   batches: [],
   nodeStates: {},
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
+  activeStreams: 0,
+  voiceActive: false,
+  ttsPlaying: false,
   audio: {
     port: 60000,
+    wsUrl: "",
     devices: [],
     inputCurrent: null,
     outputCurrent: null,
     vuSocket: null,
     logSocket: null,
+    logLines: [],
     levelHistory: Array(28).fill(0),
   },
 };
@@ -28,36 +34,6 @@ const state = {
 const DEFAULT_ATLAS_PORT = 50051;
 const AUDIO_LOG_MAX_LINES = 120;
 const AUDIO_LOG_MAX_CHARS = 260;
-
-const mockObjects = [
-  { id: 1, label: "table", distance: "2.35", position: "(2.10, -1.24, 0.00)", confidence: "0.96" },
-  { id: 2, label: "chair", distance: "1.87", position: "(1.72, -0.85, 0.00)", confidence: "0.91" },
-  { id: 3, label: "sofa", distance: "3.12", position: "(3.05, 0.42, 0.00)", confidence: "0.88" },
-  { id: 4, label: "plant", distance: "2.78", position: "(2.45, 1.15, 0.00)", confidence: "0.86" },
-  { id: 5, label: "cabinet", distance: "4.33", position: "(4.12, -2.01, 0.00)", confidence: "0.84" },
-];
-
-const mockPlan = {
-  round: 1,
-  rootIndex: 0,
-  nodes: [
-    { index: 0, kind: "sequence", children: [1, 2, 3, 4, 5] },
-    { index: 1, kind: "sequence", children: [6, 7, 8, 9] },
-    { index: 2, kind: "sequence", children: [10, 11] },
-    { index: 3, kind: "do", children: [], call: { name: "compute_approach_pose", contractId: "robonix/service/scene", providerId: "service/scene", args: { object: "table" } } },
-    { index: 4, kind: "sequence", children: [12, 13, 14] },
-    { index: 5, kind: "do", children: [], call: { name: "report_result", contractId: "robonix/service/liaison", providerId: "service/liaison", args: {} } },
-    { index: 6, kind: "do", children: [], call: { name: "start_explore", contractId: "robonix/skill/explore", providerId: "skill/explore", args: {} } },
-    { index: 7, kind: "do", children: [], call: { name: "wait_until_stable", contractId: "robonix/skill/explore", providerId: "skill/explore", args: {} } },
-    { index: 8, kind: "do", children: [], call: { name: "stop_explore", contractId: "robonix/skill/explore", providerId: "skill/explore", args: {} } },
-    { index: 9, kind: "do", children: [], call: { name: "get_map", contractId: "robonix/service/map", providerId: "service/map", args: {} } },
-    { index: 10, kind: "do", children: [], call: { name: "list_objects", contractId: "robonix/service/scene", providerId: "service/scene", args: {} } },
-    { index: 11, kind: "do", children: [], call: { name: "select_table", contractId: "robonix/service/scene", providerId: "service/scene", args: { label: "table" } } },
-    { index: 12, kind: "do", children: [], call: { name: "navigate_goal", contractId: "robonix/service/nav", providerId: "service/nav", args: { goal_id: "nav_1747963365" } } },
-    { index: 13, kind: "do", children: [], call: { name: "wait_result", contractId: "robonix/service/nav", providerId: "service/nav", args: { timeout_s: 120, wait_for: "succeeded" } } },
-    { index: 14, kind: "do", children: [], call: { name: "check_goal_near", contractId: "robonix/service/scene", providerId: "service/scene", args: { max_distance_m: 0.4 } } },
-  ],
-};
 
 function getSessionId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -69,8 +45,9 @@ function wsUrl(path) {
   return `${proto}//${location.host}${path}`;
 }
 
-function bridgeWsUrl(path) {
-  return `ws://127.0.0.1:${state.audio.port}${path}`;
+function audioServerWsUrl(path) {
+  if (!state.audio.wsUrl) return "";
+  return `${state.audio.wsUrl.replace(/\/$/, "")}${path}`;
 }
 
 function saveSettings() {
@@ -191,7 +168,7 @@ function bindSettings() {
   if (maybe("speakerNodeId")) $("speakerNodeId").value = state.settings.speakerNodeId || "";
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
-  if (maybe("operatorId")) $("operatorId").textContent = state.settings.userId || "local";
+  if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
   if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
 
   [
@@ -210,7 +187,7 @@ function bindSettings() {
     "enrollUserName",
   ].forEach((id) => maybe(id)?.addEventListener("change", syncConnectionSettings));
   maybe("userId")?.addEventListener("input", () => {
-    if (maybe("operatorId")) $("operatorId").textContent = $("userId").value.trim() || "local";
+    if (maybe("clientUserId")) $("clientUserId").textContent = $("userId").value.trim() || "local";
   });
 }
 
@@ -253,9 +230,19 @@ function bindEvents() {
     sendTask();
   });
   $("taskInput").addEventListener("input", autoGrowInput);
+  $("taskInput").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    $("composer").requestSubmit();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "F2") return;
+    event.preventDefault();
+    startVoice();
+  });
   $("attachButton").addEventListener("click", () => $("imageInput").click());
   $("imageInput").addEventListener("change", handleFiles);
-  $("voiceButton").addEventListener("click", startVoice);
+  maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   $("newSession").addEventListener("click", newSession);
   $("endSession").addEventListener("click", endSession);
@@ -267,8 +254,8 @@ function bindEvents() {
     addTimeline("system", `connecting to ${state.settings.robotHost}:${state.settings.atlasPort}`);
     refreshSystem();
   });
-  maybe("startBridge")?.addEventListener("click", startBridge);
-  maybe("checkBridge")?.addEventListener("click", checkBridge);
+  maybe("startAudioServer")?.addEventListener("click", startAudioServer);
+  maybe("checkAudioServer")?.addEventListener("click", checkAudioServer);
   maybe("refreshAudioDevices")?.addEventListener("click", loadAudioDevices);
   maybe("applyAudioDevices")?.addEventListener("click", applyAudioDevices);
   maybe("enrollVoice")?.addEventListener("click", enrollVoice);
@@ -338,8 +325,7 @@ function activatePage(name) {
   document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   if (name === "audio") {
-    checkBridge();
-    startAudioBridgeStreams();
+    checkAudioServer();
   }
 }
 
@@ -371,11 +357,13 @@ async function sendTask() {
   const text = $("taskInput").value.trim();
   const attachments = state.attachments.slice();
   if (!text && attachments.length === 0) return;
-  if (state.busy) return;
 
-  setBusy(true);
+  const wasBusy = state.busy;
   const display = text || attachments.map((item) => item.name).join(", ");
-  addMessage("user", display, attachments.length ? `${attachments.length} image` : "", attachments);
+  addMessage("user", display, wasBusy ? "steer" : (attachments.length ? `${attachments.length} image` : ""), attachments);
+  addStatusLine(wasBusy ? "Queued steer input; waiting for Pilot to react." : "Submitted task; waiting for Pilot stream.");
+  addTimeline(wasBusy ? "steer" : "task", wasBusy ? `steer: ${display}` : `task: ${display}`);
+  beginStream();
   persistCurrentConversation(display);
   $("taskInput").value = "";
   autoGrowInput();
@@ -385,23 +373,37 @@ async function sendTask() {
 
   const socket = new WebSocket(wsUrl("/ws/task"));
   socket.onopen = () => {
-    socket.send(JSON.stringify({ text, attachments, settings: collectSettings() }));
+    socket.send(JSON.stringify({
+      text,
+      attachments,
+      settings: collectSettings(),
+      steer: wasBusy,
+      interactionMode: wasBusy ? "steer" : "task",
+    }));
   };
-  wireStream(socket, () => setBusy(false));
+  wireStream(socket, endStream);
 }
 
 function startVoice() {
-  if (state.busy) return;
-  setBusy(true);
-  $("voiceButton").classList.add("active");
+  if (state.voiceActive) return;
+  const wasBusy = state.busy;
+  state.voiceActive = true;
+  beginStream();
+  maybe("voiceButton")?.classList.add("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.add("active"));
   if (maybe("voiceState")) $("voiceState").textContent = "recording";
-  addTimeline("voice", "voice session requested");
+  addStatusLine(wasBusy ? "Listening for voice steer input." : "Listening for voice input.");
+  addTimeline(wasBusy ? "voice steer" : "voice", wasBusy ? "voice steer requested" : "voice session requested");
   const socket = new WebSocket(wsUrl("/ws/voice"));
-  socket.onopen = () => socket.send(JSON.stringify({ settings: collectSettings() }));
+  socket.onopen = () => socket.send(JSON.stringify({
+    settings: collectSettings(),
+    steer: wasBusy,
+    interactionMode: wasBusy ? "steer" : "voice",
+  }));
   wireStream(socket, () => {
-    setBusy(false);
-    $("voiceButton").classList.remove("active");
+    state.voiceActive = false;
+    endStream();
+    maybe("voiceButton")?.classList.remove("active");
     document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
     if (maybe("voiceState")) $("voiceState").textContent = "ready";
   });
@@ -412,6 +414,7 @@ function wireStream(socket, done) {
     const payload = JSON.parse(event.data);
     if (payload.type === "pilot_event") handlePilotEvent(payload.event);
     if (payload.type === "voice_event") handleVoiceEvent(payload.event);
+    if (payload.type === "accepted") addStatusLine("Connected; waiting for Robonix events.");
     if (payload.type === "status") addTimeline("status", payload.message || "status");
     if (payload.type === "error") addMessage("error", payload.error);
     if (payload.type === "done") socket.close();
@@ -427,7 +430,8 @@ function handlePilotEvent(event) {
     finalizeAgent(event.finalText);
   } else if (event.kind === "plan" && event.plan) {
     state.plan = event.plan;
-    addTimeline("plan", `live round ${event.plan.round}: ${(event.plan.calls || []).length} call(s)`);
+    announcePlan(event.plan);
+    addTimeline("plan", `live round ${event.plan.round}: ${planCalls(event.plan).length} call(s)`);
     renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "batch_result" && event.batchResult) {
@@ -444,10 +448,14 @@ function handlePilotEvent(event) {
     renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "task_state" && event.taskState) {
+    state.taskState = event.taskState;
     addTimeline("status", event.taskState.status || event.taskState.goal || "task update");
+    addStatusLine(event.taskState.status || event.taskState.goal || "Task state updated.");
+    renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "status" && event.status) {
     addTimeline("status", event.status.message || `state ${event.status.state}`);
+    if (event.status.message) addStatusLine(event.status.message);
   }
 }
 
@@ -458,9 +466,11 @@ function handleVoiceEvent(event) {
   } else if (event.kind === "pilot" && event.pilot) {
     handlePilotEvent(event.pilot);
   } else if (event.kind === "tts_started") {
+    setTtsAura(true);
     addMessage("status", label || "TTS playback started");
     addTimeline("voice", label || "TTS playback started");
   } else if (event.kind === "tts_done") {
+    setTtsAura(false);
     const skipped = String(label || "").toLowerCase().includes("skipped");
     addMessage(skipped ? "error" : "status", label || "TTS playback done");
     addTimeline(skipped ? "error" : "voice", label || "TTS playback done");
@@ -479,6 +489,32 @@ function addMessage(role, text, meta = "", attachments = []) {
   renderSceneAssets();
   persistCurrentConversation(role === "user" ? text : "");
   return id;
+}
+
+function addStatusLine(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return null;
+  const last = state.messages[state.messages.length - 1];
+  if (last?.role === "status" && last.text === clean) return last.id;
+  return addMessage("status", clean, "status");
+}
+
+function announcePlan(plan) {
+  const round = Number(plan?.round ?? 0);
+  if (!round) return;
+  const last = state.messages[state.messages.length - 1];
+  if (last?.role === "status" && last.planRound === round) return;
+  const calls = planCalls(plan);
+  const names = calls.map((node) => capabilityLabel(node)).filter(Boolean);
+  const preview = names.slice(0, 3).join(", ");
+  const suffix = names.length > 3 ? ` +${names.length - 3} more` : "";
+  const id = addMessage(
+    "status",
+    names.length ? `Calling ${preview}${suffix}` : `RTDL plan round ${round}`,
+    "RTDL",
+  );
+  const msg = state.messages.find((item) => item.id === id);
+  if (msg) msg.planRound = round;
 }
 
 function appendAgent(text) {
@@ -503,13 +539,23 @@ function finalizeAgent(text) {
   const msg = state.messages.find((item) => item.id === state.activeAgentId);
   if (msg) {
     const current = msg.text || "";
-    msg.text = text.length >= current.length ? text : current;
+    msg.text = mergeFinalText(current, text);
   } else {
     addMessage("agent", text, "Robonix");
   }
   state.activeAgentId = null;
   renderMessages();
   persistCurrentConversation();
+}
+
+function mergeFinalText(current, finalText) {
+  const currentText = String(current || "");
+  const final = String(finalText || "");
+  if (!currentText) return final;
+  if (!final) return currentText;
+  if (final.includes(currentText)) return final;
+  if (currentText.includes(final)) return currentText;
+  return `${currentText}${currentText.endsWith("\n") ? "" : "\n"}${final}`;
 }
 
 function renderMessages() {
@@ -531,6 +577,24 @@ function renderMessages() {
       el.appendChild(meta);
     }
     el.appendChild(document.createTextNode(message.text));
+    if (message.planRound) {
+      const action = document.createElement("button");
+      action.type = "button";
+      action.className = "message-link";
+      action.textContent = "Show RTDL";
+      action.addEventListener("click", () => {
+        const sidebar = maybe("dashboardSidebar");
+        const execution = document.querySelector(".execution-panel");
+        execution?.scrollIntoView({ block: "start", behavior: "smooth" });
+        execution?.classList.add("attention");
+        sidebar?.classList.add("attention");
+        setTimeout(() => {
+          execution?.classList.remove("attention");
+          sidebar?.classList.remove("attention");
+        }, 900);
+      });
+      el.appendChild(action);
+    }
     if (Array.isArray(message.attachments) && message.attachments.length) {
       const images = document.createElement("div");
       images.className = "message-images";
@@ -557,27 +621,20 @@ function addTimeline(kind, text) {
 function renderTimeline() {
   setTextAll("[data-event-summary]", String(state.timeline.length));
   setTextAll("[data-current-task-label]", `Current Task: ${currentTaskLabel()}`);
-  const rows = state.timeline.length
-    ? state.timeline
-    : [
-        { kind: "Understand Task", text: "Waiting for operator instruction.", at: "Pending" },
-        { kind: "Decompose Task", text: "Plan will appear from PilotEvent.", at: "-" },
-        { kind: "Execute Plan", text: "Waiting for real Pilot/Voice stream events.", at: "-" },
-        { kind: "Verify Result", text: "Verification depends on future scene/navigation APIs.", at: "-" },
-      ];
+  const rows = state.timeline;
   document.querySelectorAll("[data-event-list]").forEach((root) => {
     clear(root);
-    rows.forEach((item, index) => {
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "event-empty";
+      empty.textContent = "No task events yet.";
+      root.appendChild(empty);
+      return;
+    }
+    rows.forEach((item) => {
       const row = document.createElement("div");
-      row.className = `event-row${state.timeline.length ? "" : " placeholder"}`;
-      const title = document.createElement("strong");
-      title.textContent = item.kind;
-      const body = document.createElement("span");
-      body.textContent = item.text;
-      const time = document.createElement("span");
-      time.textContent = item.at;
-      if (!state.timeline.length && index === 2) title.className = "warn";
-      row.append(title, body, time);
+      row.className = "event-row";
+      row.textContent = `[${item.at}] ${String(item.kind || "event").toUpperCase()} ${item.text || ""}`;
       root.appendChild(row);
     });
   });
@@ -587,8 +644,9 @@ function renderPlan() {
   const plan = state.plan;
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
-  setTextAll("[data-plan-summary]", plan ? `live round ${plan.round}` : "waiting for real plan");
-  if (maybe("goalLine")) $("goalLine").textContent = `Goal: ${firstUserMessage() || "waiting for a task."}`;
+  const calls = planCalls(plan);
+  setTextAll("[data-plan-summary]", plan ? `round ${plan.round} · ${calls.length} call(s)` : "waiting for real plan");
+  renderGoalPanel();
   renderSceneAssets();
   if (!plan) {
     roots.forEach((root) => {
@@ -600,53 +658,213 @@ function renderPlan() {
     renderExecutionDetail(null, "PENDING");
     return;
   }
-  const nodeStateByIndex = new Map();
-  Object.entries(state.nodeStates || {}).forEach(([index, result]) => nodeStateByIndex.set(Number(index), result));
-  state.batches.forEach((batch) => {
-    (batch.results || []).forEach((result) => nodeStateByIndex.set(Number(result.nodeIndex), result));
-  });
-  const depths = computeNodeDepths(plan);
+  const resultMaps = buildResultMaps();
+  const nodeStateByIndex = resultMaps.byIndex;
   const runningIndex = pickRunningIndex(plan, nodeStateByIndex);
-  const rows = plan.nodes.map((node) => ({ node, status: nodeStatus(node, nodeStateByIndex, runningIndex) }));
+  const rows = planForestNodes(plan).map(({ node, depth }) => ({
+    node,
+    depth,
+    status: aggregateNodeStatus(node, plan, resultMaps, runningIndex),
+  }));
   roots.forEach((root) => {
-    const compact = root.dataset.planTree === "compact";
-    rows.slice(0, compact ? 8 : rows.length).forEach(({ node, status }) => {
-      const row = makePlanRow(node, status, depths, runningIndex);
-      root.appendChild(row);
-    });
-    if (compact && rows.length > 8) {
-      const more = document.createElement("button");
-      more.type = "button";
-      more.className = "snapshot-more";
-      more.textContent = `Open RTDL for ${rows.length - 8} more node(s)`;
-      more.addEventListener("click", () => activatePage("rtdl"));
-      root.appendChild(more);
-    }
+    renderBehaviorTree(root, plan, resultMaps, runningIndex);
   });
   const activeNode = plan.nodes.find((node) => node.index === runningIndex) || plan.nodes.find((node) => node.call) || plan.nodes[0];
-  renderExecutionDetail(activeNode, nodeStatus(activeNode, nodeStateByIndex, runningIndex), nodeStateByIndex.get(activeNode?.index));
+  renderExecutionDetail(activeNode, aggregateNodeStatus(activeNode, plan, resultMaps, runningIndex), resultForNode(activeNode, resultMaps));
 }
 
-function makePlanRow(node, status, depths, runningIndex) {
+function renderBehaviorTree(root, plan, resultMaps, runningIndex) {
+  const nodes = plan?.nodes || [];
+  const nodeStateByIndex = resultMaps.byIndex;
+  const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
+  const childSet = new Set();
+  nodes.forEach((node) => (node.children || []).forEach((child) => childSet.add(Number(child))));
+  const treeRoots = [];
+  if (plan.rootIndex !== undefined && byIndex.has(Number(plan.rootIndex))) {
+    treeRoots.push(byIndex.get(Number(plan.rootIndex)));
+  }
+  nodes.forEach((node) => {
+    if (!childSet.has(Number(node.index)) && !treeRoots.includes(node)) treeRoots.push(node);
+  });
+  if (!treeRoots.length && nodes.length) treeRoots.push(nodes[0]);
+
+  treeRoots.forEach((treeRoot, treeIndex) => {
+    const status = aggregateNodeStatus(treeRoot, plan, resultMaps, runningIndex);
+    const card = document.createElement("div");
+    card.className = "bt-tree-card";
+    const header = document.createElement("div");
+    header.className = "bt-tree-header";
+    const title = document.createElement("strong");
+    title.textContent = treeRoots.length > 1 ? `Tree ${treeIndex + 1}: ${nodeLabel(treeRoot)}` : nodeLabel(treeRoot);
+    const pill = document.createElement("span");
+    pill.className = `status ${statusKey(status)}`;
+    pill.textContent = displayStatus(status);
+    header.append(title, pill);
+    const viewport = document.createElement("div");
+    viewport.className = "bt-tree-viewport";
+    viewport.appendChild(makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex));
+    card.append(header, viewport);
+    root.appendChild(card);
+  });
+}
+
+function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
+  const nodes = plan?.nodes || [];
+  const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
+  const nodeStateByIndex = resultMaps.byIndex;
+  const nodeW = 62;
+  const nodeH = 21;
+  const leafGap = 9;
+  const levelGap = 34;
+  const topPad = 13;
+  const sidePad = 10;
+  const laid = [];
+  let cursor = sidePad;
+
+  const layout = (node, depth) => {
+    const children = (node.children || []).map((child) => byIndex.get(Number(child))).filter(Boolean);
+    if (!children.length) {
+      const pos = { node, depth, x: cursor + nodeW / 2, y: topPad + depth * levelGap };
+      cursor += nodeW + leafGap;
+      laid.push(pos);
+      return pos;
+    }
+    const childPos = children.map((child) => layout(child, depth + 1));
+    const x = (childPos[0].x + childPos[childPos.length - 1].x) / 2;
+    const pos = { node, depth, x, y: topPad + depth * levelGap };
+    laid.push(pos);
+    return pos;
+  };
+
+  layout(treeRoot, 0);
+  const maxDepth = laid.reduce((m, item) => Math.max(m, item.depth), 0);
+  const width = Math.max(220, cursor + sidePad);
+  const height = Math.max(88, topPad * 2 + nodeH + maxDepth * levelGap);
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "bt-svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+
+  const posByIndex = new Map(laid.map((item) => [Number(item.node.index), item]));
+  laid.forEach(({ node, x, y }) => {
+    (node.children || []).forEach((child) => {
+      const cp = posByIndex.get(Number(child));
+      if (!cp) return;
+      const line = document.createElementNS(ns, "path");
+      const y1 = y + nodeH;
+      const y2 = cp.y;
+      line.setAttribute("class", "bt-edge");
+      line.setAttribute("d", `M ${x} ${y1} C ${x} ${y1 + 12}, ${cp.x} ${y2 - 12}, ${cp.x} ${y2}`);
+      svg.appendChild(line);
+    });
+  });
+
+  const rootPos = posByIndex.get(Number(treeRoot?.index));
+  if (rootPos) {
+    const entry = document.createElementNS(ns, "circle");
+    entry.setAttribute("class", "bt-entry");
+    entry.setAttribute("cx", String(rootPos.x));
+    entry.setAttribute("cy", "8");
+    entry.setAttribute("r", "3");
+    svg.appendChild(entry);
+    const line = document.createElementNS(ns, "path");
+    line.setAttribute("class", "bt-edge");
+    line.setAttribute("d", `M ${rootPos.x} 11 L ${rootPos.x} ${rootPos.y}`);
+    svg.appendChild(line);
+  }
+
+  laid.forEach(({ node, x, y }) => {
+    const status = aggregateNodeStatus(node, plan, resultMaps, runningIndex);
+    const key = statusKey(status);
+    const g = document.createElementNS(ns, "g");
+    g.setAttribute("class", `bt-node status-${key}${Number(node.index) === Number(runningIndex) ? " active" : ""}`);
+    g.setAttribute("transform", `translate(${x - nodeW / 2}, ${y})`);
+    g.setAttribute("role", "button");
+    g.style.cursor = "pointer";
+    const title = document.createElementNS(ns, "title");
+    title.textContent = `${nodeLabel(node)} · ${capabilityLabel(node)} · ${displayStatus(status)}`;
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("width", String(nodeW));
+    rect.setAttribute("height", String(nodeH));
+    rect.setAttribute("rx", "5");
+    const accent = document.createElementNS(ns, "rect");
+    accent.setAttribute("class", "bt-node-accent");
+    accent.setAttribute("x", "0");
+    accent.setAttribute("y", "4");
+    accent.setAttribute("width", "2.5");
+    accent.setAttribute("height", String(nodeH - 8));
+    accent.setAttribute("rx", "1.25");
+    const text = document.createElementNS(ns, "text");
+    text.setAttribute("x", String(nodeW / 2));
+    text.setAttribute("y", "9.8");
+    text.setAttribute("text-anchor", "middle");
+    text.textContent = ellipsize(nodeLabel(node), 10);
+    const meta = document.createElementNS(ns, "text");
+    meta.setAttribute("class", "bt-node-meta");
+    meta.setAttribute("x", String(nodeW / 2));
+    meta.setAttribute("y", "17.5");
+    meta.setAttribute("text-anchor", "middle");
+    meta.textContent = node.call ? ellipsize(compactProvider(node.call), 12) : displayStatus(status);
+    g.append(title, rect, accent, text, meta);
+    g.addEventListener("click", () => renderExecutionDetail(node, status, resultForNode(node, resultMaps)));
+    svg.appendChild(g);
+  });
+
+  return svg;
+}
+
+function makePlanRow(node, status, depth, runningIndex) {
   const row = document.createElement("div");
-  row.className = `plan-row${node.index === runningIndex ? " active" : ""}`;
-  const name = document.createElement("span");
-  name.className = `node-name depth-${Math.min(depths.get(node.index) || 0, 3)}`;
-  name.textContent = `${node.children?.length ? "v" : "-"} ${node.index}. ${node.call?.name || node.kind}`;
-  const type = document.createElement("span");
-  type.textContent = node.kind || "op";
+  const key = statusKey(status);
+  row.className = `plan-row status-${key}${node.index === runningIndex ? " active" : ""}`;
+  row.style.setProperty("--depth", String(Math.min(depth || 0, 6)));
+  const rail = document.createElement("span");
+  rail.className = "node-rail";
+  const body = document.createElement("div");
+  body.className = "node-body";
+  const top = document.createElement("div");
+  top.className = "node-topline";
+  const name = document.createElement("strong");
+  name.className = "node-name";
+  name.textContent = nodeLabel(node);
   const statusEl = document.createElement("span");
-  statusEl.className = `status ${status.toLowerCase()}`;
-  statusEl.textContent = status;
+  statusEl.className = `status ${key}`;
+  statusEl.textContent = displayStatus(status);
+  top.append(name, statusEl);
+  const meta = document.createElement("div");
+  meta.className = "node-meta";
+  const type = document.createElement("span");
+  type.textContent = `#${node.index} · ${node.kind || "op"}`;
   const provider = document.createElement("span");
-  provider.textContent = node.call?.providerId || node.call?.contractId || "pilot";
-  const duration = document.createElement("span");
-  duration.textContent = durationForNode(node, status);
-  const started = document.createElement("span");
-  started.textContent = startedForNode(node, status);
-  row.append(name, type, statusEl, provider, duration, started);
+  provider.textContent = capabilityLabel(node);
+  meta.append(type, provider);
+  body.append(top, meta);
+  row.append(rail, body);
   row.addEventListener("click", () => renderExecutionDetail(node, status));
   return row;
+}
+
+function nodeLabel(node) {
+  if (node.call?.name) return node.call.name;
+  if (node.opId) return node.opId;
+  if (node.description) return node.description;
+  const kind = String(node.kind || (node.children?.length ? "sequence" : "leaf"));
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+function capabilityLabel(node) {
+  const call = node?.call || {};
+  return call.providerId || call.contractId || call.name || "pilot";
+}
+
+function compactProvider(call) {
+  const provider = String(call?.providerId || "");
+  const contract = String(call?.contractId || "");
+  const tail = contract ? contract.split("/").pop() : "";
+  if (provider && tail) return `${provider}.${tail}`;
+  return provider || tail || "call";
 }
 
 function formatArgs(value) {
@@ -669,6 +887,43 @@ function computeNodeDepths(plan) {
   return depths;
 }
 
+function planForestNodes(plan) {
+  const byIndex = new Map((plan?.nodes || []).map((node) => [Number(node.index), node]));
+  const seen = new Set();
+  const out = [];
+  const emit = (index, depth) => {
+    const idx = Number(index);
+    const node = byIndex.get(idx);
+    if (!node || seen.has(idx)) return;
+    seen.add(idx);
+    out.push({ node, depth });
+    (node.children || []).forEach((child) => emit(child, depth + 1));
+  };
+  if (plan && plan.rootIndex !== undefined) emit(plan.rootIndex, 0);
+  (plan?.nodes || []).forEach((node) => emit(node.index, 0));
+  return out;
+}
+
+function aggregateNodeStatus(node, plan, resultMaps, runningIndex) {
+  const own = resultForNode(node, resultMaps);
+  if (own?.state) return own.state;
+  if (Number(node?.index) === Number(runningIndex)) return "RUNNING";
+  const children = (node?.children || [])
+    .map((idx) => (plan?.nodes || []).find((item) => Number(item.index) === Number(idx)))
+    .filter(Boolean);
+  if (!children.length) return "PENDING";
+  const childStatuses = children.map((child) => statusKey(aggregateNodeStatus(child, plan, resultMaps, runningIndex)));
+  if (childStatuses.includes("failed")) return "FAILED";
+  if (childStatuses.includes("running")) return "RUNNING";
+  if (childStatuses.length && childStatuses.every((s) => s === "success")) return "SUCCEEDED";
+  return "PENDING";
+}
+
+function ellipsize(text, max) {
+  const value = String(text || "");
+  return value.length <= max ? value : `${value.slice(0, Math.max(1, max - 1))}…`;
+}
+
 function pickRunningIndex(plan, nodeStateByIndex) {
   const callable = plan.nodes.filter((node) => node.call);
   const explicitRunning = plan.nodes.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
@@ -689,23 +944,163 @@ function nodeStatus(node, nodeStateByIndex, runningIndex) {
 }
 
 function durationForNode(node, status) {
-  if (status === "PENDING") return "-";
-  if (status === "RUNNING") return "00:50";
+  const result = nodeResult(node);
+  const value = result?.durationMs ?? result?.duration_ms ?? result?.elapsedMs ?? result?.elapsed_ms;
+  if (Number.isFinite(Number(value))) return `${(Number(value) / 1000).toFixed(2)}s`;
+  const key = statusKey(status);
+  if (key === "pending") return "-";
+  if (key === "running") return "running";
   return "done";
 }
 
 function startedForNode(node, status) {
-  if (status === "PENDING") return "-";
-  const date = new Date();
+  const result = nodeResult(node);
+  const value = result?.startedAt || result?.started_at || result?.startTime || result?.start_time;
+  if (!value) return statusKey(status) === "pending" ? "-" : "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function statusKey(status) {
+  const raw = String(status || "pending").toLowerCase();
+  if (raw === "succeeded" || raw === "success" || raw === "done" || raw === "completed") return "success";
+  if (raw === "failed" || raw === "failure" || raw === "error") return "failed";
+  if (raw === "running" || raw === "in_progress" || raw === "active") return "running";
+  return "pending";
+}
+
+function displayStatus(status) {
+  return statusKey(status).toUpperCase();
 }
 
 function renderExecutionDetail(node, status, nodeState = null) {
   if (!maybe("activeProvider")) return;
-  $("activeProvider").textContent = node?.call?.providerId || node?.call?.contractId || "pilot";
+  if (maybe("executionDetailTitle")) $("executionDetailTitle").textContent = node ? "Node detail" : "Node detail";
+  if (!node) {
+    $("activeProvider").textContent = "-";
+    $("activeStarted").textContent = "-";
+    $("activeDuration").textContent = "-";
+    $("activeArgs").textContent = "Select an RTDL node to inspect its arguments and result.";
+    return;
+  }
+  $("activeProvider").textContent = detailProvider(node);
   $("activeStarted").textContent = node ? startedForNode(node, status) : "-";
   $("activeDuration").textContent = node ? durationForNode(node, status) : "-";
-  $("activeArgs").textContent = formatArgs(nodeState?.leafResult || node?.call?.args || { state: status, source: state.plan ? "pilot" : "waiting" });
+  $("activeArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
+}
+
+function buildResultMaps() {
+  const byIndex = new Map();
+  const byCallId = new Map();
+  const add = (result) => {
+    if (!result) return;
+    const idx = Number(result.nodeIndex);
+    if (Number.isFinite(idx)) byIndex.set(idx, result);
+    const callId = result.leafResult?.callId || result.callId;
+    if (callId) byCallId.set(String(callId), result);
+  };
+  Object.values(state.nodeStates || {}).forEach(add);
+  state.batches.forEach((batch) => (batch.results || []).forEach(add));
+  return { byIndex, byCallId };
+}
+
+function resultForNode(node, maps = buildResultMaps()) {
+  if (!node) return null;
+  const callId = node.call?.callId ? String(node.call.callId) : "";
+  if (callId && maps.byCallId?.has(callId)) return maps.byCallId.get(callId);
+  const indexed = maps.byIndex?.get(Number(node.index)) || state.nodeStates?.[String(node.index)] || null;
+  if (!indexed) return null;
+  if (!node.call) return indexed.leafResult ? { ...indexed, leafResult: null } : indexed;
+  const resultCallId = indexed.leafResult?.callId || indexed.callId || "";
+  return !resultCallId || String(resultCallId) === callId ? indexed : null;
+}
+
+function nodeResult(node) {
+  return resultForNode(node);
+}
+
+function detailProvider(node) {
+  if (!node) return "-";
+  if (!node.call) return `${node.kind || "op"}${node.opId ? ` / ${node.opId}` : ""}`;
+  return node.call.providerId || node.call.contractId || node.call.name || "call";
+}
+
+function detailPayload(node, status, nodeState) {
+  if (!node) return {};
+  if (!node.call) {
+    return {
+      kind: node.kind || "op",
+      opId: node.opId || "",
+      description: node.description || "",
+      status: displayStatus(status),
+      children: node.children || [],
+    };
+  }
+  return {
+    call: {
+      callId: node.call.callId || "",
+      providerId: node.call.providerId || "",
+      contractId: node.call.contractId || "",
+      name: node.call.name || "",
+      args: node.call.args || {},
+    },
+    result: nodeState?.leafResult || null,
+    state: nodeState?.state || displayStatus(status),
+  };
+}
+
+function planCalls(plan) {
+  return (plan?.nodes || []).filter((node) => node.call);
+}
+
+function activePlanNode() {
+  const plan = state.plan;
+  if (!plan) return null;
+  const nodeStateByIndex = new Map();
+  Object.entries(state.nodeStates || {}).forEach(([index, result]) => nodeStateByIndex.set(Number(index), result));
+  state.batches.forEach((batch) => {
+    (batch.results || []).forEach((result) => nodeStateByIndex.set(Number(result.nodeIndex), result));
+  });
+  const runningIndex = pickRunningIndex(plan, nodeStateByIndex);
+  return plan.nodes.find((node) => node.index === runningIndex) || plan.nodes.find((node) => node.call) || null;
+}
+
+function renderGoalPanel() {
+  const task = state.taskState || {};
+  const active = activePlanNode();
+  const taskText = task.goal || task.task || firstUserMessage() || "waiting for task";
+  const status = task.status || (active ? "executing" : "idle");
+  if (maybe("goalLine")) $("goalLine").textContent = `${status}: ${taskText}`;
+  document.querySelectorAll("[data-goal-preview]").forEach((goal) => {
+    clear(goal);
+    const card = document.createElement("div");
+    card.className = "goal-card";
+    const title = document.createElement("strong");
+    title.textContent = active ? nodeLabel(active) : "No active RTDL node";
+    const provider = document.createElement("span");
+    provider.textContent = active ? capabilityLabel(active) : "Submit a task to start a plan.";
+    card.append(title, provider);
+    const target = goalSummary(active);
+    if (target) {
+      const detail = document.createElement("pre");
+      detail.className = "goal-json";
+      detail.textContent = target;
+      card.appendChild(detail);
+    }
+    goal.appendChild(card);
+  });
+}
+
+function goalSummary(node) {
+  const args = node?.call?.args;
+  if (!args || typeof args !== "object") return "";
+  const keys = ["goal", "object_id", "map_id", "target", "query", "text"];
+  const out = {};
+  keys.forEach((key) => {
+    if (args[key] !== undefined) out[key] = args[key];
+  });
+  return Object.keys(out).length ? formatArgs(out) : "";
 }
 
 function currentTaskLabel() {
@@ -715,7 +1110,11 @@ function currentTaskLabel() {
 }
 
 async function refreshSystem() {
-  const atlas = buildAtlasEndpoint($("robotHost").value, $("atlasPort").value) || "127.0.0.1:50051";
+  const atlas = buildAtlasEndpoint($("robotHost").value, $("atlasPort").value);
+  if (!atlas) {
+    renderSystem({ error: "Set Robot Host and Atlas Port first.", summary: { state: "offline" }, requiredContracts: [], providers: [] });
+    return;
+  }
   const data = await fetch(`/api/system?atlas=${encodeURIComponent(atlas)}`).then((r) => r.json()).catch((error) => ({ error: String(error) }));
   renderSystem(data);
 }
@@ -723,10 +1122,15 @@ async function refreshSystem() {
 function renderSystem(data) {
   const summary = data.summary || {};
   const stateLabel = data.error ? "offline" : summary.state || "unknown";
+  const online = !data.error;
   $("connectionState").textContent = stateLabel;
-  $("refreshSystem").classList.toggle("offline", stateLabel === "offline");
-  if (maybe("systemStateLabel")) $("systemStateLabel").textContent = stateLabel;
-  if (maybe("vitalsSummary")) $("vitalsSummary").textContent = `${summary.active || 0} active, ${summary.errors || 0} error(s)`;
+  $("refreshSystem").classList.toggle("offline", !online);
+  $("refreshSystem").classList.toggle("online", online);
+  if (maybe("connectNow")) {
+    $("connectNow").textContent = online ? "Connected" : "Connect";
+    $("connectNow").classList.toggle("connected", online);
+    $("connectNow").title = online ? "Atlas is reachable" : "Check Atlas connection";
+  }
   if (maybe("metricState")) $("metricState").textContent = stateLabel;
   if (maybe("metricActive")) $("metricActive").textContent = String(summary.active || 0);
   if (maybe("metricErrors")) $("metricErrors").textContent = String(summary.errors || 0);
@@ -770,6 +1174,7 @@ function renderSystem(data) {
 }
 
 function renderRobotState(data) {
+  if (!document.querySelector("[data-robot-state-list]")) return;
   const contracts = data.requiredContracts || [];
   const summary = data.summary || {};
   const recording = maybe("voiceState") ? $("voiceState").textContent === "recording" : false;
@@ -829,39 +1234,6 @@ function contractAvailable(contracts, label) {
 
 function renderSceneAssets() {
   renderObjectTable();
-  const latest = latestImageAttachment();
-  const navGoal = latestNavigationGoal();
-  document.querySelectorAll("[data-camera-feed]").forEach((camera) => {
-    clear(camera);
-    if (latest) {
-      const img = document.createElement("img");
-      img.src = latest.dataUrl;
-      img.alt = latest.name || "camera attachment";
-      camera.appendChild(img);
-    }
-  });
-  document.querySelectorAll("[data-goal-preview]").forEach((goal) => {
-    clear(goal);
-    const goalCard = document.createElement("div");
-    goalCard.className = "goal-card";
-    if (latest) {
-      const img = document.createElement("img");
-      img.src = latest.dataUrl;
-      img.alt = latest.name || "target attachment";
-      goal.appendChild(img);
-    }
-    const title = document.createElement("strong");
-    const pose = document.createElement("span");
-    if (navGoal) {
-      title.textContent = "Navigation target";
-      pose.textContent = `Goal pose x: ${formatMeters(navGoal.x)}, y: ${formatMeters(navGoal.y)}, theta: ${formatRadians(navGoal.yaw)}`;
-    } else {
-      title.textContent = "No active navigation goal";
-      pose.textContent = "A target will appear when Pilot emits a navigation RTDL call.";
-    }
-    goalCard.append(title, pose);
-    goal.appendChild(goalCard);
-  });
 }
 
 function latestNavigationGoal() {
@@ -907,24 +1279,6 @@ function formatRadians(value) {
 function renderObjectTable() {
   document.querySelectorAll("[data-object-table]").forEach((root) => {
     clear(root);
-    const head = document.createElement("div");
-    head.className = "object-head";
-    ["ID", "Label", "Distance", "Position (m)", "Confidence"].forEach((item) => {
-      const cell = document.createElement("span");
-      cell.textContent = item;
-      head.appendChild(cell);
-    });
-    root.appendChild(head);
-    mockObjects.forEach((item, index) => {
-      const row = document.createElement("div");
-      row.className = `object-row${index === 0 ? " active" : ""}`;
-      [item.id, item.label, item.distance, item.position, item.confidence].forEach((value) => {
-        const cell = document.createElement("span");
-        cell.textContent = String(value);
-        row.appendChild(cell);
-      });
-      root.appendChild(row);
-    });
   });
 }
 
@@ -1106,31 +1460,42 @@ function formatConversationTime(ms) {
   return date.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-async function startBridge() {
-  appendAudioLog("starting local audio bridge");
-  const result = await fetch("/api/audio-bridge/start", {
+async function startAudioServer() {
+  appendAudioLog("starting client audio device server");
+  const result = await fetch("/api/audio-server/start", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ host: "0.0.0.0", port: 60000, uiHost: "127.0.0.1" }),
+    body: JSON.stringify({}),
   }).then((r) => r.json());
-  renderBridge(result);
-  await checkBridge();
-  startAudioBridgeStreams();
+  renderAudioServer(result);
+  await checkAudioServer();
+  startAudioServerStreams();
   loadAudioDevices();
 }
 
-async function checkBridge() {
-  const result = await fetch("/api/audio-bridge/health").then((r) => r.json());
-  renderBridge(result);
+async function checkAudioServer() {
+  const status = await fetch("/api/audio-server/status").then((r) => r.json()).catch((error) => ({ error: String(error) }));
+  renderAudioServer(status);
+  if (!status.wsUrl) return;
+  const target = new URL(status.wsUrl);
+  const result = await fetch(`/api/audio-server/health?host=${encodeURIComponent(target.hostname)}&port=${encodeURIComponent(target.port)}`)
+    .then((r) => r.json())
+    .catch((error) => ({ error: String(error) }));
+  renderAudioServer({ ...status, ...result, wsUrl: status.wsUrl, uiUrl: status.uiUrl, logPath: status.logPath });
   if (result.reachable || result.ok) {
-    startAudioBridgeStreams();
+    startAudioServerStreams();
     loadAudioDevices();
   }
 }
 
-function bridgeOnce(path, body = null) {
+function audioServerOnce(path, body = null) {
   return new Promise((resolve) => {
-    const socket = new WebSocket(bridgeWsUrl(path));
+    const url = audioServerWsUrl(path);
+    if (!url) {
+      resolve({ ok: false, error: "client audio device server is not discovered; start or check it first" });
+      return;
+    }
+    const socket = new WebSocket(url);
     let settled = false;
     const done = (payload) => {
       if (settled) return;
@@ -1152,13 +1517,13 @@ function bridgeOnce(path, body = null) {
         done({ ok: false, error: String(event.data || "invalid bridge response") });
       }
     };
-    socket.onerror = () => done({ ok: false, error: `cannot connect ${bridgeWsUrl(path)}` });
-    socket.onclose = () => done({ ok: false, error: `closed ${bridgeWsUrl(path)}` });
+    socket.onerror = () => done({ ok: false, error: `cannot connect ${url}` });
+    socket.onclose = () => done({ ok: false, error: `closed ${url}` });
   });
 }
 
 async function loadAudioDevices() {
-  const result = await bridgeOnce("/devices");
+  const result = await audioServerOnce("/devices");
   if (!result || result.ok === false) {
     appendAudioLog(`device refresh failed: ${result?.error || "unknown error"}`);
     return;
@@ -1202,19 +1567,22 @@ async function applyAudioDevices() {
   if (input !== undefined && input !== "") body.input = Number(input);
   if (output !== undefined && output !== "") body.output = Number(output);
   appendAudioLog(`applying devices ${JSON.stringify(body)}`);
-  const result = await bridgeOnce("/set_device", body);
+  const result = await audioServerOnce("/set_device", body);
   appendAudioLog(result.ok ? "device selection applied" : `device selection failed: ${result.error || "unknown error"}`);
   await loadAudioDevices();
 }
 
-function startAudioBridgeStreams() {
+function startAudioServerStreams() {
+  if (!state.audio.wsUrl) return;
   startAudioVuStream();
   startAudioLogStream();
 }
 
 function startAudioVuStream() {
   if (state.audio.vuSocket && state.audio.vuSocket.readyState <= WebSocket.OPEN) return;
-  const socket = new WebSocket(bridgeWsUrl("/vu"));
+  const url = audioServerWsUrl("/vu");
+  if (!url) return;
+  const socket = new WebSocket(url);
   state.audio.vuSocket = socket;
   socket.onopen = () => {
     setText("audioLevelState", "live");
@@ -1237,7 +1605,9 @@ function startAudioVuStream() {
 
 function startAudioLogStream() {
   if (state.audio.logSocket && state.audio.logSocket.readyState <= WebSocket.OPEN) return;
-  const socket = new WebSocket(bridgeWsUrl("/log"));
+  const url = audioServerWsUrl("/log");
+  if (!url) return;
+  const socket = new WebSocket(url);
   state.audio.logSocket = socket;
   socket.onopen = () => appendAudioLog("log stream connected");
   socket.onmessage = (event) => appendAudioLog(event.data);
@@ -1250,6 +1620,9 @@ function startAudioLogStream() {
 function renderAudioLevel(level) {
   const raw = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
   const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
+  if (state.ttsPlaying) {
+    document.documentElement.style.setProperty("--voice-level", String(Math.max(0.16, Math.min(0.86, display))));
+  }
   state.audio.levelHistory.push(display);
   state.audio.levelHistory = state.audio.levelHistory.slice(-28);
   if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
@@ -1257,6 +1630,12 @@ function renderAudioLevel(level) {
   setText("audioLevelText", label);
   if (maybe("audioLevelText")) $("audioLevelText").title = `raw RMS ${raw.toFixed(4)}`;
   renderAudioBars();
+}
+
+function setTtsAura(active) {
+  state.ttsPlaying = Boolean(active);
+  document.body.classList.toggle("tts-speaking", state.ttsPlaying);
+  document.documentElement.style.setProperty("--voice-level", state.ttsPlaying ? "0.28" : "0");
 }
 
 function renderAudioBars() {
@@ -1276,13 +1655,21 @@ function appendAudioLog(line) {
   const text = normalizeAudioLogLine(line);
   if (!text) return;
   const stamp = new Date().toLocaleTimeString();
-  const lines = root.textContent.trimEnd() ? root.textContent.trimEnd().split("\n") : [];
-  const next = `[${stamp}] ${text}`;
-  if (lines[lines.length - 1] === next) return;
-  lines.push(next);
-  root.textContent = `${lines.slice(-AUDIO_LOG_MAX_LINES).join("\n")}\n`;
+  const lines = state.audio.logLines || [];
+  const last = lines[lines.length - 1];
+  if (last && last.text === text) {
+    last.count = (last.count || 1) + 1;
+    last.stamp = stamp;
+  } else {
+    lines.push({ stamp, text, count: 1 });
+  }
+  state.audio.logLines = lines.slice(-AUDIO_LOG_MAX_LINES);
+  root.textContent = `${state.audio.logLines.map((item) => {
+    const suffix = item.count > 1 ? ` x${item.count}` : "";
+    return `[${item.stamp}] ${item.text}${suffix}`;
+  }).join("\n")}\n`;
   root.scrollTop = root.scrollHeight;
-  setText("audioLogSummary", "Bridge connection log.");
+  setText("audioLogSummary", "Audio device log.");
 }
 
 function normalizeAudioLogLine(line) {
@@ -1293,9 +1680,11 @@ function normalizeAudioLogLine(line) {
     .filter(Boolean)
     .join(" ");
   if (!text) return "";
+  if (/^connection open$/i.test(text)) return "";
   if (/^[<>]\s+(TEXT|BINARY|PING|PONG|CLOSE)\b/.test(text)) return "";
   if (/^[=%]\s+/.test(text) && /(connection|keepalive|opcode|frame|close|open)/i.test(text)) return "";
   if (/websockets\.(client|server|protocol|connection)/i.test(text)) return "";
+  if (/opening handshake failed/i.test(text)) return "";
   if (/(^|\s)[<>]\s+TEXT\b/.test(text)) return "";
   if (text.length <= AUDIO_LOG_MAX_CHARS) return text;
   return `${text.slice(0, AUDIO_LOG_MAX_CHARS)} ... [${text.length} chars]`;
@@ -1343,7 +1732,7 @@ async function testSpeaker() {
     : `speaker failed: ${result.error}`;
   addMessage(result.ok ? "status" : "error", text);
   addTimeline(result.ok ? "audio" : "error", text);
-  renderBridge({
+  renderAudioServer({
     ok: result.ok,
     error: result.error || "",
     url: result.ok ? `tts ${result.ttsEndpoint} / speaker ${result.speakerEndpoint}` : "",
@@ -1359,7 +1748,7 @@ function renderEnroll(result) {
     ? `${result.alreadyEnrolled ? "using existing" : "enrolled"} voice:${result.userId} (${result.bytes} bytes)`
     : `enroll failed: ${result.error}`;
   addTimeline("voiceprint", text);
-  const root = $("bridgeStatus");
+  const root = $("audioServerStatus");
   clear(root);
   const div = document.createElement("div");
   div.className = result.ok ? "ok" : "bad";
@@ -1389,16 +1778,18 @@ function normalizeVoiceId(rawUserId) {
   return value;
 }
 
-function renderBridge(result) {
-  const root = maybe("bridgeStatus");
+function renderAudioServer(result) {
+  const root = maybe("audioServerStatus");
   if (!root) return;
   clear(root);
+  if (result.wsUrl) state.audio.wsUrl = result.wsUrl;
   const online = Boolean(result.ok || result.reachable);
-  setText("audioBridgeState", online ? "online" : "offline");
-  setText("audioBridgeSummary", online ? (result.url || result.wsUrl || "Bridge reachable.") : (result.error || "Bridge is offline."));
+  setText("audioServerState", online ? "online" : "offline");
+  setText("audioServerSummary", online ? (result.url || result.wsUrl || "Audio device server reachable.") : (result.error || "Client audio device server is offline."));
   const lines = [
     online ? "ok" : "not reachable",
     result.error || "",
+    result.wsUrl || "",
     result.uiUrl || result.url || "",
     result.logPath || "",
   ].filter(Boolean);
@@ -1419,8 +1810,20 @@ function setText(id, text) {
 function setBusy(value) {
   state.busy = value;
   $("sendButton").classList.toggle("busy", value);
-  $("voiceButton").classList.toggle("busy", value);
+  $("sendButton").textContent = value ? "Steer" : "Send";
+  $("sendButton").title = value ? "Steer current task" : "Send task";
+  maybe("voiceButton")?.classList.toggle("busy", value);
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.toggle("busy", value));
+}
+
+function beginStream() {
+  state.activeStreams += 1;
+  setBusy(true);
+}
+
+function endStream() {
+  state.activeStreams = Math.max(0, state.activeStreams - 1);
+  setBusy(state.activeStreams > 0);
 }
 
 function setTextAll(selector, text) {

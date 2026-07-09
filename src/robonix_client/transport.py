@@ -288,6 +288,8 @@ def build_text_task(
     settings: ClientSettings,
     text: str,
     attachments: list[dict[str, Any]] | None = None,
+    *,
+    steer: bool = False,
 ) -> Any:
     session_id = settings.session_id or str(uuid.uuid4())
     user_id = settings.user_id or "local:robonix-client"
@@ -295,7 +297,10 @@ def build_text_task(
         "user_id": user_id,
         "modality": "image" if attachments else "text",
         "client": "robonix-client-gui",
+        "interaction_mode": "steer" if steer else "task",
     }
+    if steer:
+        context["steer"] = True
     if attachments:
         context["attachments"] = attachments
     return pilot_pb2.Task(
@@ -327,8 +332,10 @@ async def submit_text(
     settings: ClientSettings,
     text: str,
     attachments: list[dict[str, Any]] | None = None,
+    *,
+    steer: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
-    async for item in _submit_text_once(settings, text, attachments):
+    async for item in _submit_text_once(settings, text, attachments, steer=steer):
         yield item
 
 
@@ -336,9 +343,11 @@ async def _submit_text_once(
     settings: ClientSettings,
     text: str,
     attachments: list[dict[str, Any]] | None = None,
+    *,
+    steer: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
-    task = build_text_task(settings, text, attachments)
+    task = build_text_task(settings, text, attachments, steer=steer)
     async with grpc.aio.insecure_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
@@ -363,8 +372,18 @@ async def notify_session_end(settings: ClientSettings) -> None:
             pass
 
 
-async def start_voice_session(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
+async def start_voice_session(
+    settings: ClientSettings,
+    *,
+    steer: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_VOICE)
+    context: dict[str, Any] = {
+        "client": "robonix-client-gui",
+        "interaction_mode": "steer" if steer else "voice",
+    }
+    if steer:
+        context["steer"] = True
     req = liaison_pb2.StartVoiceSession_Request(
         session_id=settings.session_id or str(uuid.uuid4()),
         client_user_id=settings.user_id,
@@ -376,7 +395,7 @@ async def start_voice_session(settings: ClientSettings) -> AsyncIterator[dict[st
         voiceprint_node_id=settings.voiceprint_node_id,
         tts_node_id=settings.tts_node_id,
         speaker_node_id=settings.speaker_node_id,
-        context_json=json.dumps({"client": "robonix-client-gui"}),
+        context_json=json.dumps(context, ensure_ascii=False),
     )
     async with grpc.aio.insecure_channel(endpoint) as channel:
         call = channel.unary_stream(
@@ -465,7 +484,7 @@ async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
     if not pcm:
         raise RobonixApiError(
             "mic stream returned no audio. Ensure the robot-side mic primitive is pointed at a "
-            "reachable audio bridge host and that the bridge is serving ws://<operator-host>:60000/mic."
+            "reachable audio device server host and that the server is serving ws://<client-host>:60000/mic."
         )
     return pcm
 

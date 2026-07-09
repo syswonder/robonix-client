@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audio_bridge_control
+from . import audio_server_control
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
@@ -37,10 +37,10 @@ def _split_default_atlas(raw: str) -> tuple[str, int]:
     return host, port
 
 
-class BridgeStartRequest(BaseModel):
-    host: str = "0.0.0.0"
-    port: int = 60000
-    uiHost: str = "127.0.0.1"
+class AudioServerStartRequest(BaseModel):
+    host: str = audio_server_control.DEFAULT_BRIDGE_BIND_HOST
+    port: int = audio_server_control.DEFAULT_BRIDGE_PORT
+    uiHost: str = audio_server_control.DEFAULT_UI_HOST
 
 
 class EnrollRequest(BaseModel):
@@ -53,6 +53,10 @@ class EnrollRequest(BaseModel):
 class AudioPlayTestRequest(BaseModel):
     settings: dict[str, Any] = {}
     text: str = "Robonix speaker test"
+
+
+def _payload_steer(payload: dict[str, Any]) -> bool:
+    return bool(payload.get("steer") or payload.get("interactionMode") == "steer")
 
 
 @app.get("/")
@@ -84,6 +88,12 @@ async def defaults() -> dict[str, Any]:
         "sessionTitle": os.environ.get("ROBONIX_CLIENT_SESSION_TITLE", ""),
         "recordSeconds": int(os.environ.get("ROBONIX_CLIENT_RECORD_SECONDS", "30")),
         "ttsEnabled": os.environ.get("ROBONIX_CLIENT_TTS", "1").lower() not in {"0", "false", "no"},
+        "audioServer": {
+            "host": audio_server_control.DEFAULT_BRIDGE_HOST,
+            "bindHost": audio_server_control.DEFAULT_BRIDGE_BIND_HOST,
+            "port": audio_server_control.DEFAULT_BRIDGE_PORT,
+            "uiHost": audio_server_control.DEFAULT_UI_HOST,
+        },
         "launchOverrides": launch_overrides,
     }
 
@@ -102,19 +112,27 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
         }
 
 
-@app.post("/api/audio-bridge/start")
-async def audio_bridge_start(req: BridgeStartRequest) -> dict[str, Any]:
-    return audio_bridge_control.start(req.host, req.port, req.uiHost)
+@app.post("/api/audio-server/start")
+async def audio_server_start(req: AudioServerStartRequest) -> dict[str, Any]:
+    return audio_server_control.start(req.host, req.port, req.uiHost)
 
 
-@app.post("/api/audio-bridge/stop")
-async def audio_bridge_stop() -> dict[str, Any]:
-    return audio_bridge_control.stop()
+@app.post("/api/audio-server/stop")
+async def audio_server_stop() -> dict[str, Any]:
+    return audio_server_control.stop()
 
 
-@app.get("/api/audio-bridge/health")
-async def audio_bridge_health(host: str = Query("127.0.0.1"), port: int = Query(60000)) -> dict[str, Any]:
-    return await audio_bridge_control.health(host, port)
+@app.get("/api/audio-server/status")
+async def audio_server_status() -> dict[str, Any]:
+    return audio_server_control.status()
+
+
+@app.get("/api/audio-server/health")
+async def audio_server_health(
+    host: str = Query(audio_server_control.DEFAULT_BRIDGE_HOST),
+    port: int = Query(audio_server_control.DEFAULT_BRIDGE_PORT),
+) -> dict[str, Any]:
+    return await audio_server_control.health(host, port)
 
 
 @app.post("/api/voiceprint/enroll")
@@ -143,11 +161,12 @@ async def task_ws(ws: WebSocket) -> None:
         settings = ClientSettings.from_payload(payload.get("settings"))
         text = (payload.get("text") or "").strip()
         attachments = payload.get("attachments") or []
+        steer = _payload_steer(payload)
         if not text and not attachments:
             await ws.send_json({"type": "error", "error": "empty task"})
             return
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in submit_text(settings, text, attachments):
+        async for item in submit_text(settings, text, attachments, steer=steer):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:
@@ -164,8 +183,9 @@ async def voice_ws(ws: WebSocket) -> None:
     try:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
+        steer = _payload_steer(payload)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in start_voice_session(settings):
+        async for item in start_voice_session(settings, steer=steer):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:

@@ -64,6 +64,13 @@ state = {
 inject_lock = threading.Lock()
 inject_frames: list[bytes] = []
 
+_BLUETOOTH_NAME_HINTS: tuple[str, ...] = (
+    "airpods",
+    "bluetooth",
+    "iphone",
+    "ipad",
+)
+
 
 def _state(key):
     with state_lock:
@@ -75,17 +82,72 @@ def _set_state(key, value):
         state[key] = value
 
 
+def _is_likely_bluetooth(dev: dict) -> bool:
+    name = str(dev.get("name", "")).lower()
+    return any(h in name for h in _BLUETOOTH_NAME_HINTS)
+
+
+def pick_input_device(explicit: int | None) -> int | None:
+    if explicit is not None:
+        return explicit
+    default = sd.default.device[0]
+    if default is None or default < 0:
+        return None
+    try:
+        info = sd.query_devices(default)
+    except Exception:  # noqa: BLE001
+        return None
+    if not _is_likely_bluetooth(info):
+        return None
+    log.warning(
+        "default input device #%d (%s) looks like Bluetooth; "
+        "searching for a non-Bluetooth input for 16 kHz mono capture",
+        default,
+        info["name"],
+    )
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_input_channels"] > 0 and not _is_likely_bluetooth(d):
+            log.info("auto-picked input device #%d (%s)", i, d["name"])
+            return i
+    return None
+
+
+def pick_output_device(explicit: int | None) -> int | None:
+    if explicit is not None:
+        return explicit
+    default = sd.default.device[1]
+    if default is None or default < 0:
+        return None
+    try:
+        info = sd.query_devices(default)
+    except Exception:  # noqa: BLE001
+        return None
+    if info.get("max_output_channels", 0) > 0 and not _is_likely_bluetooth(info):
+        return default
+    log.warning(
+        "default output device #%s (%s) is not suitable for 16 kHz mono playback; "
+        "searching for a non-Bluetooth output",
+        default,
+        info.get("name", "<unknown>"),
+    )
+    for i, d in enumerate(sd.query_devices()):
+        if d["max_output_channels"] > 0 and not _is_likely_bluetooth(d):
+            log.info("auto-picked output device #%d (%s)", i, d["name"])
+            return i
+    return default if info.get("max_output_channels", 0) > 0 else None
+
+
 # ── /health ────────────────────────────────────────────────────────────────
 async def serve_health(ws) -> None:
-    in_dev = _state("input_device")
-    out_dev = _state("output_device")
+    in_dev = pick_input_device(_state("input_device"))
+    out_dev = pick_output_device(_state("output_device"))
     payload = {
         "ok": True,
         "platform": platform.system(),
         "sample_rate": SAMPLE_RATE,
         "frame_bytes": FRAME_BYTES,
         "input_device": in_dev if in_dev is not None else sd.default.device[0],
-        "output_device": out_dev if out_dev is not None else sd.default.device[1],
+        "output_device": out_dev,
     }
     await ws.send(json.dumps(payload))
 
@@ -159,7 +221,7 @@ async def serve_speaker(ws) -> None:
     _set_state("speaker_clients", _state("speaker_clients") + 1)
     loop = asyncio.get_event_loop()
     q: stdlib_queue.Queue = stdlib_queue.Queue(maxsize=64)
-    out_dev = _state("output_device")
+    out_dev = pick_output_device(_state("output_device"))
 
     # Bytearray buffer + lock — sounddevice's callback wants exactly
     # `len(outdata)` bytes per call (= FRAME_BYTES at our blocksize).
@@ -194,6 +256,10 @@ async def serve_speaker(ws) -> None:
         stream.start()
     except Exception as e:  # noqa: BLE001
         log.error("speaker stream open failed: %s", e)
+        try:
+            await ws.send(json.dumps({"ok": False, "error": str(e)}))
+        except Exception:  # noqa: BLE001
+            pass
         await ws.close(code=1011, reason=str(e)[:120])
         _set_state("speaker_clients", _state("speaker_clients") - 1)
         return
@@ -427,7 +493,7 @@ async def handler(ws):
 # glance that no untrusted string ever flows through HTML parsing.
 INDEX_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8" />
-<title>robonix audio bridge</title>
+<title>robonix audio device server</title>
 <style>
   body { font-family: -apple-system, sans-serif; margin: 2rem; max-width: 900px;
          background: #0e0e10; color: #eaeaea; }
@@ -447,7 +513,7 @@ INDEX_HTML = """<!DOCTYPE html>
   button:hover { background: #3a3a40; }
 </style>
 </head><body>
-<h1>robonix audio bridge — debug UI</h1>
+<h1>robonix audio device server — debug UI</h1>
 
 <div class="row"><label>input</label>
   <select id="in"></select><button id="refresh">refresh</button></div>
@@ -630,8 +696,12 @@ def main() -> int:
 
     if args.input_device is not None:
         _set_state("input_device", args.input_device)
+    else:
+        _set_state("input_device", pick_input_device(None))
     if args.output_device is not None:
         _set_state("output_device", args.output_device)
+    else:
+        _set_state("output_device", pick_output_device(None))
 
     global vu_monitor
     vu_monitor = VuMonitor()

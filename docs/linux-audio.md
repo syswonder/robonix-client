@@ -2,7 +2,7 @@
 
 The initial GUI targets macOS voice operation by reusing the existing
 `audio_client_bridge` protocol. Linux local audio should use the same Robonix
-primitive contracts as the macOS bridge:
+primitive contracts as the macOS audio device server:
 
 - `robonix/primitive/audio/mic`
 - `robonix/primitive/audio/speaker`
@@ -34,8 +34,8 @@ Native PipeWire:
 
 ## Recommended Next Step
 
-Create a sibling `audio_linux_bridge` daemon with the same WebSocket endpoints
-as the macOS bridge:
+Create a sibling `audio_linux_server` daemon with the same WebSocket endpoints
+as the macOS audio device server:
 
 - `/mic`
 - `/speaker`

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260709" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260709e" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,14 +14,13 @@
           <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
           <button class="nav-item" type="button" data-page="audio"><span>Audio</span></button>
         </nav>
-        <div class="operator-card">
-          <div class="operator-avatar">OP</div>
+        <div class="client-user-card">
+          <div class="client-user-avatar">OP</div>
           <div>
-            <strong>Operator</strong>
-            <span id="operatorId">local</span>
+            <strong>Client User</strong>
+            <span id="clientUserId">local</span>
           </div>
         </div>
-        <div class="version">v2.4.1</div>
       </aside>
 
       <main class="workspace">
@@ -40,16 +39,12 @@
           </label>
           <label class="select-field">
             <span>User</span>
-            <input id="userId" autocomplete="off" placeholder="voice:operator" />
+            <input id="userId" autocomplete="off" placeholder="voice:client" />
           </label>
           <button class="status-chip" id="refreshSystem" type="button">
             <span class="dot"></span>
             <span id="connectionState">offline</span>
           </button>
-          <div class="wake-word">
-            <span>Wake Word</span>
-            <button class="toggle-button active" id="voiceButton" type="button">ON</button>
-          </div>
           <button class="button connect-button" id="connectNow" type="button">Connect</button>
           <button class="danger-button" type="button" id="endSession">End Session</button>
         </header>
@@ -84,35 +79,11 @@
             </section>
 
             <section class="dashboard-sidebar" id="dashboardSidebar">
-              <section class="panel vitals-panel">
-                <div class="panel-header">
-                  <div>
-                    <h2>Vitals</h2>
-                    <span id="vitalsSummary">Waiting for Atlas snapshot.</span>
-                  </div>
-                  <span id="systemStateLabel">offline</span>
-                </div>
-                <div class="robot-content">
-                  <div class="robot-states" data-robot-state-list></div>
-                </div>
-              </section>
-
-              <section class="panel trace-panel thought-panel">
-                <div class="panel-header">
-                  <div>
-                    <h2>Plan / Thought</h2>
-                    <span data-event-summary>0</span>
-                  </div>
-                  <span data-current-task-label>Current Task: idle</span>
-                </div>
-                <div class="event-list" data-event-list></div>
-              </section>
-
               <section class="panel current-goal-panel">
                 <div class="panel-header compact">
                   <div>
                     <h2>Current Goal</h2>
-                    <span>Operator task and selected goal context.</span>
+                    <span>Current task and selected goal context.</span>
                   </div>
                 </div>
                 <div class="goal-line" id="goalLine">Goal: waiting for a task.</div>
@@ -122,7 +93,7 @@
               <section class="panel rtdl-panel execution-panel">
                 <div class="panel-header">
                   <div>
-                    <h2>RTDL Execution</h2>
+                    <h2>RTDL Forest</h2>
                     <span data-plan-summary>waiting for real plan</span>
                   </div>
                 </div>
@@ -138,7 +109,7 @@
                   <div class="plan-tree" data-plan-tree="full"></div>
                 </div>
                 <div class="execution-detail" id="executionDetail">
-                  <div class="detail-title">Active operation</div>
+                  <div class="detail-title" id="executionDetailTitle">Node detail</div>
                   <div class="detail-grid">
                     <div><span>Provider / ID</span><strong id="activeProvider">-</strong></div>
                     <div><span>Started</span><strong id="activeStarted">-</strong></div>
@@ -146,6 +117,17 @@
                   </div>
                   <pre class="args" id="activeArgs">{}</pre>
                 </div>
+              </section>
+
+              <section class="panel trace-panel thought-panel">
+                <div class="panel-header">
+                  <div>
+                    <h2>Event Log</h2>
+                    <span><span data-event-summary>0</span> event(s)</span>
+                  </div>
+                  <span data-current-task-label>Current Task: idle</span>
+                </div>
+                <div class="event-list" data-event-list></div>
               </section>
             </section>
           </section>
@@ -156,24 +138,24 @@
             <section class="panel audio-panel">
               <div class="panel-header">
                 <div>
-                  <h2>Audio Bridge</h2>
-                  <span id="audioBridgeSummary">Local audio bridge is not checked yet.</span>
+                  <h2>Audio Device Server</h2>
+                  <span id="audioServerSummary">Client-machine audio device server is not checked yet.</span>
                 </div>
-                <span id="audioBridgeState">offline</span>
+                <span id="audioServerState">offline</span>
               </div>
               <div class="audio-actions">
-                <button class="button" id="startBridge" type="button">Start Bridge</button>
-                <button class="button" id="checkBridge" type="button">Check</button>
+                <button class="button" id="startAudioServer" type="button">Start Audio</button>
+                <button class="button" id="checkAudioServer" type="button">Check</button>
                 <button class="button" id="refreshAudioDevices" type="button">Refresh Devices</button>
               </div>
-              <div class="audio-status-grid" id="bridgeStatus"></div>
+              <div class="audio-status-grid" id="audioServerStatus"></div>
             </section>
 
             <section class="panel audio-panel">
               <div class="panel-header">
                 <div>
                   <h2>Devices</h2>
-                  <span>Choose the local microphone and speaker used by Robonix.</span>
+                  <span>Choose this client machine's microphone and speaker.</span>
                 </div>
               </div>
               <div class="audio-device-grid">
@@ -220,7 +202,7 @@
                 </label>
                 <label class="field">
                   <span>User Name</span>
-                  <input id="enrollUserName" placeholder="Operator" />
+                  <input id="enrollUserName" placeholder="Client User" />
                 </label>
                 <label class="field">
                   <span>Record Seconds</span>
@@ -234,7 +216,7 @@
               <div class="panel-header">
                 <div>
                   <h2>Audio Log</h2>
-                  <span id="audioLogSummary">Bridge connection log.</span>
+                  <span id="audioLogSummary">Audio device log.</span>
                 </div>
               </div>
               <pre class="audio-log" id="audioLog"></pre>
@@ -244,6 +226,6 @@
       </main>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260709e"></script>
   </body>
 </html>

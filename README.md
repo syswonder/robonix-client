@@ -1,12 +1,12 @@
 # Robonix Client
 
-Robonix Client is the operator-facing desktop client for Robonix. It provides a
+Robonix Client is the client-facing desktop client for Robonix. It provides a
 single GUI for text, voice, and image interaction with a running Robonix system,
 plus live dashboard views for robot health, agent reasoning, RTDL execution, and
 runtime events.
 
 The client is designed to be multi-platform and robot-agnostic: it should run on
-developer/operator machines such as macOS and Linux desktops, while connecting
+developer/client machines such as macOS and Linux desktops, while connecting
 to a local or remote Robonix deployment through stable Robonix APIs.
 
 ## Goals
@@ -15,7 +15,7 @@ to a local or remote Robonix deployment through stable Robonix APIs.
 - Support text, voice, and image-based user input.
 - Display Robonix runtime state clearly during development and demos.
 - Make RTDL planning and execution observable instead of hidden in terminal logs.
-- Expose Vitals, failures, and recovery state in a form an operator can act on.
+- Expose Vitals, failures, and recovery state in a form an client user can act on.
 - Keep the client platform-neutral and independent from a specific simulator or
   robot body.
 
@@ -113,23 +113,23 @@ This repository now contains the first Python WebUI scaffold:
 - RTDL plan, batch result, and live event panels populated from streamed
   `PilotEvent` / `VoiceEvent` messages.
 - Vitals-style dashboard based on the current Atlas heartbeat/lifecycle state.
-- Bundled client audio bridge daemon copied from the Robonix examples, exposed as
-  `robonix-client-audio-bridge`.
+- Bundled client audio device server daemon copied from the Robonix examples, exposed as
+  `robonix-client-audio-server`.
 
 The client remains pure client-side software. Robonix core still owns Atlas,
 Liaison, Pilot, Executor, speech, voiceprint, and robot primitives.
 
 ## Quick Start
 
-This is the recommended flow for a remote operator setup: Robonix runs on a
-Linux host, while the browser, microphone, and speaker stay on the operator
+This is the recommended flow for a remote client setup: Robonix runs on a
+Linux host, while the browser, microphone, and speaker stay on the client
 machine. The client connects to the robot host by IP and Atlas port. SSH,
 Tailscale, or LAN are only network paths.
 
 ### 1. Start the Robonix backend
 
 Start a Robonix deployment that provides Atlas, Liaison, Pilot, Executor,
-speech, voiceprint, and the audio bridge primitive. `rbnx boot` starts Atlas as
+speech, voiceprint, and the audio device server primitive. `rbnx boot` starts Atlas as
 the first system component and then brings up the rest of the deployment:
 
 ```bash
@@ -139,15 +139,15 @@ rbnx boot
 # rbnx boot -f <manifest>
 ```
 
-When it is healthy, Atlas should be reachable from the operator machine at:
+When it is healthy, Atlas should be reachable from the client machine at:
 
 ```text
 <robot-host>:50051
 ```
 
-### 2. Start the GUI on the operator machine
+### 2. Start the GUI on the client machine
 
-From this repository on the operator Mac or Linux desktop:
+From this repository on the client Mac or Linux desktop:
 
 ```bash
 python3 -m venv .venv
@@ -162,16 +162,16 @@ Then open the GUI locally:
 http://127.0.0.1:7860/
 ```
 
-### 3. Start the local audio bridge
+### 3. Start the local audio device server
 
-On the same operator machine, start the audio bridge that owns the microphone
+On the same client machine, start the audio device server that owns the microphone
 and speaker:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[audio]"
-robonix-client-audio-bridge --host 127.0.0.1 --port 60000 --ui-host 127.0.0.1
+robonix-client-audio-server --host 127.0.0.1 --port 60000 --ui-host 127.0.0.1
 ```
 
 Expected output includes:
@@ -183,13 +183,13 @@ websocket on ws://127.0.0.1:60000
 
 Keep this terminal running.
 
-### 4. Point Robonix audio to the operator machine
+### 4. Point Robonix audio to the client machine
 
 Configure the robot-side `audio_client_bridge` primitive so it can reach the
-operator machine's audio bridge:
+client machine's audio device server:
 
-- `ws://<operator-host>:60000/mic`
-- `ws://<operator-host>:60000/speaker`
+- `ws://<client-host>:60000/mic`
+- `ws://<client-host>:60000/speaker`
 
 ### 5. Configure the WebUI
 
@@ -210,7 +210,7 @@ In the right `Audio` panel:
 - `Voice ID`: use the bare id, for example `<voice-id>`
 - `Name`: optional, usually the same as `Voice ID`
 
-Click `Check` to test the audio bridge, `Enroll voice` to register the speaker,
+Click `Check` to test the audio device server, `Enroll voice` to register the speaker,
 and `Test speaker` to verify TTS-to-speaker playback.
 
 ### 6. Use the client
@@ -231,8 +231,7 @@ implemented.
 
 - GUI page does not open on the Mac: make sure the Linux GUI process is running
   and the Mac has `ssh -N -L 7860:127.0.0.1:7860 ...` open.
-- Voice enrollment says mic returned no audio: make sure both the Mac audio
-  bridge and `ssh -N -R 60000:127.0.0.1:60000 ...` are running.
+- Voice enrollment says mic returned no audio: make sure both the Mac audio device server and `ssh -N -R 60000:127.0.0.1:60000 ...` are running.
 - Text submission is denied: set `User` to the allowed identity, usually
   `voice:<Voice ID>`, for example `voice:alice`.
 - `Vitals` shows `missing` for key contracts: restart or fix the corresponding
@@ -268,18 +267,18 @@ export ROBONIX_ATLAS_ENDPOINT=100.x.y.z:50051
 export ROBONIX_LIAISON_ENDPOINT=127.0.0.1:50081
 ```
 
-## macOS Audio Bridge
+## macOS Audio Device Server
 
 On the machine that owns the microphone and speaker:
 
 ```bash
 pip install -e ".[audio]"
-robonix-client-audio-bridge --host 0.0.0.0 --port 60000 --ui-host 127.0.0.1
+robonix-client-audio-server --host 0.0.0.0 --port 60000 --ui-host 127.0.0.1
 ```
 
-The bridge speaks the existing Robonix macOS audio protocol:
+The server speaks the existing Robonix macOS audio protocol:
 
-- WebSocket audio bridge: `ws://<mac-host>:60000`
+- WebSocket audio device server: `ws://<mac-host>:60000`
 - Device debug UI: `http://127.0.0.1:60001/`
 
 Point the Robonix deployment's `audio_client_bridge` primitive at that host and
