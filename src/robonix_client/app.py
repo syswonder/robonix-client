@@ -172,7 +172,12 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
 @app.post("/api/handsfree/set")
 async def handsfree_set(req: HandsfreeSetRequest) -> dict[str, Any]:
     try:
-        return await set_handsfree_enabled(ClientSettings.from_payload(req.settings), req.enabled)
+        settings = ClientSettings.from_payload(req.settings)
+        bridge = await _connect_selected_reverse_audio(settings) if req.enabled else None
+        response = await set_handsfree_enabled(settings, req.enabled)
+        if bridge is not None:
+            response["audioBridge"] = bridge
+        return response
     except Exception as exc:
         return {"available": False, "ok": False, "enabled": False, "state": "unavailable", "error": str(exc)}
 
@@ -246,19 +251,11 @@ async def audio_server_status() -> dict[str, Any]:
 
 @app.post("/api/audio-reverse/connect")
 async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, Any]:
-    global _reverse_audio
     try:
-        bridge = await discover_audio_bridge(
+        bridge = await _connect_reverse_audio(
             ClientSettings.from_payload(req.settings), req.providerId
         )
-        if _reverse_audio is None:
-            _reverse_audio = AudioReverseBridge(
-                bridge["endpoint"], audio_server_control.DEFAULT_BRIDGE_PORT
-            )
-            _reverse_audio.start()
-        else:
-            _reverse_audio.set_target(bridge["endpoint"])
-        return {"ok": True, **_reverse_audio.status()}
+        return {"ok": True, **bridge}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -268,6 +265,46 @@ async def audio_reverse_status() -> dict[str, Any]:
     if _reverse_audio is None:
         return {"connected": False, "target": "", "lastError": "reverse audio is disabled"}
     return _reverse_audio.status()
+
+
+async def _connect_reverse_audio(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
+    """Discover and connect one selected reverse-audio provider via Atlas."""
+    global _reverse_audio
+    bridge = await discover_audio_bridge(settings, provider_id)
+    if _reverse_audio is None:
+        _reverse_audio = AudioReverseBridge(
+            bridge["endpoint"], audio_server_control.DEFAULT_BRIDGE_PORT
+        )
+        _reverse_audio.start()
+    else:
+        _reverse_audio.set_target(bridge["endpoint"])
+    return {**bridge, **_reverse_audio.status()}
+
+
+async def _connect_selected_reverse_audio(settings: ClientSettings) -> dict[str, Any] | None:
+    """Connect only when the current audio route selects an Atlas bridge.
+
+    Device selection remains provider-agnostic: a robot USB driver needs no
+    client-side connection, while a reverse bridge is discovered from its
+    declared capability rather than a provider name or fixed port.
+    """
+    selected = [
+        provider_id
+        for provider_id in (settings.mic_node_id, settings.speaker_node_id)
+        if provider_id
+    ]
+    if not selected:
+        return None
+    providers = await list_audio_providers(settings)
+    bridge_ids = {
+        str(provider.get("id") or "")
+        for provider in providers.get("bridgeProviders", [])
+        if isinstance(provider, dict)
+    }
+    for provider_id in selected:
+        if provider_id in bridge_ids:
+            return await _connect_reverse_audio(settings, provider_id)
+    return None
 
 
 @app.get("/api/audio-server/health")

@@ -187,6 +187,18 @@ def rewrite_remote_endpoint(endpoint: str, atlas_endpoint: str) -> str:
     return normalize_grpc_target(endpoint)
 
 
+def rewrite_remote_websocket_endpoint(endpoint: str, atlas_endpoint: str) -> str:
+    """Replace a provider's loopback advertise host with the known robot host."""
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.hostname or parsed.port is None:
+        raise RobonixApiError(f"invalid reverse audio endpoint: {endpoint!r}")
+    atlas_host, _ = split_host_port(atlas_endpoint)
+    host = atlas_host if is_loopback_host(parsed.hostname) and atlas_host else parsed.hostname
+    if not host:
+        raise RobonixApiError(f"reverse audio endpoint has no usable host: {endpoint!r}")
+    return f"{parsed.scheme}://{host}:{parsed.port}{parsed.path or '/client'}"
+
+
 def _fallback_liaison(atlas_endpoint: str) -> str:
     atlas = normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS)
     parsed = urlparse(f"grpc://{atlas}")
@@ -377,7 +389,9 @@ async def discover_audio_bridge(settings: ClientSettings, provider_id: str) -> d
         raise RobonixApiError(response.detail or f"{provider_id} is not a reverse audio bridge")
     return {
         "providerId": provider_id,
-        "endpoint": response.endpoint,
+        "endpoint": rewrite_remote_websocket_endpoint(
+            response.endpoint, settings.atlas_endpoint
+        ),
         "connected": bool(response.connected),
         "detail": response.detail,
     }
