@@ -34,10 +34,15 @@ CONTRACT_PILOT = "robonix/system/pilot"
 CONTRACT_EXECUTOR = "robonix/system/executor"
 CONTRACT_MIC = "robonix/primitive/audio/mic"
 CONTRACT_SPEAKER = "robonix/primitive/audio/speaker"
+CONTRACT_AUDIO_LIST_DEVICES = "robonix/primitive/audio/list_devices"
+CONTRACT_AUDIO_SELECT_DEVICE = "robonix/primitive/audio/select_device"
+CONTRACT_AUDIO_BRIDGE_INFO = "robonix/primitive/audio/bridge_info"
 CONTRACT_ASR = "robonix/service/speech/asr"
 CONTRACT_TTS = "robonix/service/speech/tts"
 CONTRACT_VOICEPRINT = "robonix/service/voiceprint/identify"
 CONTRACT_VOICEPRINT_ENROLL = "robonix/service/voiceprint/enroll"
+CONTRACT_HANDSFREE_SET_ENABLED = "robonix/system/liaison/handsfree/set_enabled"
+CONTRACT_HANDSFREE_STATUS = "robonix/system/liaison/handsfree/status"
 
 PILOT_EVENT_NAMES = {
     0: "text_chunk",
@@ -113,10 +118,12 @@ class ClientSettings:
     language: str = ""
     tts_enabled: bool = True
     mic_node_id: str = ""
+    mic_device_id: str = ""
     asr_node_id: str = ""
     voiceprint_node_id: str = ""
     tts_node_id: str = ""
     speaker_node_id: str = ""
+    speaker_device_id: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ClientSettings":
@@ -134,10 +141,12 @@ class ClientSettings:
             language=(payload.get("language") or "").strip(),
             tts_enabled=bool(payload.get("ttsEnabled", True)),
             mic_node_id=(payload.get("micNodeId") or "").strip(),
+            mic_device_id=(payload.get("micDeviceId") or "").strip(),
             asr_node_id=(payload.get("asrNodeId") or "").strip(),
             voiceprint_node_id=(payload.get("voiceprintNodeId") or "").strip(),
             tts_node_id=(payload.get("ttsNodeId") or "").strip(),
             speaker_node_id=(payload.get("speakerNodeId") or "").strip(),
+            speaker_device_id=(payload.get("speakerDeviceId") or "").strip(),
         )
 
 
@@ -282,6 +291,162 @@ async def resolve_liaison(settings: ClientSettings, contract_id: str = CONTRACT_
         return await discover_endpoint(settings.atlas_endpoint, contract_id)
     except Exception:
         return _fallback_liaison(settings.atlas_endpoint)
+
+
+async def list_audio_providers(settings: ClientSettings) -> dict[str, list[dict[str, str]]]:
+    async def providers_for(contract_id: str) -> list[dict[str, str]]:
+        providers = await query_atlas(
+            settings.atlas_endpoint,
+            contract_id=contract_id,
+            transport=1,
+        )
+        seen: set[str] = set()
+        result: list[dict[str, str]] = []
+        for provider in providers:
+            provider_id = str(getattr(provider, "id", ""))
+            if not provider_id or provider_id in seen:
+                continue
+            if not any(
+                capability.contract_id == contract_id and capability.transport == 1
+                for capability in provider.capabilities
+            ):
+                continue
+            seen.add(provider_id)
+            result.append(
+                {
+                    "id": provider_id,
+                    "namespace": str(getattr(provider, "namespace", "")),
+                    "description": str(getattr(provider, "description", "")),
+                }
+            )
+        return result
+
+    return {
+        "micProviders": await providers_for(CONTRACT_MIC),
+        "speakerProviders": await providers_for(CONTRACT_SPEAKER),
+        "bridgeProviders": await providers_for(CONTRACT_AUDIO_BRIDGE_INFO),
+    }
+
+
+async def list_audio_devices(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
+    endpoint = await connect_capability(
+        settings.atlas_endpoint,
+        provider_id,
+        CONTRACT_AUDIO_LIST_DEVICES,
+    )
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixPrimitiveAudioListDevices/ListAudioDevices",
+        audio_pb2.ListAudioDevices_Request(),
+        audio_pb2.ListAudioDevices_Response,
+    )
+    return {
+        "providerId": provider_id,
+        "devices": [
+            {
+                "id": device.id,
+                "name": device.name,
+                "kind": device.kind,
+                "isDefault": bool(device.is_default),
+                "channels": int(device.channels),
+                "note": device.note,
+            }
+            for device in response.devices
+        ],
+        "currentInputId": response.current_input_id,
+        "currentOutputId": response.current_output_id,
+    }
+
+
+async def discover_audio_bridge(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
+    """Discover a reverse-audio endpoint through Atlas, never by port guesswork."""
+    if not provider_id:
+        raise RobonixApiError("audio bridge provider is required")
+    endpoint = await connect_capability(
+        settings.atlas_endpoint,
+        provider_id,
+        CONTRACT_AUDIO_BRIDGE_INFO,
+    )
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixPrimitiveAudioBridgeInfo/GetAudioBridgeInfo",
+        audio_pb2.GetAudioBridgeInfo_Request(),
+        audio_pb2.GetAudioBridgeInfo_Response,
+    )
+    if not response.reverse or not response.endpoint:
+        raise RobonixApiError(response.detail or f"{provider_id} is not a reverse audio bridge")
+    return {
+        "providerId": provider_id,
+        "endpoint": response.endpoint,
+        "connected": bool(response.connected),
+        "detail": response.detail,
+    }
+
+
+async def select_audio_device(
+    settings: ClientSettings,
+    provider_id: str,
+    kind: str,
+    device_id: str,
+) -> dict[str, Any]:
+    if kind not in {"input", "output"}:
+        raise RobonixApiError(f"unsupported audio device kind: {kind}")
+    endpoint = await connect_capability(
+        settings.atlas_endpoint,
+        provider_id,
+        CONTRACT_AUDIO_SELECT_DEVICE,
+    )
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixPrimitiveAudioSelectDevice/SelectAudioDevice",
+        audio_pb2.SelectAudioDevice_Request(kind=kind, id=device_id),
+        audio_pb2.SelectAudioDevice_Response,
+    )
+    if not response.ok:
+        raise RobonixApiError(response.error or f"{provider_id} rejected {kind} device")
+    return {"ok": True, "providerId": provider_id, "kind": kind, "deviceId": device_id}
+
+
+async def get_handsfree_status(settings: ClientSettings) -> dict[str, Any]:
+    endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_HANDSFREE_STATUS)
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixSystemLiaisonHandsfreeStatus/GetHandsfreeStatus",
+        liaison_pb2.GetHandsfreeStatus_Request(),
+        liaison_pb2.GetHandsfreeStatus_Response,
+    )
+    return {
+        "available": True,
+        "enabled": bool(response.enabled),
+        "state": response.state,
+        "keyword": response.keyword,
+        "lastWakeMs": int(response.last_wake_ms),
+        "lastTranscript": response.last_transcript,
+        "lastError": response.last_error,
+        "micProviderId": response.mic_provider_id,
+        "speakerProviderId": response.speaker_provider_id,
+    }
+
+
+async def set_handsfree_enabled(settings: ClientSettings, enabled: bool) -> dict[str, Any]:
+    endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_HANDSFREE_SET_ENABLED)
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixSystemLiaisonHandsfreeSetEnabled/SetHandsfree",
+        liaison_pb2.SetHandsfree_Request(
+            enabled=enabled,
+            mic_provider_id=settings.mic_node_id,
+            speaker_provider_id=settings.speaker_node_id,
+        ),
+        liaison_pb2.SetHandsfree_Response,
+    )
+    return {
+        "available": True,
+        "ok": bool(response.ok),
+        "enabled": bool(response.enabled),
+        "state": response.state,
+        "detail": response.detail,
+    }
 
 
 def build_text_task(

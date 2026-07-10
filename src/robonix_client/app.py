@@ -12,13 +12,20 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import audio_server_control
+from .audio_reverse_bridge import AudioReverseBridge
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
+    discover_audio_bridge,
     enroll_voiceprint,
+    get_handsfree_status,
+    list_audio_devices,
+    list_audio_providers,
     notify_session_end,
     play_tts_test,
+    select_audio_device,
     start_voice_session,
+    set_handsfree_enabled,
     submit_text,
     system_snapshot,
 )
@@ -27,6 +34,7 @@ STATIC_DIR = Path(__file__).with_name("static")
 
 app = FastAPI(title="Robonix Client", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+_reverse_audio: AudioReverseBridge | None = None
 
 
 def _split_default_atlas(raw: str) -> tuple[str, int]:
@@ -55,8 +63,47 @@ class AudioPlayTestRequest(BaseModel):
     text: str = "Robonix speaker test"
 
 
+class AudioReverseConnectRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    providerId: str
+
+
+class HandsfreeSetRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    enabled: bool
+
+
+class ClientSettingsRequest(BaseModel):
+    settings: dict[str, Any] = {}
+
+
+class AudioProviderDevicesRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    providerId: str
+
+
+class AudioRouteApplyRequest(BaseModel):
+    settings: dict[str, Any] = {}
+
+
 def _payload_steer(payload: dict[str, Any]) -> bool:
     return bool(payload.get("steer") or payload.get("interactionMode") == "steer")
+
+
+@app.on_event("startup")
+async def start_client_audio() -> None:
+    """Start local device I/O. The robot endpoint is Atlas-discovered later."""
+    if os.environ.get("ROBONIX_CLIENT_REVERSE_AUDIO", "1").lower() in {"0", "false", "no"}:
+        return
+    audio_server_control.start()
+
+
+@app.on_event("shutdown")
+async def stop_client_audio() -> None:
+    global _reverse_audio
+    if _reverse_audio is not None:
+        _reverse_audio.stop()
+        _reverse_audio = None
 
 
 @app.get("/")
@@ -75,6 +122,11 @@ async def defaults() -> dict[str, Any]:
         "ROBONIX_CLIENT_USER_ID",
         "ROBONIX_CLIENT_SESSION_ID",
         "ROBONIX_CLIENT_SESSION_TITLE",
+        "ROBONIX_CLIENT_MIC_NODE_ID",
+        "ROBONIX_CLIENT_MIC_DEVICE_ID",
+        "ROBONIX_CLIENT_SPEAKER_NODE_ID",
+        "ROBONIX_CLIENT_SPEAKER_DEVICE_ID",
+        "ROBONIX_CLIENT_TTS_NODE_ID",
     ):
         if os.environ.get(key):
             launch_overrides.append(key)
@@ -86,6 +138,11 @@ async def defaults() -> dict[str, Any]:
         "userId": os.environ.get("ROBONIX_CLIENT_USER_ID", ""),
         "sessionId": os.environ.get("ROBONIX_CLIENT_SESSION_ID", ""),
         "sessionTitle": os.environ.get("ROBONIX_CLIENT_SESSION_TITLE", ""),
+        "micNodeId": os.environ.get("ROBONIX_CLIENT_MIC_NODE_ID", ""),
+        "micDeviceId": os.environ.get("ROBONIX_CLIENT_MIC_DEVICE_ID", ""),
+        "speakerNodeId": os.environ.get("ROBONIX_CLIENT_SPEAKER_NODE_ID", ""),
+        "speakerDeviceId": os.environ.get("ROBONIX_CLIENT_SPEAKER_DEVICE_ID", ""),
+        "ttsNodeId": os.environ.get("ROBONIX_CLIENT_TTS_NODE_ID", ""),
         "recordSeconds": int(os.environ.get("ROBONIX_CLIENT_RECORD_SECONDS", "30")),
         "ttsEnabled": os.environ.get("ROBONIX_CLIENT_TTS", "1").lower() not in {"0", "false", "no"},
         "audioServer": {
@@ -112,6 +169,66 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
         }
 
 
+@app.post("/api/handsfree/set")
+async def handsfree_set(req: HandsfreeSetRequest) -> dict[str, Any]:
+    try:
+        return await set_handsfree_enabled(ClientSettings.from_payload(req.settings), req.enabled)
+    except Exception as exc:
+        return {"available": False, "ok": False, "enabled": False, "state": "unavailable", "error": str(exc)}
+
+
+@app.post("/api/handsfree/status")
+async def handsfree_status(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        return await get_handsfree_status(ClientSettings.from_payload(req.settings))
+    except Exception as exc:
+        return {"available": False, "enabled": False, "state": "unavailable", "error": str(exc)}
+
+
+@app.post("/api/audio-route/providers")
+async def audio_route_providers(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        return await list_audio_providers(ClientSettings.from_payload(req.settings))
+    except Exception as exc:
+        return {"micProviders": [], "speakerProviders": [], "error": str(exc)}
+
+
+@app.post("/api/audio-route/devices")
+async def audio_route_devices(req: AudioProviderDevicesRequest) -> dict[str, Any]:
+    try:
+        return await list_audio_devices(ClientSettings.from_payload(req.settings), req.providerId)
+    except Exception as exc:
+        return {"providerId": req.providerId, "devices": [], "error": str(exc)}
+
+
+@app.post("/api/audio-route/apply")
+async def audio_route_apply(req: AudioRouteApplyRequest) -> dict[str, Any]:
+    try:
+        settings = ClientSettings.from_payload(req.settings)
+        selected: list[dict[str, Any]] = []
+        if settings.mic_node_id and settings.mic_device_id:
+            selected.append(
+                await select_audio_device(
+                    settings,
+                    settings.mic_node_id,
+                    "input",
+                    settings.mic_device_id,
+                )
+            )
+        if settings.speaker_node_id and settings.speaker_device_id:
+            selected.append(
+                await select_audio_device(
+                    settings,
+                    settings.speaker_node_id,
+                    "output",
+                    settings.speaker_device_id,
+                )
+            )
+        return {"ok": True, "selected": selected}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/api/audio-server/start")
 async def audio_server_start(req: AudioServerStartRequest) -> dict[str, Any]:
     return audio_server_control.start(req.host, req.port, req.uiHost)
@@ -125,6 +242,32 @@ async def audio_server_stop() -> dict[str, Any]:
 @app.get("/api/audio-server/status")
 async def audio_server_status() -> dict[str, Any]:
     return audio_server_control.status()
+
+
+@app.post("/api/audio-reverse/connect")
+async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, Any]:
+    global _reverse_audio
+    try:
+        bridge = await discover_audio_bridge(
+            ClientSettings.from_payload(req.settings), req.providerId
+        )
+        if _reverse_audio is None:
+            _reverse_audio = AudioReverseBridge(
+                bridge["endpoint"], audio_server_control.DEFAULT_BRIDGE_PORT
+            )
+            _reverse_audio.start()
+        else:
+            _reverse_audio.set_target(bridge["endpoint"])
+        return {"ok": True, **_reverse_audio.status()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/audio-reverse/status")
+async def audio_reverse_status() -> dict[str, Any]:
+    if _reverse_audio is None:
+        return {"connected": False, "target": "", "lastError": "reverse audio is disabled"}
+    return _reverse_audio.status()
 
 
 @app.get("/api/audio-server/health")

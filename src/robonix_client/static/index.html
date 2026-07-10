@@ -13,6 +13,7 @@
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
           <button class="nav-item" type="button" data-page="audio"><span>Audio</span></button>
+          <button class="nav-item" type="button" data-page="settings"><span>Settings</span></button>
         </nav>
         <div class="client-user-card">
           <div class="client-user-avatar">OP</div>
@@ -44,6 +45,10 @@
           <button class="status-chip" id="refreshSystem" type="button">
             <span class="dot"></span>
             <span id="connectionState">offline</span>
+          </button>
+          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech">
+            <span class="dot"></span>
+            <span id="handsfreeState">Hands-free off</span>
           </button>
           <button class="button connect-button" id="connectNow" type="button">Connect</button>
           <button class="danger-button" type="button" id="endSession">End Session</button>
@@ -154,8 +159,40 @@
             <section class="panel audio-panel">
               <div class="panel-header">
                 <div>
-                  <h2>Devices</h2>
-                  <span>Choose this client machine's microphone and speaker.</span>
+                  <h2>Robonix Audio Route</h2>
+                  <span>Select the primitive and device used by F2 and hands-free interaction.</span>
+                </div>
+              </div>
+              <div class="audio-device-grid">
+                <label class="field">
+                  <span>Input Primitive</span>
+                  <select id="micNodeId"></select>
+                </label>
+                <label class="field">
+                  <span>Input Device</span>
+                  <select id="micDeviceId"></select>
+                </label>
+                <label class="field">
+                  <span>Output Primitive</span>
+                  <select id="speakerNodeId"></select>
+                </label>
+                <label class="field">
+                  <span>Output Device</span>
+                  <select id="speakerDeviceId"></select>
+                </label>
+              </div>
+              <div class="audio-device-actions">
+                <button class="button" id="refreshAudioRoute" type="button">Refresh Route</button>
+                <button class="button" id="applyAudioRoute" type="button">Apply Route</button>
+              </div>
+              <span class="audio-route-status" id="audioRouteStatus">No Robonix audio route loaded.</span>
+            </section>
+
+            <section class="panel audio-panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Client Bridge Devices</h2>
+                  <span>Used when the selected primitive is the client audio bridge.</span>
                 </div>
               </div>
               <div class="audio-device-grid">
@@ -223,9 +260,52 @@
             </section>
           </section>
         </section>
+
+        <section class="page work-page" data-page-panel="settings">
+          <section class="settings-page-grid">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Connection</h2>
+                  <span>Saved only in this client browser.</span>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Robot Host</span>
+                  <input id="robotHostSettings" autocomplete="off" placeholder="100.x.y.z" />
+                </label>
+                <label class="field">
+                  <span>Atlas Port</span>
+                  <input id="atlasPortSettings" autocomplete="off" inputmode="numeric" placeholder="50051" />
+                </label>
+                <label class="field">
+                  <span>Liaison Endpoint</span>
+                  <input id="liaisonEndpoint" autocomplete="off" placeholder="Auto-discover from Atlas" />
+                </label>
+                <label class="field">
+                  <span>User ID</span>
+                  <input id="settingsUserId" autocomplete="off" placeholder="voice:client" />
+                </label>
+                <label class="field">
+                  <span>Voice Record Limit (s)</span>
+                  <input id="settingsRecordSeconds" type="number" min="2" max="60" step="1" />
+                </label>
+                <label class="field checkbox-field">
+                  <span>Speech Replies</span>
+                  <input id="settingsTtsEnabled" type="checkbox" />
+                </label>
+              </div>
+              <div class="audio-device-actions">
+                <button class="button" id="saveClientSettings" type="button">Save Settings</button>
+              </div>
+              <span class="audio-route-status" id="settingsStatus">Changes are saved locally.</span>
+            </section>
+          </section>
+        </section>
       </main>
     </div>
 
-    <script src="/static/app.js?v=20260709e"></script>
+    <script src="/static/app.js?v=20260711a"></script>
   </body>
 </html>

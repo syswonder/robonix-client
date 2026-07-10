@@ -18,6 +18,7 @@ const state = {
   activeStreams: 0,
   voiceActive: false,
   ttsPlaying: false,
+  handsfree: { available: false, enabled: false, state: "unavailable", busy: false },
   audio: {
     port: 60000,
     wsUrl: "",
@@ -28,6 +29,7 @@ const state = {
     logSocket: null,
     logLines: [],
     levelHistory: Array(28).fill(0),
+    route: { micProviders: [], speakerProviders: [], micDevices: [], speakerDevices: [] },
   },
 };
 
@@ -134,12 +136,31 @@ async function init() {
     language: "",
     ttsEnabled: true,
     micNodeId: "",
+    micDeviceId: "",
     speakerNodeId: "",
+    speakerDeviceId: "",
+    ttsNodeId: "",
     enrollUserId: "",
     enrollUserName: "",
-    ...stored,
     ...defaults,
+    ...stored,
   };
+  const launchFieldMap = {
+    ROBONIX_ROBOT_HOST: "robotHost",
+    ROBONIX_ATLAS_PORT: "atlasPort",
+    ROBONIX_CLIENT_USER_ID: "userId",
+    ROBONIX_CLIENT_SESSION_ID: "sessionId",
+    ROBONIX_CLIENT_SESSION_TITLE: "sessionTitle",
+    ROBONIX_CLIENT_MIC_NODE_ID: "micNodeId",
+    ROBONIX_CLIENT_MIC_DEVICE_ID: "micDeviceId",
+    ROBONIX_CLIENT_SPEAKER_NODE_ID: "speakerNodeId",
+    ROBONIX_CLIENT_SPEAKER_DEVICE_ID: "speakerDeviceId",
+    ROBONIX_CLIENT_TTS_NODE_ID: "ttsNodeId",
+  };
+  (defaults.launchOverrides || []).forEach((key) => {
+    const field = launchFieldMap[key];
+    if (field) state.settings[field] = defaults[field];
+  });
   if (defaults.sessionId) state.sessionId = defaults.sessionId;
   if (defaults.sessionTitle) state.sessionTitle = defaults.sessionTitle;
   bindSettings();
@@ -151,7 +172,9 @@ async function init() {
   renderPlan();
   renderSceneAssets();
   refreshSystem();
+  refreshAudioRoute();
   setInterval(refreshSystem, 7000);
+  setInterval(refreshHandsfree, 2500);
 }
 
 function bindSettings() {
@@ -161,11 +184,16 @@ function bindSettings() {
   if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
   if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
   if (maybe("userId")) $("userId").value = state.settings.userId || "";
+  if (maybe("settingsUserId")) $("settingsUserId").value = state.settings.userId || "";
   if (maybe("recordSeconds")) $("recordSeconds").value = state.settings.recordSeconds || 30;
+  if (maybe("settingsRecordSeconds")) $("settingsRecordSeconds").value = state.settings.recordSeconds || 30;
   if (maybe("language")) $("language").value = state.settings.language || "";
   if (maybe("ttsEnabled")) $("ttsEnabled").checked = state.settings.ttsEnabled !== false;
+  if (maybe("settingsTtsEnabled")) $("settingsTtsEnabled").checked = state.settings.ttsEnabled !== false;
   if (maybe("micNodeId")) $("micNodeId").value = state.settings.micNodeId || "";
+  if (maybe("micDeviceId")) $("micDeviceId").value = state.settings.micDeviceId || "";
   if (maybe("speakerNodeId")) $("speakerNodeId").value = state.settings.speakerNodeId || "";
+  if (maybe("speakerDeviceId")) $("speakerDeviceId").value = state.settings.speakerDeviceId || "";
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
   if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
@@ -178,29 +206,50 @@ function bindSettings() {
     "atlasPortSettings",
     "liaisonEndpoint",
     "userId",
+    "settingsUserId",
     "recordSeconds",
+    "settingsRecordSeconds",
     "language",
     "ttsEnabled",
+    "settingsTtsEnabled",
     "micNodeId",
+    "micDeviceId",
     "speakerNodeId",
+    "speakerDeviceId",
     "enrollUserId",
     "enrollUserName",
   ].forEach((id) => maybe(id)?.addEventListener("change", syncConnectionSettings));
+  ["settingsUserId", "settingsRecordSeconds", "settingsTtsEnabled"].forEach((id) => {
+    maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
+  });
+  maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true));
   maybe("userId")?.addEventListener("input", () => {
     if (maybe("clientUserId")) $("clientUserId").textContent = $("userId").value.trim() || "local";
   });
 }
 
-function syncConnectionSettings() {
-  const hostSource = document.activeElement?.id === "robotHostSettings" && maybe("robotHostSettings") ? "robotHostSettings" : "robotHost";
-  const portSource = document.activeElement?.id === "atlasPortSettings" && maybe("atlasPortSettings") ? "atlasPortSettings" : "atlasPort";
+function syncConnectionSettings(fromSettings = false) {
+  const hostSource = (fromSettings || document.activeElement?.id === "robotHostSettings") && maybe("robotHostSettings") ? "robotHostSettings" : "robotHost";
+  const portSource = (fromSettings || document.activeElement?.id === "atlasPortSettings") && maybe("atlasPortSettings") ? "atlasPortSettings" : "atlasPort";
   const host = maybe(hostSource) ? normalizeRobotHost($(hostSource).value) : "";
   const port = maybe(portSource) ? normalizeAtlasPort($(portSource).value) : DEFAULT_ATLAS_PORT;
   if (maybe("robotHost")) $("robotHost").value = host;
   if (maybe("robotHostSettings")) $("robotHostSettings").value = host;
   if (maybe("atlasPort")) $("atlasPort").value = port;
   if (maybe("atlasPortSettings")) $("atlasPortSettings").value = port;
+  const userSource = (fromSettings || document.activeElement?.id === "settingsUserId") && maybe("settingsUserId") ? "settingsUserId" : "userId";
+  const secondsSource = (fromSettings || document.activeElement?.id === "settingsRecordSeconds") && maybe("settingsRecordSeconds") ? "settingsRecordSeconds" : "recordSeconds";
+  const ttsSource = (fromSettings || document.activeElement?.id === "settingsTtsEnabled") && maybe("settingsTtsEnabled") ? "settingsTtsEnabled" : "ttsEnabled";
+  if (maybe("userId") && maybe(userSource)) $("userId").value = $(userSource).value.trim();
+  if (maybe("settingsUserId") && maybe(userSource)) $("settingsUserId").value = $(userSource).value.trim();
+  if (maybe("recordSeconds") && maybe(secondsSource)) $("recordSeconds").value = $(secondsSource).value;
+  if (maybe("settingsRecordSeconds") && maybe(secondsSource)) $("settingsRecordSeconds").value = $(secondsSource).value;
+  if (maybe("ttsEnabled") && maybe(ttsSource)) $("ttsEnabled").checked = $(ttsSource).checked;
+  if (maybe("settingsTtsEnabled") && maybe(ttsSource)) $("settingsTtsEnabled").checked = $(ttsSource).checked;
+  state.settings = collectSettings();
   saveSettings();
+  if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
+  setText("settingsStatus", "Saved in this browser.");
 }
 
 function collectSettings() {
@@ -218,7 +267,10 @@ function collectSettings() {
     language: maybe("language")?.value.trim() || state.settings.language || "",
     ttsEnabled: maybe("ttsEnabled") ? $("ttsEnabled").checked : state.settings.ttsEnabled !== false,
     micNodeId: maybe("micNodeId")?.value.trim() || state.settings.micNodeId || "",
+    micDeviceId: maybe("micDeviceId")?.value.trim() || state.settings.micDeviceId || "",
     speakerNodeId: maybe("speakerNodeId")?.value.trim() || state.settings.speakerNodeId || "",
+    speakerDeviceId: maybe("speakerDeviceId")?.value.trim() || state.settings.speakerDeviceId || "",
+    ttsNodeId: state.settings.ttsNodeId || "",
     enrollUserId: maybe("enrollUserId")?.value.trim() || state.settings.enrollUserId || "",
     enrollUserName: maybe("enrollUserName")?.value.trim() || state.settings.enrollUserName || "",
   };
@@ -244,6 +296,7 @@ function bindEvents() {
   $("imageInput").addEventListener("change", handleFiles);
   maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
+  maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
   $("newSession").addEventListener("click", newSession);
   $("endSession").addEventListener("click", endSession);
   $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
@@ -258,6 +311,10 @@ function bindEvents() {
   maybe("checkAudioServer")?.addEventListener("click", checkAudioServer);
   maybe("refreshAudioDevices")?.addEventListener("click", loadAudioDevices);
   maybe("applyAudioDevices")?.addEventListener("click", applyAudioDevices);
+  maybe("refreshAudioRoute")?.addEventListener("click", refreshAudioRoute);
+  maybe("applyAudioRoute")?.addEventListener("click", applyAudioRoute);
+  maybe("micNodeId")?.addEventListener("change", () => loadAudioRouteDevices("mic"));
+  maybe("speakerNodeId")?.addEventListener("change", () => loadAudioRouteDevices("speaker"));
   maybe("enrollVoice")?.addEventListener("click", enrollVoice);
   maybe("testSpeaker")?.addEventListener("click", testSpeaker);
   document.querySelectorAll("[data-page]").forEach((button) => {
@@ -269,6 +326,69 @@ function bindEvents() {
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
     button.addEventListener("click", startVoice);
   });
+}
+
+async function configureReverseAudio(providerId) {
+  if (!providerId) return { ok: false, skipped: true };
+  const result = await fetch("/api/audio-reverse/connect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings(), providerId }),
+  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  appendAudioLog(result.ok ? `reverse audio target ${result.target}` : `reverse audio error: ${result.error || "unknown"}`);
+}
+
+async function refreshHandsfree() {
+  const button = maybe("handsfreeToggle");
+  if (!button || state.handsfree.busy || !collectSettings().atlasEndpoint) return;
+  const result = await fetch("/api/handsfree/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings() }),
+  }).then((r) => r.json()).catch((error) => ({ available: false, state: "unavailable", error: String(error) }));
+  state.handsfree = { ...state.handsfree, ...result };
+  renderHandsfree();
+}
+
+async function toggleHandsfree() {
+  if (state.handsfree.busy) return;
+  state.handsfree.busy = true;
+  renderHandsfree();
+  const enabled = !state.handsfree.enabled;
+  const result = await fetch("/api/handsfree/set", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings(), enabled }),
+  }).then((r) => r.json()).catch((error) => ({ available: false, ok: false, state: "unavailable", error: String(error) }));
+  state.handsfree = { ...state.handsfree, ...result, busy: false };
+  renderHandsfree();
+  addTimeline(result.ok ? "voice" : "error", result.ok ? `robot hands-free ${enabled ? "enabled" : "disabled"}` : `hands-free: ${result.error || result.detail || "unavailable"}`);
+}
+
+function renderHandsfree() {
+  const button = maybe("handsfreeToggle");
+  const label = maybe("handsfreeState");
+  if (!button || !label) return;
+  const status = state.handsfree.state || "unavailable";
+  const active = state.handsfree.enabled && ["starting", "listening", "triggered", "acknowledging", "in_voice"].includes(status);
+  button.classList.toggle("offline", !active);
+  button.classList.toggle("listening", status === "listening");
+  button.classList.toggle("busy", state.handsfree.busy || ["triggered", "acknowledging", "in_voice"].includes(status));
+  button.classList.toggle("error", status === "error" || status === "unavailable");
+  label.textContent = state.handsfree.busy
+    ? "Hands-free..."
+    : status === "listening"
+      ? "Listening"
+      : status === "acknowledging"
+        ? "Acknowledging"
+      : status === "in_voice"
+        ? "Hands-free active"
+        : state.handsfree.enabled
+          ? `Hands-free ${status}`
+          : "Hands-free off";
+  button.title = state.handsfree.lastError || state.handsfree.error || (state.handsfree.keyword
+    ? `Last wake phrase: ${state.handsfree.keyword}`
+    : "Robot-local wake phrase configured by Speech");
 }
 
 function autoGrowInput() {
@@ -1460,6 +1580,122 @@ function formatConversationTime(ms) {
   return date.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function routeOption(select, value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  select.appendChild(option);
+}
+
+function renderAudioRouteProviders(route) {
+  const mic = maybe("micNodeId");
+  const speaker = maybe("speakerNodeId");
+  if (!mic || !speaker) return;
+  const savedMic = state.settings.micNodeId || "";
+  const savedSpeaker = state.settings.speakerNodeId || "";
+  clear(mic);
+  clear(speaker);
+  routeOption(mic, "", "Select input primitive");
+  routeOption(speaker, "", "Select output primitive");
+  (route.micProviders || []).forEach((provider) => {
+    routeOption(mic, provider.id, provider.namespace ? `${provider.id} (${provider.namespace})` : provider.id);
+  });
+  (route.speakerProviders || []).forEach((provider) => {
+    routeOption(speaker, provider.id, provider.namespace ? `${provider.id} (${provider.namespace})` : provider.id);
+  });
+  const micAvailable = (route.micProviders || []).some((provider) => provider.id === savedMic);
+  const speakerAvailable = (route.speakerProviders || []).some((provider) => provider.id === savedSpeaker);
+  if (savedMic && !micAvailable) routeOption(mic, savedMic, `${savedMic} (unavailable)`);
+  if (savedSpeaker && !speakerAvailable) routeOption(speaker, savedSpeaker, `${savedSpeaker} (unavailable)`);
+  mic.value = savedMic || "";
+  speaker.value = savedSpeaker || "";
+}
+
+function renderAudioRouteDevices(side, result) {
+  const select = maybe(side === "mic" ? "micDeviceId" : "speakerDeviceId");
+  if (!select) return;
+  const saved = side === "mic" ? state.settings.micDeviceId || "" : state.settings.speakerDeviceId || "";
+  const current = side === "mic" ? result.currentInputId : result.currentOutputId;
+  const wantedKind = side === "mic" ? "input" : "output";
+  clear(select);
+  routeOption(select, "", "OS default");
+  (result.devices || [])
+    .filter((device) => device.kind === wantedKind || device.kind === "duplex")
+    .forEach((device) => {
+      const suffix = [device.channels ? `${device.channels} ch` : "", device.note || ""].filter(Boolean).join(", ");
+      routeOption(select, device.id, suffix ? `${device.name} (${suffix})` : device.name || device.id);
+    });
+  const devices = result.devices || [];
+  const target = devices.some((device) => device.id === saved) ? saved : (current || "");
+  select.value = target;
+}
+
+async function refreshAudioRoute() {
+  const settings = collectSettings();
+  if (!settings.atlasEndpoint) return;
+  setText("audioRouteStatus", "Discovering audio primitives from Atlas...");
+  const route = await fetch("/api/audio-route/providers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
+  if (route.error) {
+    setText("audioRouteStatus", `Audio route unavailable: ${route.error}`);
+    return;
+  }
+  state.audio.route = { ...state.audio.route, ...route };
+  renderAudioRouteProviders(route);
+  await Promise.all([loadAudioRouteDevices("mic"), loadAudioRouteDevices("speaker")]);
+  state.settings = collectSettings();
+  saveSettings();
+  setText("audioRouteStatus", "Route loaded. Apply to select devices in their providers.");
+}
+
+async function loadAudioRouteDevices(side) {
+  const provider = maybe(side === "mic" ? "micNodeId" : "speakerNodeId")?.value || "";
+  const select = maybe(side === "mic" ? "micDeviceId" : "speakerDeviceId");
+  if (!provider) {
+    if (select) {
+      clear(select);
+      routeOption(select, "", "OS default");
+    }
+    return;
+  }
+  const isReverseBridge = (state.audio.route.bridgeProviders || [])
+    .some((candidate) => candidate.id === provider);
+  if (isReverseBridge) await configureReverseAudio(provider);
+  const result = await fetch("/api/audio-route/devices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings(), providerId: provider }),
+  }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
+  if (result.error) {
+    setText("audioRouteStatus", `${provider}: ${result.error}`);
+    return;
+  }
+  if (side === "mic") state.audio.route.micDevices = result.devices || [];
+  else state.audio.route.speakerDevices = result.devices || [];
+  renderAudioRouteDevices(side, result);
+}
+
+async function applyAudioRoute() {
+  state.settings = collectSettings();
+  saveSettings();
+  setText("audioRouteStatus", "Applying selected devices...");
+  const result = await fetch("/api/audio-route/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: state.settings }),
+  }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
+  if (!result.ok) {
+    setText("audioRouteStatus", `Route apply failed: ${result.error || "unknown error"}`);
+    return;
+  }
+  const count = Array.isArray(result.selected) ? result.selected.length : 0;
+  setText("audioRouteStatus", `Route applied to ${count} selected device${count === 1 ? "" : "s"}.`);
+  addTimeline("audio", "audio route applied");
+}
+
 async function startAudioServer() {
   appendAudioLog("starting client audio device server");
   const result = await fetch("/api/audio-server/start", {
@@ -1813,7 +2049,11 @@ function setBusy(value) {
   $("sendButton").textContent = value ? "Steer" : "Send";
   $("sendButton").title = value ? "Steer current task" : "Send task";
   maybe("voiceButton")?.classList.toggle("busy", value);
-  document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.toggle("busy", value));
+  document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
+    button.classList.toggle("busy", value);
+    button.textContent = value ? "Voice steer" : "Voice";
+    button.title = value ? "Send a voice steer to the current task" : "Start voice session";
+  });
 }
 
 function beginStream() {

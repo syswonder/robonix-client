@@ -330,6 +330,29 @@ h1 {
   box-shadow: 0 0 10px rgba(240, 103, 88, 0.8);
 }
 
+.handsfree-chip {
+  min-width: 150px;
+}
+
+.handsfree-chip.listening .dot {
+  animation: handsfree-pulse 1.6s ease-in-out infinite;
+}
+
+.handsfree-chip.busy .dot {
+  background: var(--amber);
+  box-shadow: 0 0 12px rgba(242, 181, 68, 0.75);
+  animation: handsfree-pulse 0.8s ease-in-out infinite;
+}
+
+.handsfree-chip.error .dot {
+  background: var(--red);
+  box-shadow: 0 0 10px rgba(240, 103, 88, 0.75);
+}
+
+@keyframes handsfree-pulse {
+  50% { opacity: 0.45; transform: scale(0.72); }
+}
+
 .wake-word {
   display: inline-flex;
   align-items: center;
@@ -2033,6 +2056,14 @@ select:focus {
 .audio-device-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   padding-top: 0;
+}
+
+.audio-route-status {
+  display: block;
+  padding: 0 12px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .audio-status-grid {
