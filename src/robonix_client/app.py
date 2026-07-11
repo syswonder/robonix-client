@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import math
 import os
+import struct
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import grpc
+import yaml
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,10 +28,12 @@ from .transport import (
     list_audio_providers,
     notify_session_end,
     play_tts_test,
+    record_pcm,
     select_audio_device,
     start_voice_session,
     set_handsfree_enabled,
     submit_text,
+    watch_handsfree_events,
     system_snapshot,
 )
 
@@ -35,6 +42,17 @@ STATIC_DIR = Path(__file__).with_name("static")
 app = FastAPI(title="Robonix Client", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _reverse_audio: AudioReverseBridge | None = None
+SETTINGS_PATH = Path(
+    os.environ.get(
+        "ROBONIX_CLIENT_SETTINGS",
+        Path.home() / ".config" / "robonix-client" / "settings.yaml",
+    )
+).expanduser()
+PERSISTED_SETTING_KEYS = {
+    "robotHost", "atlasPort", "liaisonEndpoint", "userId", "recordSeconds",
+    "language", "ttsEnabled", "micNodeId", "micDeviceId", "speakerNodeId",
+    "speakerDeviceId", "ttsNodeId", "enrollUserId", "enrollUserName",
+}
 
 
 def _split_default_atlas(raw: str) -> tuple[str, int]:
@@ -63,6 +81,11 @@ class AudioPlayTestRequest(BaseModel):
     text: str = "Robonix speaker test"
 
 
+class AudioMicTestRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    seconds: float = 1.0
+
+
 class AudioReverseConnectRequest(BaseModel):
     settings: dict[str, Any] = {}
     providerId: str
@@ -88,6 +111,28 @@ class AudioRouteApplyRequest(BaseModel):
 
 def _payload_steer(payload: dict[str, Any]) -> bool:
     return bool(payload.get("steer") or payload.get("interactionMode") == "steer")
+
+
+def _load_persisted_settings() -> dict[str, Any]:
+    if not SETTINGS_PATH.exists():
+        return {}
+    raw = yaml.safe_load(SETTINGS_PATH.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"settings file must contain a mapping: {SETTINGS_PATH}")
+    return {key: raw[key] for key in PERSISTED_SETTING_KEYS if key in raw}
+
+
+def _save_persisted_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    selected = {key: settings[key] for key in PERSISTED_SETTING_KEYS if key in settings}
+    ClientSettings.from_payload(selected)
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SETTINGS_PATH.with_suffix(f"{SETTINGS_PATH.suffix}.tmp")
+    temporary.write_text(
+        yaml.safe_dump(selected, allow_unicode=True, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary.replace(SETTINGS_PATH)
+    return selected
 
 
 @app.on_event("startup")
@@ -155,6 +200,32 @@ async def defaults() -> dict[str, Any]:
     }
 
 
+@app.get("/api/settings")
+async def get_settings() -> dict[str, Any]:
+    try:
+        return {
+            "ok": True,
+            "settings": _load_persisted_settings(),
+            "path": str(SETTINGS_PATH),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "settings": {},
+            "path": str(SETTINGS_PATH),
+            "error": str(exc),
+        }
+
+
+@app.put("/api/settings")
+async def put_settings(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        settings = _save_persisted_settings(req.settings)
+        return {"ok": True, "settings": settings, "path": str(SETTINGS_PATH)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "path": str(SETTINGS_PATH)}
+
+
 @app.get("/api/system")
 async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
     try:
@@ -210,6 +281,7 @@ async def audio_route_devices(req: AudioProviderDevicesRequest) -> dict[str, Any
 async def audio_route_apply(req: AudioRouteApplyRequest) -> dict[str, Any]:
     try:
         settings = ClientSettings.from_payload(req.settings)
+        await _connect_selected_reverse_audio(settings)
         selected: list[dict[str, Any]] = []
         if settings.mic_node_id and settings.mic_device_id:
             selected.append(
@@ -278,7 +350,16 @@ async def _connect_reverse_audio(settings: ClientSettings, provider_id: str) -> 
         _reverse_audio.start()
     else:
         _reverse_audio.set_target(bridge["endpoint"])
-    return {**bridge, **_reverse_audio.status()}
+    for _ in range(20):
+        status = _reverse_audio.status()
+        if status.get("connected"):
+            return {**bridge, **status}
+        await asyncio.sleep(0.1)
+    status = _reverse_audio.status()
+    raise RuntimeError(
+        f"audio bridge did not connect to {bridge['endpoint']}: "
+        f"{status.get('lastError') or 'timeout'}"
+    )
 
 
 async def _connect_selected_reverse_audio(settings: ClientSettings) -> dict[str, Any] | None:
@@ -333,6 +414,45 @@ async def audio_play_test(req: AudioPlayTestRequest) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+@app.post("/api/audio/mic-test")
+async def audio_mic_test(req: AudioMicTestRequest) -> dict[str, Any]:
+    """Verify the selected Robonix microphone path with a short PCM capture."""
+    try:
+        settings = ClientSettings.from_payload(req.settings)
+        handsfree = await get_handsfree_status(settings)
+        if (
+            handsfree.get("enabled")
+            and handsfree.get("micProviderId") == settings.mic_node_id
+        ):
+            return {
+                "ok": False,
+                "error": "Hands-free is listening on this microphone. Turn it off before running an exclusive microphone test.",
+            }
+        await _connect_selected_reverse_audio(settings)
+        seconds = min(3.0, max(0.5, float(req.seconds)))
+        started = time.monotonic()
+        pcm = await record_pcm(settings, seconds)
+        capture_ms = round((time.monotonic() - started) * 1000.0)
+        sample_bytes = pcm[: len(pcm) - (len(pcm) % 2)]
+        samples = struct.iter_unpack("<h", sample_bytes)
+        sum_sq = 0.0
+        count = 0
+        for (sample,) in samples:
+            sum_sq += float(sample) * float(sample)
+            count += 1
+        rms = math.sqrt(sum_sq / count) / 32768.0 if count else 0.0
+        return {
+            "ok": True,
+            "bytes": len(pcm),
+            "seconds": seconds,
+            "rms": round(rms, 4),
+            "captureMs": capture_ms,
+            "providerId": settings.mic_node_id or "auto",
+        }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.websocket("/ws/task")
 async def task_ws(ws: WebSocket) -> None:
     await ws.accept()
@@ -364,10 +484,30 @@ async def voice_ws(ws: WebSocket) -> None:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
         steer = _payload_steer(payload)
+        await _connect_selected_reverse_audio(settings)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
         async for item in start_voice_session(settings, steer=steer):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
+    except WebSocketDisconnect:
+        return
+    except grpc.aio.AioRpcError as exc:
+        await _send_error(ws, f"gRPC {exc.code().name}: {exc.details()}")
+    except Exception as exc:
+        await _send_error(ws, str(exc))
+
+
+@app.websocket("/ws/handsfree-events")
+async def handsfree_events_ws(ws: WebSocket) -> None:
+    """Relay Liaison's persistent robot-local hands-free VoiceEvent stream."""
+    await ws.accept()
+    try:
+        payload = await ws.receive_json()
+        settings = ClientSettings.from_payload(payload.get("settings"))
+        await _connect_selected_reverse_audio(settings)
+        await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
+        async for item in watch_handsfree_events(settings):
+            await ws.send_json(item)
     except WebSocketDisconnect:
         return
     except grpc.aio.AioRpcError as exc:

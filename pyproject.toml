@@ -14,6 +14,7 @@ dependencies = [
   "grpcio>=1.76",
   "protobuf>=6.31.1",
   "pydantic>=2.8",
+  "PyYAML>=6.0",
   "websockets>=13.0",
 ]
 

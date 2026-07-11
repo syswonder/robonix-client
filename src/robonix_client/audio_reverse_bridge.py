@@ -119,15 +119,22 @@ class AudioReverseBridge:
             await stop_mic()
 
             async def pump() -> None:
+                frames = 0
                 try:
                     async with websockets.connect(
                         f"ws://127.0.0.1:{self.local_port}/mic", max_size=None, proxy=None
                     ) as mic:
                         async for frame in mic:
                             if isinstance(frame, bytes):
+                                frames += 1
+                                if frames == 1:
+                                    log.info("audio relay received first microphone frame (%d bytes)", len(frame))
                                 async with send_lock:
                                     await robot.send(frame)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("audio relay microphone pump failed after %d frame(s): %s", frames, exc)
                 finally:
+                    log.info("audio relay microphone pump finished after %d frame(s)", frames)
                     with suppress(Exception):
                         async with send_lock:
                             await robot.send(json.dumps({"type": "mic_end"}))

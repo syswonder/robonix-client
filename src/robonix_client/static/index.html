@@ -192,24 +192,27 @@
             <section class="panel audio-panel">
               <div class="panel-header">
                 <div>
-                  <h2>Client Bridge Devices</h2>
-                  <span>Used when the selected primitive is the client audio bridge.</span>
+                  <h2>Client Bridge Diagnostics</h2>
+                  <span>Current local devices used when Audio Route selects the client bridge.</span>
                 </div>
               </div>
-              <div class="audio-device-grid">
-                <label class="field">
+              <div class="audio-device-grid audio-device-readout">
+                <div class="field">
                   <span>Microphone</span>
-                  <select id="audioInputDevice"></select>
-                </label>
-                <label class="field">
+                  <strong id="bridgeInputDevice">Not selected</strong>
+                </div>
+                <div class="field">
                   <span>Speaker</span>
-                  <select id="audioOutputDevice"></select>
-                </label>
+                  <strong id="bridgeOutputDevice">Not selected</strong>
+                </div>
               </div>
               <div class="audio-device-actions">
-                <button class="button" id="applyAudioDevices" type="button">Apply Devices</button>
+                <button class="button" id="testMicrophone" type="button">Test Microphone</button>
                 <button class="button" id="testSpeaker" type="button">Test Speaker</button>
               </div>
+              <span class="audio-test-status" id="audioTestStatus" role="status">
+                Run a microphone or speaker test to verify the selected route.
+              </span>
             </section>
 
             <section class="panel audio-panel audio-meter-panel">

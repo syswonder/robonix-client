@@ -139,8 +139,15 @@ def pick_output_device(explicit: int | None) -> int | None:
 
 # ── /health ────────────────────────────────────────────────────────────────
 async def serve_health(ws) -> None:
-    in_dev = pick_input_device(_state("input_device"))
-    out_dev = pick_output_device(_state("output_device"))
+    in_dev, out_dev = await asyncio.wait_for(
+        asyncio.to_thread(
+            lambda: (
+                pick_input_device(_state("input_device")),
+                pick_output_device(_state("output_device")),
+            )
+        ),
+        timeout=3.0,
+    )
     payload = {
         "ok": True,
         "platform": platform.system(),
@@ -287,7 +294,7 @@ async def serve_speaker(ws) -> None:
 
 # ── /devices ───────────────────────────────────────────────────────────────
 async def serve_devices(ws) -> None:
-    devs = sd.query_devices()
+    devs = await asyncio.wait_for(asyncio.to_thread(sd.query_devices), timeout=3.0)
     payload = {
         "input_default": sd.default.device[0],
         "output_default": sd.default.device[1],

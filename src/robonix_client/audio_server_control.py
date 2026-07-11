@@ -7,6 +7,7 @@ import platform
 import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,20 @@ async def health(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_POR
         return {"reachable": False, "url": url, "error": str(exc)}
 
 
+def _blocking_health(host: str, port: int, timeout_s: float) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    def probe() -> None:
+        result.update(asyncio.run(health(host, port, timeout_s)))
+
+    thread = threading.Thread(target=probe, name="robonix-audio-health", daemon=True)
+    thread.start()
+    thread.join(timeout_s + 0.5)
+    if thread.is_alive():
+        return {"reachable": False, "error": "health probe timed out"}
+    return result
+
+
 def start(
     host: str = DEFAULT_BRIDGE_BIND_HOST,
     port: int = DEFAULT_BRIDGE_PORT,
@@ -49,7 +64,18 @@ def start(
     if _process is not None and _process.poll() is None:
         return status(already_running=True)
     if _port_open(DEFAULT_BRIDGE_HOST, port):
-        return status(already_running=True, external=True)
+        probe = _blocking_health(DEFAULT_BRIDGE_HOST, port, timeout_s=1.0)
+        if probe.get("reachable"):
+            return status(already_running=True, external=True)
+        return {
+            "ok": False,
+            "running": False,
+            "external": True,
+            "error": (
+                f"port {port} is occupied by an unresponsive audio server: "
+                f"{probe.get('error') or 'health timeout'}"
+            ),
+        }
 
     if platform.system() != "Darwin":
         return {

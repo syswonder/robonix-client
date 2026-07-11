@@ -19,6 +19,8 @@ const state = {
   voiceActive: false,
   ttsPlaying: false,
   handsfree: { available: false, enabled: false, state: "unavailable", busy: false },
+  handsfreeSocket: null,
+  handsfreeReconnect: null,
   audio: {
     port: 60000,
     wsUrl: "",
@@ -54,6 +56,18 @@ function audioServerWsUrl(path) {
 
 function saveSettings() {
   localStorage.setItem("robonix.settings", JSON.stringify(collectSettings()));
+}
+
+async function persistSettings() {
+  const settings = collectSettings();
+  saveSettings();
+  const result = await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  }).then((response) => response.json()).catch((error) => ({ ok: false, error: String(error) }));
+  if (!result.ok) throw new Error(result.error || "settings write failed");
+  return result;
 }
 
 function normalizeRobotHost(raw) {
@@ -123,8 +137,12 @@ function saveConversations() {
 }
 
 async function init() {
-  const defaults = await fetch("/api/defaults").then((r) => r.json()).catch(() => ({}));
+  const [defaults, persistedResult] = await Promise.all([
+    fetch("/api/defaults").then((r) => r.json()).catch(() => ({})),
+    fetch("/api/settings").then((r) => r.json()).catch(() => ({ settings: {} })),
+  ]);
   const stored = loadStoredSettings();
+  const persisted = persistedResult.ok ? persistedResult.settings || {} : {};
   const atlas = parseAtlasEndpoint(defaults.atlasEndpoint || "");
   state.settings = {
     robotHost: defaults.robotHost || atlas.host || "",
@@ -144,23 +162,11 @@ async function init() {
     enrollUserName: "",
     ...defaults,
     ...stored,
+    ...persisted,
   };
-  const launchFieldMap = {
-    ROBONIX_ROBOT_HOST: "robotHost",
-    ROBONIX_ATLAS_PORT: "atlasPort",
-    ROBONIX_CLIENT_USER_ID: "userId",
-    ROBONIX_CLIENT_SESSION_ID: "sessionId",
-    ROBONIX_CLIENT_SESSION_TITLE: "sessionTitle",
-    ROBONIX_CLIENT_MIC_NODE_ID: "micNodeId",
-    ROBONIX_CLIENT_MIC_DEVICE_ID: "micDeviceId",
-    ROBONIX_CLIENT_SPEAKER_NODE_ID: "speakerNodeId",
-    ROBONIX_CLIENT_SPEAKER_DEVICE_ID: "speakerDeviceId",
-    ROBONIX_CLIENT_TTS_NODE_ID: "ttsNodeId",
-  };
-  (defaults.launchOverrides || []).forEach((key) => {
-    const field = launchFieldMap[key];
-    if (field) state.settings[field] = defaults[field];
-  });
+  // CLI/environment values are launch defaults, not immutable policy. Stored
+  // browser settings must win so changing robot host or audio routing survives
+  // a refresh even when the client was initially launched with --robot-host.
   if (defaults.sessionId) state.sessionId = defaults.sessionId;
   if (defaults.sessionTitle) state.sessionTitle = defaults.sessionTitle;
   bindSettings();
@@ -222,13 +228,13 @@ function bindSettings() {
   ["settingsUserId", "settingsRecordSeconds", "settingsTtsEnabled"].forEach((id) => {
     maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
   });
-  maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true));
+  maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true, true));
   maybe("userId")?.addEventListener("input", () => {
     if (maybe("clientUserId")) $("clientUserId").textContent = $("userId").value.trim() || "local";
   });
 }
 
-function syncConnectionSettings(fromSettings = false) {
+async function syncConnectionSettings(fromSettings = false, persist = false) {
   const hostSource = (fromSettings || document.activeElement?.id === "robotHostSettings") && maybe("robotHostSettings") ? "robotHostSettings" : "robotHost";
   const portSource = (fromSettings || document.activeElement?.id === "atlasPortSettings") && maybe("atlasPortSettings") ? "atlasPortSettings" : "atlasPort";
   const host = maybe(hostSource) ? normalizeRobotHost($(hostSource).value) : "";
@@ -249,7 +255,17 @@ function syncConnectionSettings(fromSettings = false) {
   state.settings = collectSettings();
   saveSettings();
   if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
-  setText("settingsStatus", "Saved in this browser.");
+  if (!persist) {
+    setText("settingsStatus", "Changed locally. Select Save to persist.");
+    return;
+  }
+  setText("settingsStatus", "Saving...");
+  try {
+    const result = await persistSettings();
+    setText("settingsStatus", `Saved to ${result.path}.`);
+  } catch (error) {
+    setText("settingsStatus", `Save failed: ${error}`);
+  }
 }
 
 function collectSettings() {
@@ -290,6 +306,10 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key !== "F2") return;
     event.preventDefault();
+    if (handsfreeOwnsMicrophone()) {
+      addStatusLine("Hands-free is listening. Turn it off before starting an F2 voice session.");
+      return;
+    }
     startVoice();
   });
   $("attachButton").addEventListener("click", () => $("imageInput").click());
@@ -301,21 +321,21 @@ function bindEvents() {
   $("endSession").addEventListener("click", endSession);
   $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
   $("clearHistory").addEventListener("click", clearHistory);
-  maybe("connectNow")?.addEventListener("click", () => {
+  maybe("connectNow")?.addEventListener("click", async () => {
     state.settings = collectSettings();
-    saveSettings();
+    await persistSettings().catch((error) => addTimeline("error", `settings save failed: ${error}`));
     addTimeline("system", `connecting to ${state.settings.robotHost}:${state.settings.atlasPort}`);
     refreshSystem();
   });
   maybe("startAudioServer")?.addEventListener("click", startAudioServer);
   maybe("checkAudioServer")?.addEventListener("click", checkAudioServer);
   maybe("refreshAudioDevices")?.addEventListener("click", loadAudioDevices);
-  maybe("applyAudioDevices")?.addEventListener("click", applyAudioDevices);
   maybe("refreshAudioRoute")?.addEventListener("click", refreshAudioRoute);
   maybe("applyAudioRoute")?.addEventListener("click", applyAudioRoute);
   maybe("micNodeId")?.addEventListener("change", () => loadAudioRouteDevices("mic"));
   maybe("speakerNodeId")?.addEventListener("change", () => loadAudioRouteDevices("speaker"));
   maybe("enrollVoice")?.addEventListener("click", enrollVoice);
+  maybe("testMicrophone")?.addEventListener("click", testMicrophone);
   maybe("testSpeaker")?.addEventListener("click", testSpeaker);
   document.querySelectorAll("[data-page]").forEach((button) => {
     button.addEventListener("click", () => activatePage(button.dataset.page));
@@ -348,6 +368,7 @@ async function refreshHandsfree() {
   }).then((r) => r.json()).catch((error) => ({ available: false, state: "unavailable", error: String(error) }));
   state.handsfree = { ...state.handsfree, ...result };
   renderHandsfree();
+  syncHandsfreeEventStream();
 }
 
 async function toggleHandsfree() {
@@ -362,6 +383,7 @@ async function toggleHandsfree() {
   }).then((r) => r.json()).catch((error) => ({ available: false, ok: false, state: "unavailable", error: String(error) }));
   state.handsfree = { ...state.handsfree, ...result, busy: false };
   renderHandsfree();
+  syncHandsfreeEventStream();
   addTimeline(result.ok ? "voice" : "error", result.ok ? `robot hands-free ${enabled ? "enabled" : "disabled"}` : `hands-free: ${result.error || result.detail || "unavailable"}`);
 }
 
@@ -389,6 +411,76 @@ function renderHandsfree() {
   button.title = state.handsfree.lastError || state.handsfree.error || (state.handsfree.keyword
     ? `Last wake phrase: ${state.handsfree.keyword}`
     : "Robot-local wake phrase configured by Speech");
+  syncVoiceControls();
+}
+
+function handsfreeOwnsMicrophone() {
+  return Boolean(state.handsfree.enabled && [
+    "starting", "listening", "triggered", "acknowledging", "in_voice",
+  ].includes(state.handsfree.state));
+}
+
+function syncVoiceControls() {
+  const disabled = handsfreeOwnsMicrophone() && !state.voiceActive;
+  const title = disabled
+    ? "Hands-free owns the microphone. Turn it off to start an F2 voice session."
+    : "Start voice session";
+  maybe("voiceButton")?.toggleAttribute("disabled", disabled);
+  if (maybe("voiceButton")) $("voiceButton").title = title;
+  document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
+    button.toggleAttribute("disabled", disabled);
+    button.title = title;
+  });
+  const micTest = maybe("testMicrophone");
+  if (micTest) {
+    micTest.toggleAttribute("disabled", disabled);
+    micTest.title = disabled
+      ? "Hands-free owns this microphone. Turn it off before running an exclusive microphone test."
+      : "Capture one second through the selected Robonix microphone route.";
+  }
+}
+
+function stopHandsfreeEventStream() {
+  if (state.handsfreeReconnect) {
+    clearTimeout(state.handsfreeReconnect);
+    state.handsfreeReconnect = null;
+  }
+  if (state.handsfreeSocket) {
+    const socket = state.handsfreeSocket;
+    state.handsfreeSocket = null;
+    socket.close(1000, "hands-free disabled");
+  }
+}
+
+function syncHandsfreeEventStream() {
+  if (!state.handsfree.enabled || !collectSettings().atlasEndpoint) {
+    stopHandsfreeEventStream();
+    return;
+  }
+  const current = state.handsfreeSocket;
+  if (current && [WebSocket.CONNECTING, WebSocket.OPEN].includes(current.readyState)) return;
+  if (state.handsfreeReconnect) return;
+
+  const socket = new WebSocket(wsUrl("/ws/handsfree-events"));
+  state.handsfreeSocket = socket;
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ settings: collectSettings() }));
+    addStatusLine("Watching robot hands-free interaction.");
+  };
+  socket.onmessage = (message) => {
+    const payload = JSON.parse(message.data);
+    if (payload.type === "voice_event") handleVoiceEvent(payload.event);
+    if (payload.type === "accepted") addTimeline("voice", "hands-free event stream connected");
+    if (payload.type === "error") addMessage("error", payload.error || "hands-free event stream failed");
+  };
+  socket.onclose = () => {
+    if (state.handsfreeSocket === socket) state.handsfreeSocket = null;
+    if (!state.handsfree.enabled) return;
+    state.handsfreeReconnect = setTimeout(() => {
+      state.handsfreeReconnect = null;
+      syncHandsfreeEventStream();
+    }, 1500);
+  };
 }
 
 function autoGrowInput() {
@@ -505,6 +597,10 @@ async function sendTask() {
 }
 
 function startVoice() {
+  if (handsfreeOwnsMicrophone()) {
+    addStatusLine("Hands-free is listening. Turn it off before starting a voice session.");
+    return;
+  }
   if (state.voiceActive) return;
   const wasBusy = state.busy;
   state.voiceActive = true;
@@ -1628,6 +1724,21 @@ function renderAudioRouteDevices(side, result) {
   const devices = result.devices || [];
   const target = devices.some((device) => device.id === saved) ? saved : (current || "");
   select.value = target;
+  renderBridgeDeviceReadout(side, result, target);
+}
+
+function renderBridgeDeviceReadout(side, result, selectedId) {
+  const provider = maybe(side === "mic" ? "micNodeId" : "speakerNodeId")?.value || "";
+  const target = maybe(side === "mic" ? "bridgeInputDevice" : "bridgeOutputDevice");
+  if (!target) return;
+  if (provider !== "audio_client_bridge") {
+    target.textContent = "Not using client bridge";
+    return;
+  }
+  const device = (result.devices || []).find((entry) => entry.id === selectedId);
+  target.textContent = device
+    ? `${device.name}${device.channels ? ` (${device.channels} ch)` : ""}`
+    : "OS default";
 }
 
 async function refreshAudioRoute() {
@@ -1670,7 +1781,22 @@ async function loadAudioRouteDevices(side) {
     body: JSON.stringify({ settings: collectSettings(), providerId: provider }),
   }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
   if (result.error) {
+    if (select) {
+      clear(select);
+      routeOption(select, "", `Unavailable: ${result.error}`);
+      select.disabled = true;
+    }
     setText("audioRouteStatus", `${provider}: ${result.error}`);
+    return;
+  }
+  if (select) select.disabled = false;
+  if (!(result.devices || []).length) {
+    if (select) {
+      clear(select);
+      routeOption(select, "", "No devices reported by provider");
+      select.disabled = true;
+    }
+    setText("audioRouteStatus", `${provider}: provider reported no devices`);
     return;
   }
   if (side === "mic") state.audio.route.micDevices = result.devices || [];
@@ -1680,7 +1806,9 @@ async function loadAudioRouteDevices(side) {
 
 async function applyAudioRoute() {
   state.settings = collectSettings();
-  saveSettings();
+  await persistSettings().catch((error) => {
+    setText("audioRouteStatus", `Settings save failed: ${error}`);
+  });
   setText("audioRouteStatus", "Applying selected devices...");
   const result = await fetch("/api/audio-route/apply", {
     method: "POST",
@@ -1966,6 +2094,10 @@ async function testSpeaker() {
   const text = result.ok
     ? `speaker ok: played ${result.bytes} bytes via ${result.speakerEndpoint}`
     : `speaker failed: ${result.error}`;
+  const status = $("audioTestStatus");
+  status.textContent = text;
+  status.classList.toggle("is-error", !result.ok);
+  status.classList.toggle("is-success", Boolean(result.ok));
   addMessage(result.ok ? "status" : "error", text);
   addTimeline(result.ok ? "audio" : "error", text);
   renderAudioServer({
@@ -1973,6 +2105,28 @@ async function testSpeaker() {
     error: result.error || "",
     url: result.ok ? `tts ${result.ttsEndpoint} / speaker ${result.speakerEndpoint}` : "",
   });
+}
+
+async function testMicrophone() {
+  const button = $("testMicrophone");
+  button.classList.add("busy");
+  addTimeline("audio", "microphone test requested");
+  const result = await fetch("/api/audio/mic-test", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
+  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  button.classList.remove("busy");
+  const text = result.ok
+    ? `microphone ok: ${result.bytes} bytes in ${result.captureMs} ms, RMS ${result.rms}`
+    : `microphone failed: ${result.error}`;
+  const status = $("audioTestStatus");
+  status.textContent = text;
+  status.classList.toggle("is-error", !result.ok);
+  status.classList.toggle("is-success", Boolean(result.ok));
+  addMessage(result.ok ? "status" : "error", text);
+  addTimeline(result.ok ? "audio" : "error", text);
+  setText("audioRouteStatus", text);
 }
 
 function renderEnroll(result) {

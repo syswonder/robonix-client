@@ -43,6 +43,7 @@ CONTRACT_VOICEPRINT = "robonix/service/voiceprint/identify"
 CONTRACT_VOICEPRINT_ENROLL = "robonix/service/voiceprint/enroll"
 CONTRACT_HANDSFREE_SET_ENABLED = "robonix/system/liaison/handsfree/set_enabled"
 CONTRACT_HANDSFREE_STATUS = "robonix/system/liaison/handsfree/status"
+CONTRACT_HANDSFREE_EVENTS = "robonix/system/liaison/handsfree/events"
 
 PILOT_EVENT_NAMES = {
     0: "text_chunk",
@@ -463,6 +464,22 @@ async def set_handsfree_enabled(settings: ClientSettings, enabled: bool) -> dict
     }
 
 
+async def watch_handsfree_events(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
+    """Forward the robot-local hands-free turn as the standard VoiceEvent stream."""
+    endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_HANDSFREE_EVENTS)
+    async with grpc.aio.insecure_channel(endpoint) as channel:
+        call = channel.unary_stream(
+            "/robonix.contracts.RobonixSystemLiaisonHandsfreeEvents/WatchHandsfreeEvents",
+            request_serializer=liaison_pb2.WatchHandsfreeEvents_Request.SerializeToString,
+            response_deserializer=lambda raw: raw,
+        )
+        async for raw in call(liaison_pb2.WatchHandsfreeEvents_Request()):
+            yield {
+                "type": "voice_event",
+                "event": voice_event_to_dict(decode_handsfree_event(raw)),
+            }
+
+
 def build_text_task(
     settings: ClientSettings,
     text: str,
@@ -758,6 +775,14 @@ def decode_submit_event(raw: bytes) -> Any:
 def decode_voice_event(raw: bytes) -> Any:
     """Decode liaison voice stream events in wrapper or raw format."""
     wrapped = liaison_pb2.StartVoiceSession_Response.FromString(raw)
+    if wrapped.HasField("event"):
+        return wrapped.event
+    return liaison_pb2.VoiceEvent.FromString(raw)
+
+
+def decode_handsfree_event(raw: bytes) -> Any:
+    """Decode the hands-free observation wrapper or a raw VoiceEvent."""
+    wrapped = liaison_pb2.WatchHandsfreeEvents_Response.FromString(raw)
     if wrapped.HasField("event"):
         return wrapped.event
     return liaison_pb2.VoiceEvent.FromString(raw)
