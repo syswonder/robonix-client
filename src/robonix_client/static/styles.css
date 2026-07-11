@@ -2009,32 +2009,39 @@ select:focus {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(360px, 0.74fr) minmax(460px, 1fr);
-  grid-template-rows: repeat(4, auto);
   gap: 10px;
-  align-content: stretch;
-  overflow: auto;
-  padding-right: 2px;
+  overflow: hidden;
 }
 
 .audio-page {
+  box-sizing: border-box;
   padding: 10px;
+  overflow: hidden;
+}
+
+.audio-column {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .audio-page .panel {
   min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+  flex: 0 0 auto;
 }
 
 .audio-log-panel {
-  grid-column: 2;
-  grid-row: 1 / span 4;
-  height: min(100%, calc(100vh - 74px));
+  height: 100%;
   min-height: 0;
-  max-height: 100%;
+  flex: 1 1 auto;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .audio-actions,
@@ -2132,7 +2139,6 @@ select:focus {
   padding: 12px;
   min-height: 0;
   height: 100%;
-  max-height: calc(100vh - 142px);
   overflow: auto;
   border-top: 1px solid var(--line-soft);
   color: #c7d3d5;

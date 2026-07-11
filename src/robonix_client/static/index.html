@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260709e" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260711a" />
   </head>
   <body>
     <div class="app-shell">
@@ -140,6 +140,7 @@
 
         <section class="page work-page audio-page" data-page-panel="audio">
           <section class="audio-layout">
+            <section class="audio-column audio-config-column">
             <section class="panel audio-panel">
               <div class="panel-header">
                 <div>
@@ -248,7 +249,9 @@
                 <button class="button form-button" id="enrollVoice" type="button">Enroll Voice</button>
               </div>
             </section>
+            </section>
 
+            <section class="audio-column audio-log-column">
             <section class="panel audio-log-panel">
               <div class="panel-header">
                 <div>
@@ -257,6 +260,7 @@
                 </div>
               </div>
               <pre class="audio-log" id="audioLog"></pre>
+            </section>
             </section>
           </section>
         </section>
