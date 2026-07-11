@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import os
-import struct
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -29,6 +27,7 @@ from .transport import (
     list_audio_devices,
     list_audio_providers,
     play_tts_test,
+    pcm16_stats,
     record_pcm,
     select_audio_device,
     start_voice_session,
@@ -437,19 +436,14 @@ async def audio_mic_test(req: AudioMicTestRequest) -> dict[str, Any]:
         started = time.monotonic()
         pcm = await record_pcm(settings, seconds)
         capture_ms = round((time.monotonic() - started) * 1000.0)
-        sample_bytes = pcm[: len(pcm) - (len(pcm) % 2)]
-        samples = struct.iter_unpack("<h", sample_bytes)
-        sum_sq = 0.0
-        count = 0
-        for (sample,) in samples:
-            sum_sq += float(sample) * float(sample)
-            count += 1
-        rms = math.sqrt(sum_sq / count) / 32768.0 if count else 0.0
+        stats = pcm16_stats(pcm)
         return {
             "ok": True,
             "bytes": len(pcm),
             "seconds": seconds,
-            "rms": round(rms, 4),
+            "rms": round(float(stats["rms"]), 4),
+            "peak": stats["peak"],
+            "nonzeroRatio": round(float(stats["nonzeroRatio"]), 6),
             "captureMs": capture_ms,
             "providerId": settings.mic_node_id or "auto",
         }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import struct
 import sys
 import time
 import uuid
@@ -27,6 +29,7 @@ CONSUMER_ID = "robonix-client/gui"
 DEFAULT_ATLAS = "127.0.0.1:50051"
 DEFAULT_ATLAS_PORT = 50051
 DEFAULT_LIAISON_PORT = 50081
+GRPC_CHANNEL_OPTIONS = (("grpc.enable_http_proxy", 0),)
 
 CONTRACT_LIAISON_SUBMIT = "robonix/system/liaison/submit"
 CONTRACT_LIAISON_VOICE = "robonix/system/liaison/voice"
@@ -163,6 +166,13 @@ def normalize_grpc_target(raw: str) -> str:
     return f"{host}{port}"
 
 
+def grpc_channel(target: str) -> grpc.aio.Channel:
+    """Connect directly to robot capabilities, never through desktop proxies."""
+    return grpc.aio.insecure_channel(
+        normalize_grpc_target(target), options=GRPC_CHANNEL_OPTIONS
+    )
+
+
 def split_host_port(target: str) -> tuple[str, int | None]:
     normalized = normalize_grpc_target(target)
     if not normalized:
@@ -225,7 +235,7 @@ async def _unary_unary(
     response_type: Any,
     timeout: float = 4.0,
 ) -> Any:
-    async with grpc.aio.insecure_channel(normalize_grpc_target(target)) as channel:
+    async with grpc_channel(target) as channel:
         call = channel.unary_unary(
             path,
             request_serializer=request.SerializeToString,
@@ -465,7 +475,7 @@ async def set_handsfree_enabled(settings: ClientSettings, enabled: bool) -> dict
 async def watch_handsfree_events(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
     """Forward the robot-local hands-free turn as the standard VoiceEvent stream."""
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_HANDSFREE_EVENTS)
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonHandsfreeEvents/WatchHandsfreeEvents",
             request_serializer=liaison_pb2.WatchHandsfreeEvents_Request.SerializeToString,
@@ -567,7 +577,7 @@ async def _submit_text_once(
         steer=steer,
         expected_turn_id=expected_turn_id,
     )
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
@@ -584,7 +594,7 @@ async def abort_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
     task = build_abort_task(settings, expected_turn_id)
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
@@ -622,7 +632,7 @@ async def start_voice_session(
         speaker_node_id=settings.speaker_node_id,
         context_json=json.dumps(context, ensure_ascii=False),
     )
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonVoice/StartVoiceSession",
             request_serializer=liaison_pb2.StartVoiceSession_Request.SerializeToString,
@@ -659,7 +669,7 @@ async def enroll_voiceprint(
         encoding="pcm_s16le",
         sample_rate_hz=16000,
     )
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_unary(
             "/robonix.contracts.RobonixServiceVoiceprintEnroll/Enroll",
             request_serializer=voiceprint_pb2.Enroll_Request.SerializeToString,
@@ -693,7 +703,7 @@ async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_MIC, settings.mic_node_id)
     deadline = time.monotonic() + seconds
     chunks: list[bytes] = []
-    async with grpc.aio.insecure_channel(endpoint) as channel:
+    async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixPrimitiveAudioMic/Mic",
             request_serializer=Empty.SerializeToString,
@@ -711,7 +721,36 @@ async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
             "mic stream returned no audio. Ensure the robot-side mic primitive is pointed at a "
             "reachable audio device server host and that the server is serving ws://<client-host>:60000/mic."
         )
+    stats = pcm16_stats(pcm)
+    if stats["samples"] and stats["peak"] == 0:
+        raise RobonixApiError(
+            "mic stream returned digital silence: every PCM sample was zero. "
+            "Check the selected capture device, hardware mute, ALSA/PulseAudio routing, "
+            "and provider device configuration before using ASR or voice enrollment."
+        )
     return pcm
+
+
+def pcm16_stats(pcm: bytes) -> dict[str, float | int]:
+    """Return exact activity statistics for little-endian signed 16-bit PCM."""
+    sample_bytes = pcm[: len(pcm) - (len(pcm) % 2)]
+    count = 0
+    nonzero = 0
+    peak = 0
+    sum_sq = 0.0
+    for (sample,) in struct.iter_unpack("<h", sample_bytes):
+        magnitude = abs(sample)
+        peak = max(peak, magnitude)
+        nonzero += int(sample != 0)
+        sum_sq += float(sample) * float(sample)
+        count += 1
+    return {
+        "samples": count,
+        "peak": peak,
+        "nonzeroSamples": nonzero,
+        "nonzeroRatio": nonzero / count if count else 0.0,
+        "rms": math.sqrt(sum_sq / count) / 32768.0 if count else 0.0,
+    }
 
 
 async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker test") -> dict[str, Any]:
@@ -724,7 +763,7 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
         voice="",
         speed=1.0,
     )
-    async with grpc.aio.insecure_channel(tts_endpoint) as channel:
+    async with grpc_channel(tts_endpoint) as channel:
         call = channel.unary_unary(
             "/robonix.contracts.RobonixServiceSpeechTts/Synthesize",
             request_serializer=tts_pb2.Synthesize_Request.SerializeToString,
@@ -750,7 +789,7 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
                 duration_s=len(data) / float(sample_rate * frame_bytes),
             )
 
-    async with grpc.aio.insecure_channel(speaker_endpoint) as channel:
+    async with grpc_channel(speaker_endpoint) as channel:
         call = channel.stream_unary(
             "/robonix.contracts.RobonixPrimitiveAudioSpeaker/Speaker",
             request_serializer=audio_pb2.AudioChunk.SerializeToString,

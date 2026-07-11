@@ -255,8 +255,9 @@ drivers do not need that capability.
 - **Audio bridge unavailable:** confirm the deployment uses
   `audio_client_bridge`, port `60002` is reachable, and the provider exposes
   `bridge_info`.
-- **Microphone test reports silence:** select a real macOS input device and
-  grant microphone permission to the terminal/Python process.
+- **Microphone test reports digital silence:** every PCM sample was zero. Check
+  hardware mute and ALSA/CoreAudio routing, or select `audio_client_bridge` and
+  a real macOS input device. Quiet nonzero background audio is accepted.
 - **Stop does not end a task:** inspect the RTDL event history and Executor log;
   a successful Stop must produce an interrupted turn and a cancelled running
   plan.
