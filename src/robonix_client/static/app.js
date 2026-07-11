@@ -9,6 +9,7 @@ const state = {
   messages: [],
   timeline: [],
   plan: null,
+  planRecords: [],
   taskState: null,
   batches: [],
   nodeStates: {},
@@ -548,6 +549,7 @@ function newSession() {
   state.messages = [];
   state.timeline = [];
   state.plan = null;
+  state.planRecords = [];
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
@@ -646,6 +648,7 @@ function handlePilotEvent(event) {
     finalizeAgent(event.finalText);
   } else if (event.kind === "plan" && event.plan) {
     state.plan = event.plan;
+    upsertPlanRecord(event.plan);
     announcePlan(event.plan);
     addTimeline("plan", `live round ${event.plan.round}: ${planCalls(event.plan).length} call(s)`);
     renderPlan();
@@ -655,11 +658,20 @@ function handlePilotEvent(event) {
     (event.batchResult.results || []).forEach((result) => {
       if (Number.isFinite(Number(result.nodeIndex))) state.nodeStates[String(result.nodeIndex)] = result;
     });
+    updatePlanRecordResult(event.batchResult.planId, (record) => {
+      record.batches.unshift(event.batchResult);
+      (event.batchResult.results || []).forEach((result) => {
+        if (Number.isFinite(Number(result.nodeIndex))) record.nodeStates[String(result.nodeIndex)] = result;
+      });
+    });
     addTimeline(event.batchResult.anyFailed ? "error" : "result", `round ${event.batchResult.round} result`);
     renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "node_state" && event.nodeState) {
     state.nodeStates[String(event.nodeState.nodeIndex)] = event.nodeState;
+    updatePlanRecordResult(event.nodeState.planId, (record) => {
+      record.nodeStates[String(event.nodeState.nodeIndex)] = event.nodeState;
+    });
     addTimeline(event.nodeState.state === "FAILED" ? "error" : "status", `${event.nodeState.opId || `node ${event.nodeState.nodeIndex}`} ${event.nodeState.state}`);
     renderPlan();
     persistCurrentConversation();
@@ -673,6 +685,35 @@ function handlePilotEvent(event) {
     addTimeline("status", event.status.message || `state ${event.status.state}`);
     if (event.status.message) addStatusLine(event.status.message);
   }
+}
+
+function planRecordKey(plan) {
+  const planId = String(plan?.planId || "").trim();
+  return planId ? `${planId}:${Number(plan?.round || 0)}` : `round:${Number(plan?.round || 0)}`;
+}
+
+function upsertPlanRecord(plan) {
+  const key = planRecordKey(plan);
+  const existing = state.planRecords.find((record) => record.key === key);
+  if (existing) {
+    existing.plan = plan;
+    existing.updatedAt = Date.now();
+  } else {
+    state.planRecords.unshift({ key, plan, nodeStates: {}, batches: [], updatedAt: Date.now() });
+    state.planRecords = state.planRecords.slice(0, 80);
+  }
+}
+
+function updatePlanRecordResult(planId, update) {
+  const id = String(planId || "").trim();
+  let record = state.planRecords.find((item) => String(item.plan?.planId || "") === id);
+  if (!record && state.plan) {
+    upsertPlanRecord(state.plan);
+    record = state.planRecords.find((item) => item.key === planRecordKey(state.plan));
+  }
+  if (!record) return;
+  update(record);
+  record.updatedAt = Date.now();
 }
 
 function handleVoiceEvent(event) {
@@ -799,6 +840,7 @@ function renderMessages() {
       action.className = "message-link";
       action.textContent = "Show RTDL";
       action.addEventListener("click", () => {
+        if (maybe("rtdlHistory")) $("rtdlHistory").open = true;
         const sidebar = maybe("dashboardSidebar");
         const execution = document.querySelector(".execution-panel");
         execution?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -857,36 +899,67 @@ function renderTimeline() {
 }
 
 function renderPlan() {
-  const plan = state.plan;
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
-  const calls = planCalls(plan);
-  setTextAll("[data-plan-summary]", plan ? `round ${plan.round} · ${calls.length} call(s)` : "waiting for real plan");
+  const records = normalizedPlanRecords();
+  const latestRecord = records[0] || null;
+  const historyRecords = records.slice(1);
+  const latestCalls = planCalls(latestRecord?.plan).length;
+  setTextAll("[data-plan-summary]", latestRecord
+    ? `plan ${latestRecord.plan.planId || "-"} · round ${latestRecord.plan.round} · ${latestCalls} call(s)`
+    : "No RTDL tree is currently executing");
+  if (maybe("rtdlHistoryCount")) $("rtdlHistoryCount").textContent = String(historyRecords.length);
   renderGoalPanel();
   renderSceneAssets();
-  if (!plan) {
+  if (!latestRecord) {
     roots.forEach((root) => {
       const empty = document.createElement("div");
       empty.className = "plan-empty";
       empty.textContent = "No RTDL plan in this session yet.";
       root.appendChild(empty);
     });
-    renderExecutionDetail(null, "PENDING");
-    return;
+  } else {
+    roots.forEach((root) => renderPlanRecord(root, latestRecord));
   }
-  const resultMaps = buildResultMaps();
-  const nodeStateByIndex = resultMaps.byIndex;
-  const runningIndex = pickRunningIndex(plan, nodeStateByIndex);
-  const rows = planForestNodes(plan).map(({ node, depth }) => ({
-    node,
-    depth,
-    status: aggregateNodeStatus(node, plan, resultMaps, runningIndex),
-  }));
-  roots.forEach((root) => {
-    renderBehaviorTree(root, plan, resultMaps, runningIndex);
-  });
-  const activeNode = plan.nodes.find((node) => node.index === runningIndex) || plan.nodes.find((node) => node.call) || plan.nodes[0];
-  renderExecutionDetail(activeNode, aggregateNodeStatus(activeNode, plan, resultMaps, runningIndex), resultForNode(activeNode, resultMaps));
+  renderPlanHistory(historyRecords);
+  const newest = latestRecord;
+  if (!newest) return renderExecutionDetail(null, "PENDING");
+  const maps = buildResultMaps(newest);
+  const runningIndex = pickRunningIndex(newest.plan, maps.byIndex);
+  const activeNode = newest.plan.nodes.find((node) => Number(node.index) === Number(runningIndex))
+    || newest.plan.nodes.find((node) => node.call) || newest.plan.nodes[0];
+  renderExecutionDetail(activeNode, aggregateNodeStatus(activeNode, newest.plan, maps, runningIndex), resultForNode(activeNode, maps));
+}
+
+function normalizedPlanRecords() {
+  if (state.planRecords.length) return state.planRecords;
+  if (!state.plan) return [];
+  return [{ key: planRecordKey(state.plan), plan: state.plan, nodeStates: state.nodeStates || {}, batches: state.batches || [] }];
+}
+
+function renderPlanRecord(root, record) {
+  const wrapper = document.createElement("section");
+  wrapper.className = "plan-record";
+  const label = document.createElement("div");
+  label.className = "plan-record-label";
+  label.textContent = `Plan ${record.plan.planId || "-"} · round ${record.plan.round}`;
+  wrapper.appendChild(label);
+  const maps = buildResultMaps(record);
+  renderBehaviorTree(wrapper, record.plan, maps, pickRunningIndex(record.plan, maps.byIndex));
+  root.appendChild(wrapper);
+}
+
+function renderPlanHistory(records) {
+  const root = maybe("rtdlHistoryTrees");
+  if (!root) return;
+  clear(root);
+  records.forEach((record) => renderPlanRecord(root, record));
+  if (!records.length) {
+    const empty = document.createElement("div");
+    empty.className = "plan-empty";
+    empty.textContent = "No completed RTDL trees yet.";
+    root.appendChild(empty);
+  }
 }
 
 function renderBehaviorTree(root, plan, resultMaps, runningIndex) {
@@ -928,8 +1001,8 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
   const nodes = plan?.nodes || [];
   const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
   const nodeStateByIndex = resultMaps.byIndex;
-  const nodeW = 62;
-  const nodeH = 21;
+  const nodeW = 74;
+  const nodeH = 28;
   const leafGap = 9;
   const levelGap = 34;
   const topPad = 13;
@@ -1014,13 +1087,13 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
     accent.setAttribute("rx", "1.25");
     const text = document.createElementNS(ns, "text");
     text.setAttribute("x", String(nodeW / 2));
-    text.setAttribute("y", "9.8");
+    text.setAttribute("y", "12.2");
     text.setAttribute("text-anchor", "middle");
     text.textContent = ellipsize(nodeLabel(node), 10);
     const meta = document.createElementNS(ns, "text");
     meta.setAttribute("class", "bt-node-meta");
     meta.setAttribute("x", String(nodeW / 2));
-    meta.setAttribute("y", "17.5");
+    meta.setAttribute("y", "22.2");
     meta.setAttribute("text-anchor", "middle");
     meta.textContent = node.call ? ellipsize(compactProvider(node.call), 12) : displayStatus(status);
     g.append(title, rect, accent, text, meta);
@@ -1181,7 +1254,7 @@ function startedForNode(node, status) {
 function statusKey(status) {
   const raw = String(status || "pending").toLowerCase();
   if (raw === "succeeded" || raw === "success" || raw === "done" || raw === "completed") return "success";
-  if (raw === "failed" || raw === "failure" || raw === "error") return "failed";
+  if (["failed", "failure", "error", "canceled", "cancelled", "timeout", "aborted"].includes(raw)) return "failed";
   if (raw === "running" || raw === "in_progress" || raw === "active") return "running";
   return "pending";
 }
@@ -1206,7 +1279,7 @@ function renderExecutionDetail(node, status, nodeState = null) {
   $("activeArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
 }
 
-function buildResultMaps() {
+function buildResultMaps(record = null) {
   const byIndex = new Map();
   const byCallId = new Map();
   const add = (result) => {
@@ -1216,8 +1289,8 @@ function buildResultMaps() {
     const callId = result.leafResult?.callId || result.callId;
     if (callId) byCallId.set(String(callId), result);
   };
-  Object.values(state.nodeStates || {}).forEach(add);
-  state.batches.forEach((batch) => (batch.results || []).forEach(add));
+  Object.values(record?.nodeStates || state.nodeStates || {}).forEach(add);
+  (record?.batches || state.batches).forEach((batch) => (batch.results || []).forEach(add));
   return { byIndex, byCallId };
 }
 
@@ -1225,7 +1298,7 @@ function resultForNode(node, maps = buildResultMaps()) {
   if (!node) return null;
   const callId = node.call?.callId ? String(node.call.callId) : "";
   if (callId && maps.byCallId?.has(callId)) return maps.byCallId.get(callId);
-  const indexed = maps.byIndex?.get(Number(node.index)) || state.nodeStates?.[String(node.index)] || null;
+  const indexed = maps.byIndex?.get(Number(node.index)) || null;
   if (!indexed) return null;
   if (!node.call) return indexed.leafResult ? { ...indexed, leafResult: null } : indexed;
   const resultCallId = indexed.leafResult?.callId || indexed.callId || "";
@@ -1509,7 +1582,7 @@ function latestImageAttachment() {
 }
 
 function persistCurrentConversation(titleHint = "", force = false) {
-  const hasContent = state.sessionTitle || state.messages.length || state.timeline.length || state.plan || state.batches.length || Object.keys(state.nodeStates || {}).length;
+  const hasContent = state.sessionTitle || state.messages.length || state.timeline.length || state.plan || state.planRecords.length || state.batches.length || Object.keys(state.nodeStates || {}).length;
   if (!hasContent && !force) return;
   const existing = state.history.find((item) => item.id === state.sessionId);
   const title = state.sessionTitle || existing?.title || titleHint || firstUserMessage() || "Untitled chat";
@@ -1521,6 +1594,7 @@ function persistCurrentConversation(titleHint = "", force = false) {
     messages: state.messages.map((item) => ({ ...item })),
     timeline: state.timeline.map((item) => ({ ...item })),
     plan: state.plan,
+    planRecords: state.planRecords,
     batches: state.batches,
     nodeStates: state.nodeStates,
   };
@@ -1611,6 +1685,7 @@ function deleteConversation(sessionId) {
     state.messages = [];
     state.timeline = [];
     state.plan = null;
+    state.planRecords = [];
     state.batches = [];
     state.nodeStates = {};
     state.activeAgentId = null;
@@ -1631,6 +1706,7 @@ function clearHistory() {
   state.messages = [];
   state.timeline = [];
   state.plan = null;
+  state.planRecords = [];
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
@@ -1652,6 +1728,7 @@ function openConversation(sessionId) {
   state.messages = (conversation.messages || []).map((item) => ({ ...item }));
   state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
   state.plan = conversation.plan || null;
+  state.planRecords = conversation.planRecords || [];
   state.batches = conversation.batches || [];
   state.nodeStates = conversation.nodeStates || {};
   state.activeAgentId = null;
