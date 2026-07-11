@@ -1,114 +1,266 @@
 # Robonix Client
 
-A multi-platform desktop client for Robonix. It provides a single GUI for text,
-voice, and image interaction with a running Robonix system, plus live dashboard
-views for robot health, agent reasoning, RTDL execution, and runtime events.
+A macOS web client for operating a running Robonix deployment. It provides
+text tasks, voice turns, hands-free control, explicit Stop/steer behavior,
+audio-device routing, and live Pilot/RTDL execution events.
 
-The client is pure client-side software that connects to a local or remote
-Robonix deployment through stable Robonix APIs. Robonix core still owns Atlas,
-Liaison, Pilot, Executor, speech, voiceprint, and robot primitives.
+## Install Guide
+
+Requirements:
+
+- macOS
+- Python 3.11 or newer
+- network access to the machine running Robonix Atlas
+- a running Robonix deployment with Atlas, Liaison, Pilot, and Executor
+
+Install from source:
+
+```bash
+git clone https://github.com/syswonder/robonix-client.git
+cd robonix-client
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e ".[audio]"
+```
+
+The `audio` extra installs the CoreAudio dependency used for microphone and
+speaker access. If `sounddevice` cannot find PortAudio, install it first:
+
+```bash
+brew install portaudio
+pip install -e ".[audio]"
+```
 
 ## Quick Start
 
-Typical remote setup: Robonix runs on a Linux host, while the browser,
-microphone, and speaker stay on the client machine. SSH, Tailscale, or LAN are
-only network paths.
-
-### 1. Start the Robonix backend
-
-Start a deployment that provides Atlas, Liaison, Pilot, Executor, speech,
-voiceprint, and the audio device server primitive:
+Assume Robonix Atlas is running on `100.87.172.93:50051`:
 
 ```bash
+source .venv/bin/activate
+robonix-client --robot-host 100.87.172.93
+```
+
+Open <http://127.0.0.1:7860/>.
+
+The client starts its local macOS audio service automatically. In the UI:
+
+1. Confirm **Robot Host** is `100.87.172.93` and **Atlas Port** is `50051`.
+2. Click **Connect**. The status should become online.
+3. Enter a small text task and click **Send**.
+4. While a task is active, **Send** becomes **Steer** and **Stop** appears.
+5. Open **Audio** to select and test microphone/speaker providers and devices.
+
+`--host` and `--robot-host` are different:
+
+- `--host 127.0.0.1` controls where this Web UI listens.
+- `--robot-host 100.87.172.93` selects the remote Robonix machine.
+
+Most users only need `--robot-host`.
+
+## Connecting to a Robonix Machine
+
+### Which IP should I enter?
+
+Enter the IP or hostname of the machine that runs **Robonix Atlas**. It is not
+the Mac client IP and not an unrelated development PC.
+
+Good choices are:
+
+- the robot's Tailscale IP when both machines use Tailscale;
+- the robot's LAN IP when both machines are on the same trusted LAN;
+- `127.0.0.1` only when Robonix and this client run on the same machine.
+
+The required fields are:
+
+| Field | Value |
+|---|---|
+| Robot Host | Atlas machine IP or hostname, for example `100.87.172.93` |
+| Atlas Port | `50051` unless the deployment changed it |
+| Liaison Endpoint | Leave empty; the client discovers Liaison through Atlas |
+| User ID | Optional identity used by the deployment's access policy |
+
+Liaison normally listens on port `50081`, but clients should discover it
+through Atlas instead of hard-coding that port.
+
+### Audio routing
+
+For a Mac microphone/speaker, the Robonix deployment must include the
+`audio_client_bridge` provider in client-initiated mode:
+
+```yaml
+primitive:
+  - name: audio_client_bridge
+    path: ./primitives/audio_client_bridge
+    config:
+      transport: reverse
+      listen_port: 60002
+```
+
+The word `reverse` only describes connection ownership: the Mac connects to
+the robot. The deployment does not store the Mac IP. The client discovers the
+bridge endpoint through Atlas, opens one outbound WebSocket, and carries both
+microphone and speaker PCM over that connection.
+
+In **Audio**, select `audio_client_bridge` for input and/or output, choose the
+macOS devices, click **Apply Route**, then run **Test microphone** and **Test
+speaker**. Hands-free mode is disabled until explicitly enabled in the UI.
+
+## Testing with the Robonix Webots Example
+
+This flow runs Webots and Robonix on a Linux machine and the client on macOS.
+The same-host case also works by using `127.0.0.1` as Robot Host.
+
+### 1. Prepare Robonix
+
+On the Linux/Webots machine:
+
+```bash
+git clone --recursive https://github.com/syswonder/robonix.git
+cd robonix
+cd rust && make install && cd ..
+
+export VLM_BASE_URL=https://api.openai.com/v1
+export VLM_API_KEY=<your-key>
+export VLM_MODEL=<your-model>
+
+cd examples/webots
 rbnx build
+```
+
+Use the reverse `audio_client_bridge` manifest block shown above if voice from
+the Mac is part of the test. Text, planning, execution, and Stop tests do not
+require client audio.
+
+### 2. Start Webots
+
+In terminal 1, from the Robonix repository root:
+
+```bash
+bash examples/webots/sim/start.sh
+```
+
+`office.wbt` is the default. To select another built-in world:
+
+```bash
+bash examples/webots/sim/start.sh --world complete_apartment.wbt
+```
+
+Wait until the simulator and Tiago controller are ready.
+
+### 3. Start the Robonix stack
+
+In terminal 2:
+
+```bash
+cd examples/webots
 rbnx boot
-# Or select a specific manifest:
-# rbnx boot -f <manifest>
 ```
 
-When healthy, Atlas is reachable at `<robot-host>:50051`.
+Wait for Atlas, Liaison, Pilot, Executor, and the manifest providers to report
+ready. `rbnx caps` can be used to confirm capability registration.
 
-### 2. Start the GUI on the client machine
+### 4. Start the client
+
+On the Mac:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e ".[audio]"
-robonix-client --host 127.0.0.1 --port 7860
+cd robonix-client
+source .venv/bin/activate
+robonix-client --robot-host <webots-machine-ip>
 ```
 
-Open http://127.0.0.1:7860/
+Open <http://127.0.0.1:7860/>, click **Connect**, and run the checks in this
+order:
 
-### 3. Start the local audio device server
+1. Send a harmless text request such as `Use Bash to print WEBOTS_CLIENT_OK`.
+2. Send a longer Bash task, then send a **Steer** update while it runs.
+3. Start another long Bash task and click **Stop**; verify the task becomes
+   interrupted and its child process exits.
+4. Inspect the RTDL tree and execution history for one plan/call per request.
+5. If audio bridge is enabled, apply the route and test microphone, speaker,
+   one Voice turn, then hands-free wake detection.
+6. Only after those checks, test simulated camera/navigation capabilities.
 
-On the machine that owns the microphone and speaker:
+Stop the environment with:
 
 ```bash
-robonix-client-audio-server --host 127.0.0.1 --port 60000 --ui-host 127.0.0.1
+cd examples/webots
+rbnx shutdown
+bash sim/stop.sh
 ```
 
-Expected output:
+## Core Design
+
+### Control path
 
 ```text
-HTTP UI on http://127.0.0.1:60001/
-websocket on ws://127.0.0.1:60000
+Browser UI
+  -> local robonix-client FastAPI/WebSocket adapter
+  -> Atlas discovery
+  -> Liaison task/voice API
+  -> Pilot planning harness
+  -> Executor and registered capabilities
+  -> structured Pilot/RTDL events back to the UI
 ```
 
-Keep this terminal running, then point the robot-side `audio_client_bridge`
-primitive at `ws://<client-host>:60000/mic` and `ws://<client-host>:60000/speaker`.
+The client does not embed a planner and does not call robot drivers directly.
+Atlas is the source of provider endpoints; Liaison is the interaction gateway;
+Pilot owns task/steer/abort semantics; Executor owns running capability calls.
 
-### 4. Configure the WebUI
+### Turn behavior
 
-In the command bar or `Settings` page:
+- **Send** starts a new task when the session is idle.
+- **Steer** targets the active turn using its expected turn ID. Stale steer is
+  rejected rather than applied to a newer task.
+- **Stop** sends an abort control event. Pilot interrupts the active turn and
+  Executor cancels running work, including Bash child processes. If an F2
+  session is recording, recognizing, or speaking, Stop also cancels that voice
+  stream and releases its audio devices.
+- Pressing **F2** while TTS is active performs barge-in: the old reply is
+  interrupted, then a fresh voice capture starts. TTS is never recorded back
+  into the new turn.
+- Voice steer ASR text is shown as a `voice steer` user message and is fenced to
+  the active turn ID.
+- Capture ends after speech plus 1.2 seconds of silence. If no speech is
+  detected, it exits with a visible error after 5 seconds instead of occupying
+  the microphone for the full record limit.
+- Planning and node state are structured events. Only a completed answer or a
+  real user-input boundary becomes an assistant reply.
+- **New Session** is disabled while a task is active, so it cannot hide an
+  execution that is still running.
 
-- `Robot Host`: reachable IP/hostname of the Robonix machine
-- `Atlas Port`: usually `50051`
-- `Liaison`: leave empty / `auto`
-- `User`: enrolled voice identity, e.g. `voice:<voice-id>`
+### Audio path
 
-Use the `Audio` panel's `Check`, `Enroll voice`, and `Test speaker` buttons to
-verify the audio device server, register a speaker, and test playback.
-
-### 5. Use the client
-
-- Type a task and click `Send` for text interaction.
-- Click `Voice` to start one voice session, `New` for a new chat.
-- Use `Execution` to inspect Pilot events and RTDL plans.
-- Use `Vitals` to check backend provider/contract availability.
-- Use `Audio` to debug enrollment, mic capture, and speaker output.
-
-## Configuration
-
-The GUI values can also be set through environment variables:
-
-```bash
-export ROBONIX_ROBOT_HOST=100.x.y.z
-export ROBONIX_ATLAS_PORT=50051
-export ROBONIX_ATLAS_ENDPOINT=100.x.y.z:50051
-export ROBONIX_LIAISON_ENDPOINT=127.0.0.1:50081
+```text
+macOS CoreAudio
+  <-> local audio service
+  <-> outbound WebSocket to audio_client_bridge on the robot
+  <-> standard Robonix mic/speaker contracts
+  <-> Liaison + Speech
 ```
 
-Liaison is auto-discovered through Atlas, then falls back to `<robot-host>:50081`.
+The bridge-specific endpoint is discovered through the optional
+`robonix/primitive/audio/bridge_info` capability. Normal robot-local audio
+drivers do not need that capability.
 
 ## Troubleshooting
 
-- GUI page does not open: ensure the GUI process is running and, for remote
-  setups, that `ssh -N -L 7860:127.0.0.1:7860 ...` is open.
-- Voice enrollment returns no audio: ensure the audio device server and
-  `ssh -N -R 60000:127.0.0.1:60000 ...` are both running.
-- Text submission denied: set `User` to the allowed identity, e.g. `voice:alice`.
-- `Vitals` shows `missing`: restart or fix the corresponding Robonix provider.
-
-## Notes
-
-- Image attachments are carried at the UI/API boundary in `Task.context_json`;
-  full backend image understanding is not yet implemented.
-- Linux local mic/speaker capture is not implemented yet. See
-  [docs/linux-audio.md](docs/linux-audio.md) for integration notes.
-- Backend contracts used: `robonix/system/liaison/submit`,
-  `robonix/system/liaison/voice`, `robonix/system/pilot`,
-  `robonix/system/executor`, and Atlas `Query` / `ConnectCapability`.
+- **Client page does not open:** check that `robonix-client` is running on
+  `127.0.0.1:7860`.
+- **Robot stays offline:** verify the entered host is the Atlas machine and that
+  `<robot-host>:50051` is reachable from the Mac.
+- **Liaison unavailable:** leave the endpoint empty and confirm Liaison is
+  registered in Atlas.
+- **Audio bridge unavailable:** confirm the deployment uses
+  `audio_client_bridge`, port `60002` is reachable, and the provider exposes
+  `bridge_info`.
+- **Microphone test reports silence:** select a real macOS input device and
+  grant microphone permission to the terminal/Python process.
+- **Stop does not end a task:** inspect the RTDL event history and Executor log;
+  a successful Stop must produce an interrupted turn and a cancelled running
+  plan.
 
 ## Related
 
-- Robonix core: https://github.com/syswonder/robonix
+- Robonix core: <https://github.com/syswonder/robonix>

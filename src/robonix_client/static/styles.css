@@ -775,7 +775,7 @@ h2 {
 
 .composer-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 6px;
   align-items: end;
 }
@@ -821,6 +821,12 @@ select:focus {
   color: #061015;
   background: var(--blue);
   border-color: #5db9ef;
+  font-weight: 800;
+}
+
+.stop-button {
+  min-height: 34px;
+  padding: 0 11px;
   font-weight: 800;
 }
 

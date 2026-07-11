@@ -5,6 +5,7 @@ import math
 import os
 import struct
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -21,12 +22,12 @@ from .audio_reverse_bridge import AudioReverseBridge
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
+    abort_turn,
     discover_audio_bridge,
     enroll_voiceprint,
     get_handsfree_status,
     list_audio_devices,
     list_audio_providers,
-    notify_session_end,
     play_tts_test,
     record_pcm,
     select_audio_device,
@@ -50,7 +51,7 @@ SETTINGS_PATH = Path(
 ).expanduser()
 PERSISTED_SETTING_KEYS = {
     "robotHost", "atlasPort", "liaisonEndpoint", "userId", "recordSeconds",
-    "language", "ttsEnabled", "micNodeId", "micDeviceId", "speakerNodeId",
+    "language", "micNodeId", "micDeviceId", "speakerNodeId",
     "speakerDeviceId", "ttsNodeId", "enrollUserId", "enrollUserName",
 }
 
@@ -111,6 +112,10 @@ class AudioRouteApplyRequest(BaseModel):
 
 def _payload_steer(payload: dict[str, Any]) -> bool:
     return bool(payload.get("steer") or payload.get("interactionMode") == "steer")
+
+
+def _payload_expected_turn_id(payload: dict[str, Any]) -> str:
+    return str(payload.get("expectedTurnId") or "").strip()
 
 
 def _load_persisted_settings() -> dict[str, Any]:
@@ -189,7 +194,6 @@ async def defaults() -> dict[str, Any]:
         "speakerDeviceId": os.environ.get("ROBONIX_CLIENT_SPEAKER_DEVICE_ID", ""),
         "ttsNodeId": os.environ.get("ROBONIX_CLIENT_TTS_NODE_ID", ""),
         "recordSeconds": int(os.environ.get("ROBONIX_CLIENT_RECORD_SECONDS", "30")),
-        "ttsEnabled": os.environ.get("ROBONIX_CLIENT_TTS", "1").lower() not in {"0", "false", "no"},
         "audioServer": {
             "host": audio_server_control.DEFAULT_BRIDGE_HOST,
             "bindHost": audio_server_control.DEFAULT_BRIDGE_BIND_HOST,
@@ -462,11 +466,37 @@ async def task_ws(ws: WebSocket) -> None:
         text = (payload.get("text") or "").strip()
         attachments = payload.get("attachments") or []
         steer = _payload_steer(payload)
+        expected_turn_id = _payload_expected_turn_id(payload)
         if not text and not attachments:
             await ws.send_json({"type": "error", "error": "empty task"})
             return
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in submit_text(settings, text, attachments, steer=steer):
+        async for item in submit_text(
+            settings,
+            text,
+            attachments,
+            steer=steer,
+            expected_turn_id=expected_turn_id,
+        ):
+            await ws.send_json(item)
+        await ws.send_json({"type": "done"})
+    except WebSocketDisconnect:
+        return
+    except grpc.aio.AioRpcError as exc:
+        await _send_error(ws, f"gRPC {exc.code().name}: {exc.details()}")
+    except Exception as exc:
+        await _send_error(ws, str(exc))
+
+
+@app.websocket("/ws/abort")
+async def abort_ws(ws: WebSocket) -> None:
+    await ws.accept()
+    try:
+        payload = await ws.receive_json()
+        settings = ClientSettings.from_payload(payload.get("settings"))
+        expected_turn_id = _payload_expected_turn_id(payload)
+        await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
+        async for item in abort_turn(settings, expected_turn_id):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:
@@ -484,10 +514,40 @@ async def voice_ws(ws: WebSocket) -> None:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
         steer = _payload_steer(payload)
+        expected_turn_id = _payload_expected_turn_id(payload)
         await _connect_selected_reverse_audio(settings)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in start_voice_session(settings, steer=steer):
-            await ws.send_json(item)
+
+        async def relay_voice() -> None:
+            async for item in start_voice_session(
+                settings,
+                steer=steer,
+                expected_turn_id=expected_turn_id,
+            ):
+                await ws.send_json(item)
+
+        async def wait_for_stop() -> None:
+            while True:
+                control = await ws.receive_json()
+                if control.get("type") == "stop":
+                    return
+
+        relay_task = asyncio.create_task(relay_voice())
+        stop_task = asyncio.create_task(wait_for_stop())
+        done, _ = await asyncio.wait(
+            {relay_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stop_task in done:
+            relay_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await relay_task
+            await ws.send_json({"type": "status", "message": "voice session stopped"})
+        else:
+            stop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stop_task
+            await relay_task
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:
         return
@@ -516,20 +576,8 @@ async def handsfree_events_ws(ws: WebSocket) -> None:
         await _send_error(ws, str(exc))
 
 
-@app.websocket("/ws/session-end")
-async def session_end_ws(ws: WebSocket) -> None:
-    await ws.accept()
-    try:
-        payload = await ws.receive_json()
-        settings = ClientSettings.from_payload(payload.get("settings"))
-        await notify_session_end(settings)
-        await ws.send_json({"type": "done"})
-    except Exception as exc:
-        await _send_error(ws, str(exc))
-
-
 async def _send_error(ws: WebSocket, message: str) -> None:
     try:
         await ws.send_json({"type": "error", "error": message})
-    except RuntimeError:
+    except (RuntimeError, WebSocketDisconnect):
         pass

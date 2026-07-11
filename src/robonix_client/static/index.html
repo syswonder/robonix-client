@@ -51,7 +51,6 @@
             <span id="handsfreeState">Hands-free off</span>
           </button>
           <button class="button connect-button" id="connectNow" type="button">Connect</button>
-          <button class="danger-button" type="button" id="endSession">End Session</button>
         </header>
 
         <section class="page dashboard-page active" data-page-panel="dashboard">
@@ -72,14 +71,12 @@
               <div class="messages" id="messages"></div>
             </div>
             <form class="composer" id="composer">
-              <div class="attachment-strip" id="attachmentStrip"></div>
               <div class="composer-row">
-                <button class="tool-button" type="button" id="attachButton" title="Attach image">Attach</button>
                 <textarea id="taskInput" rows="1" placeholder="Type a message..."></textarea>
                 <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice session">Voice</button>
+                <button class="danger-button stop-button" type="button" id="stopButton" title="Stop current task" hidden>Stop</button>
                 <button class="send-button" type="submit" id="sendButton" title="Send task">Send</button>
               </div>
-              <input id="imageInput" type="file" accept="image/*" multiple hidden />
             </form>
             </section>
 
@@ -301,10 +298,6 @@
                 <label class="field">
                   <span>Voice Record Limit (s)</span>
                   <input id="settingsRecordSeconds" type="number" min="2" max="60" step="1" />
-                </label>
-                <label class="field checkbox-field">
-                  <span>Speech Replies</span>
-                  <input id="settingsTtsEnabled" type="checkbox" />
                 </label>
               </div>
               <div class="audio-device-actions">

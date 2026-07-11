@@ -17,7 +17,12 @@ const state = {
   history: loadConversations(),
   busy: false,
   activeStreams: 0,
+  activeTurnId: "",
+  stopInFlight: false,
   voiceActive: false,
+  activeVoiceSocket: null,
+  activeVoiceMode: "voice",
+  pendingVoiceBargeIn: false,
   ttsPlaying: false,
   handsfree: { available: false, enabled: false, state: "unavailable", busy: false },
   handsfreeSocket: null,
@@ -153,7 +158,6 @@ async function init() {
     sessionTitle: "",
     recordSeconds: 30,
     language: "",
-    ttsEnabled: true,
     micNodeId: "",
     micDeviceId: "",
     speakerNodeId: "",
@@ -195,8 +199,6 @@ function bindSettings() {
   if (maybe("recordSeconds")) $("recordSeconds").value = state.settings.recordSeconds || 30;
   if (maybe("settingsRecordSeconds")) $("settingsRecordSeconds").value = state.settings.recordSeconds || 30;
   if (maybe("language")) $("language").value = state.settings.language || "";
-  if (maybe("ttsEnabled")) $("ttsEnabled").checked = state.settings.ttsEnabled !== false;
-  if (maybe("settingsTtsEnabled")) $("settingsTtsEnabled").checked = state.settings.ttsEnabled !== false;
   if (maybe("micNodeId")) $("micNodeId").value = state.settings.micNodeId || "";
   if (maybe("micDeviceId")) $("micDeviceId").value = state.settings.micDeviceId || "";
   if (maybe("speakerNodeId")) $("speakerNodeId").value = state.settings.speakerNodeId || "";
@@ -217,8 +219,6 @@ function bindSettings() {
     "recordSeconds",
     "settingsRecordSeconds",
     "language",
-    "ttsEnabled",
-    "settingsTtsEnabled",
     "micNodeId",
     "micDeviceId",
     "speakerNodeId",
@@ -226,7 +226,7 @@ function bindSettings() {
     "enrollUserId",
     "enrollUserName",
   ].forEach((id) => maybe(id)?.addEventListener("change", syncConnectionSettings));
-  ["settingsUserId", "settingsRecordSeconds", "settingsTtsEnabled"].forEach((id) => {
+  ["settingsUserId", "settingsRecordSeconds"].forEach((id) => {
     maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
   });
   maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true, true));
@@ -246,13 +246,10 @@ async function syncConnectionSettings(fromSettings = false, persist = false) {
   if (maybe("atlasPortSettings")) $("atlasPortSettings").value = port;
   const userSource = (fromSettings || document.activeElement?.id === "settingsUserId") && maybe("settingsUserId") ? "settingsUserId" : "userId";
   const secondsSource = (fromSettings || document.activeElement?.id === "settingsRecordSeconds") && maybe("settingsRecordSeconds") ? "settingsRecordSeconds" : "recordSeconds";
-  const ttsSource = (fromSettings || document.activeElement?.id === "settingsTtsEnabled") && maybe("settingsTtsEnabled") ? "settingsTtsEnabled" : "ttsEnabled";
   if (maybe("userId") && maybe(userSource)) $("userId").value = $(userSource).value.trim();
   if (maybe("settingsUserId") && maybe(userSource)) $("settingsUserId").value = $(userSource).value.trim();
   if (maybe("recordSeconds") && maybe(secondsSource)) $("recordSeconds").value = $(secondsSource).value;
   if (maybe("settingsRecordSeconds") && maybe(secondsSource)) $("settingsRecordSeconds").value = $(secondsSource).value;
-  if (maybe("ttsEnabled") && maybe(ttsSource)) $("ttsEnabled").checked = $(ttsSource).checked;
-  if (maybe("settingsTtsEnabled") && maybe(ttsSource)) $("settingsTtsEnabled").checked = $(ttsSource).checked;
   state.settings = collectSettings();
   saveSettings();
   if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
@@ -282,7 +279,6 @@ function collectSettings() {
     sessionId: state.sessionId,
     recordSeconds: Number(maybe("recordSeconds")?.value || state.settings.recordSeconds || 30),
     language: maybe("language")?.value.trim() || state.settings.language || "",
-    ttsEnabled: maybe("ttsEnabled") ? $("ttsEnabled").checked : state.settings.ttsEnabled !== false,
     micNodeId: maybe("micNodeId")?.value.trim() || state.settings.micNodeId || "",
     micDeviceId: maybe("micDeviceId")?.value.trim() || state.settings.micDeviceId || "",
     speakerNodeId: maybe("speakerNodeId")?.value.trim() || state.settings.speakerNodeId || "",
@@ -313,13 +309,11 @@ function bindEvents() {
     }
     startVoice();
   });
-  $("attachButton").addEventListener("click", () => $("imageInput").click());
-  $("imageInput").addEventListener("change", handleFiles);
+  $("stopButton").addEventListener("click", stopCurrentTask);
   maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
   $("newSession").addEventListener("click", newSession);
-  $("endSession").addEventListener("click", endSession);
   $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
   $("clearHistory").addEventListener("click", clearHistory);
   maybe("connectNow")?.addEventListener("click", async () => {
@@ -373,6 +367,10 @@ async function refreshHandsfree() {
 }
 
 async function toggleHandsfree() {
+  if (state.voiceActive) {
+    addStatusLine("Stop the active F2 voice session before changing hands-free mode.");
+    return;
+  }
   if (state.handsfree.busy) return;
   state.handsfree.busy = true;
   renderHandsfree();
@@ -422,10 +420,16 @@ function handsfreeOwnsMicrophone() {
 }
 
 function syncVoiceControls() {
-  const disabled = handsfreeOwnsMicrophone() && !state.voiceActive;
-  const title = disabled
+  const handsfreeBlocked = handsfreeOwnsMicrophone() && !state.voiceActive;
+  const recordingBlocked = state.voiceActive && !state.ttsPlaying;
+  const disabled = handsfreeBlocked || recordingBlocked;
+  const title = handsfreeBlocked
     ? "Hands-free owns the microphone. Turn it off to start an F2 voice session."
-    : "Start voice session";
+    : state.ttsPlaying
+      ? "Interrupt speech and start a new voice turn"
+      : state.voiceActive
+        ? "Voice recording is already active"
+        : "Start voice session";
   maybe("voiceButton")?.toggleAttribute("disabled", disabled);
   if (maybe("voiceButton")) $("voiceButton").title = title;
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
@@ -434,11 +438,16 @@ function syncVoiceControls() {
   });
   const micTest = maybe("testMicrophone");
   if (micTest) {
-    micTest.toggleAttribute("disabled", disabled);
-    micTest.title = disabled
-      ? "Hands-free owns this microphone. Turn it off before running an exclusive microphone test."
-      : "Capture one second through the selected Robonix microphone route.";
+    const micBlocked = handsfreeOwnsMicrophone() || state.voiceActive;
+    micTest.toggleAttribute("disabled", micBlocked);
+    micTest.title = state.voiceActive
+      ? "An F2 voice session owns this microphone. Stop it before testing the route."
+      : handsfreeOwnsMicrophone()
+        ? "Hands-free owns this microphone. Turn it off before running an exclusive microphone test."
+        : "Capture one second through the selected Robonix microphone route.";
   }
+  const handsfree = maybe("handsfreeToggle");
+  if (handsfree) handsfree.toggleAttribute("disabled", state.voiceActive || state.handsfree.busy);
 }
 
 function stopHandsfreeEventStream() {
@@ -519,6 +528,7 @@ function readFile(file) {
 
 function renderAttachments() {
   const strip = $("attachmentStrip");
+  if (!strip) return;
   clear(strip);
   state.attachments.forEach((item, index) => {
     const pill = document.createElement("button");
@@ -543,8 +553,13 @@ function activatePage(name) {
 }
 
 function newSession() {
+  if (state.busy) {
+    addStatusLine("Stop the current task before starting a new session.");
+    return;
+  }
   persistCurrentConversation();
   state.sessionId = getSessionId();
+  state.activeTurnId = "";
   state.sessionTitle = "";
   state.messages = [];
   state.timeline = [];
@@ -561,18 +576,13 @@ function newSession() {
   renderHistory();
 }
 
-function endSession() {
-  const socket = new WebSocket(wsUrl("/ws/session-end"));
-  socket.onopen = () => socket.send(JSON.stringify({ settings: collectSettings() }));
-  addTimeline("session", "session_end sent");
-}
-
 async function sendTask() {
   const text = $("taskInput").value.trim();
   const attachments = state.attachments.slice();
   if (!text && attachments.length === 0) return;
 
   const wasBusy = state.busy;
+  state.activeVoiceMode = wasBusy ? "voice steer" : "voice";
   const display = text || attachments.map((item) => item.name).join(", ");
   addMessage("user", display, wasBusy ? "steer" : (attachments.length ? `${attachments.length} image` : ""), attachments);
   addStatusLine(wasBusy ? "Queued steer input; waiting for Pilot to react." : "Submitted task; waiting for Pilot stream.");
@@ -593,9 +603,53 @@ async function sendTask() {
       settings: collectSettings(),
       steer: wasBusy,
       interactionMode: wasBusy ? "steer" : "task",
+      expectedTurnId: wasBusy ? state.activeTurnId : "",
     }));
   };
   wireStream(socket, endStream);
+}
+
+function stopCurrentTask() {
+  if (!state.busy || state.stopInFlight) return;
+  state.stopInFlight = true;
+  const button = $("stopButton");
+  button.disabled = true;
+  button.textContent = "Stopping";
+  addStatusLine("Stop requested; canceling the current task and any running action.");
+  addTimeline("cancel", `abort requested${state.activeTurnId ? ` for ${state.activeTurnId}` : ""}`);
+
+  stopActiveVoiceSession();
+  if (!state.activeTurnId) return;
+
+  const socket = new WebSocket(wsUrl("/ws/abort"));
+  socket.onopen = () => socket.send(JSON.stringify({
+    settings: collectSettings(),
+    expectedTurnId: state.activeTurnId,
+  }));
+  wireStream(socket, () => {
+    if (!state.busy) resetStopState();
+  });
+  socket.addEventListener("message", (event) => {
+    const payload = JSON.parse(event.data);
+    if (payload.type === "error") resetStopState();
+  });
+  socket.addEventListener("error", resetStopState);
+}
+
+function resetStopState() {
+  state.stopInFlight = false;
+  $("stopButton").disabled = false;
+  $("stopButton").textContent = "Stop";
+}
+
+function stopActiveVoiceSession() {
+  const socket = state.activeVoiceSocket;
+  if (!state.voiceActive || !socket) return;
+  const sendStop = () => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "stop" }));
+  };
+  if (socket.readyState === WebSocket.CONNECTING) socket.addEventListener("open", sendStop, { once: true });
+  else sendStop();
 }
 
 function startVoice() {
@@ -603,7 +657,16 @@ function startVoice() {
     addStatusLine("Hands-free is listening. Turn it off before starting a voice session.");
     return;
   }
-  if (state.voiceActive) return;
+  if (state.voiceActive) {
+    if (state.ttsPlaying) {
+      state.pendingVoiceBargeIn = true;
+      addStatusLine("Interrupting speech before starting a new voice turn.");
+      stopCurrentTask();
+    } else {
+      addStatusLine("Voice recording is already active.");
+    }
+    return;
+  }
   const wasBusy = state.busy;
   state.voiceActive = true;
   beginStream();
@@ -613,18 +676,27 @@ function startVoice() {
   addStatusLine(wasBusy ? "Listening for voice steer input." : "Listening for voice input.");
   addTimeline(wasBusy ? "voice steer" : "voice", wasBusy ? "voice steer requested" : "voice session requested");
   const socket = new WebSocket(wsUrl("/ws/voice"));
+  state.activeVoiceSocket = socket;
   socket.onopen = () => socket.send(JSON.stringify({
     settings: collectSettings(),
     steer: wasBusy,
     interactionMode: wasBusy ? "steer" : "voice",
+    expectedTurnId: wasBusy ? state.activeTurnId : "",
   }));
   wireStream(socket, () => {
+    const restartAfterBargeIn = state.pendingVoiceBargeIn;
+    state.pendingVoiceBargeIn = false;
+    if (state.activeVoiceSocket === socket) state.activeVoiceSocket = null;
     state.voiceActive = false;
+    setTtsAura(false);
     endStream();
     maybe("voiceButton")?.classList.remove("active");
     document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
     if (maybe("voiceState")) $("voiceState").textContent = "ready";
+    syncVoiceControls();
+    if (restartAfterBargeIn) setTimeout(startVoice, 0);
   });
+  syncVoiceControls();
 }
 
 function wireStream(socket, done) {
@@ -682,6 +754,12 @@ function handlePilotEvent(event) {
     renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "status" && event.status) {
+    const turnMatch = String(event.status.message || "").match(/^turn_id=(.+)$/);
+    if (turnMatch) {
+      state.activeTurnId = turnMatch[1];
+      return;
+    }
+    if ([1, 2].includes(Number(event.status.state))) state.activeTurnId = "";
     addTimeline("status", event.status.message || `state ${event.status.state}`);
     if (event.status.message) addStatusLine(event.status.message);
   }
@@ -719,7 +797,7 @@ function updatePlanRecordResult(planId, update) {
 function handleVoiceEvent(event) {
   const label = event.statusMessage || event.text || event.error || event.kind;
   if (event.kind === "asr_final") {
-    addMessage("user", event.text, "voice");
+    addMessage("user", event.text, state.activeVoiceMode);
   } else if (event.kind === "pilot" && event.pilot) {
     handlePilotEvent(event.pilot);
   } else if (event.kind === "tts_started") {
@@ -1476,7 +1554,7 @@ function renderRobotState(data) {
     { label: "Localization", icon: "L", ok: !data.error, status: "OK", value: "0.04 m", source: "mock", separated: true },
     { label: "Navigation", icon: "N", ok: contractAvailable(contracts, "Executor"), status: state.busy ? "Moving" : "Ready", value: state.busy ? "0.32 m" : "0.00 m", source: "derived", warn: state.busy },
     { label: "Audio Input", icon: "M", ok: contractAvailable(contracts, "Mic") || contractAvailable(contracts, "ASR"), status: recording ? "Listening" : "Standby", value: "", source: "real", wave: recording },
-    { label: "Audio Output", icon: "S", ok: audioReady, status: maybe("ttsEnabled") && $("ttsEnabled").checked ? "Speaking" : "Muted", value: "", source: "real", wave: maybe("ttsEnabled") && $("ttsEnabled").checked },
+    { label: "Audio Output", icon: "S", ok: audioReady, status: state.ttsPlaying ? "Speaking" : "Ready", value: "", source: "real", wave: state.ttsPlaying },
     { label: "Connection", icon: "O", ok: !data.error, status: data.error ? "Offline" : "Online", value: "", source: "real", separated: true },
     { label: "Safety", icon: "!", ok: summary.errors === 0, status: summary.errors ? `${summary.errors} error(s)` : "OK", value: "", source: "derived", danger: summary.errors > 0 },
   ];
@@ -2077,6 +2155,7 @@ function setTtsAura(active) {
   state.ttsPlaying = Boolean(active);
   document.body.classList.toggle("tts-speaking", state.ttsPlaying);
   document.documentElement.style.setProperty("--voice-level", state.ttsPlaying ? "0.28" : "0");
+  syncVoiceControls();
 }
 
 function renderAudioBars() {
@@ -2279,6 +2358,9 @@ function setBusy(value) {
   $("sendButton").classList.toggle("busy", value);
   $("sendButton").textContent = value ? "Steer" : "Send";
   $("sendButton").title = value ? "Steer current task" : "Send task";
+  $("stopButton").hidden = !value;
+  $("newSession").disabled = value;
+  if (!value) resetStopState();
   maybe("voiceButton")?.classList.toggle("busy", value);
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
     button.classList.toggle("busy", value);

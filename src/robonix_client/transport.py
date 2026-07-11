@@ -117,7 +117,6 @@ class ClientSettings:
     session_id: str = ""
     record_seconds: int = 30
     language: str = ""
-    tts_enabled: bool = True
     mic_node_id: str = ""
     mic_device_id: str = ""
     asr_node_id: str = ""
@@ -140,7 +139,6 @@ class ClientSettings:
             session_id=(payload.get("sessionId") or "").strip(),
             record_seconds=max(0, int(payload.get("recordSeconds") or 30)),
             language=(payload.get("language") or "").strip(),
-            tts_enabled=bool(payload.get("ttsEnabled", True)),
             mic_node_id=(payload.get("micNodeId") or "").strip(),
             mic_device_id=(payload.get("micDeviceId") or "").strip(),
             asr_node_id=(payload.get("asrNodeId") or "").strip(),
@@ -486,6 +484,7 @@ def build_text_task(
     attachments: list[dict[str, Any]] | None = None,
     *,
     steer: bool = False,
+    expected_turn_id: str = "",
 ) -> Any:
     session_id = settings.session_id or str(uuid.uuid4())
     user_id = settings.user_id or "local:robonix-client"
@@ -497,6 +496,8 @@ def build_text_task(
     }
     if steer:
         context["steer"] = True
+        if expected_turn_id:
+            context["expected_turn_id"] = expected_turn_id
     if attachments:
         context["attachments"] = attachments
     return pilot_pb2.Task(
@@ -510,16 +511,24 @@ def build_text_task(
     )
 
 
-def build_session_end_task(settings: ClientSettings) -> Any:
+def build_abort_task(settings: ClientSettings, expected_turn_id: str = "") -> Any:
     session_id = settings.session_id or str(uuid.uuid4())
     user_id = settings.user_id or "local:robonix-client"
+    context: dict[str, Any] = {
+        "abort_turn": True,
+        "interaction_mode": "abort",
+        "client": "robonix-client-gui",
+        "user_id": user_id,
+    }
+    if expected_turn_id:
+        context["expected_turn_id"] = expected_turn_id
     return pilot_pb2.Task(
         task_id=str(uuid.uuid4()),
         session_id=session_id,
         source=0,
         text="",
         audio_data=b"",
-        context_json=json.dumps({"session_end": True, "user_id": user_id}),
+        context_json=json.dumps(context, ensure_ascii=False),
         timestamp_ms=_now_ms(),
     )
 
@@ -530,8 +539,15 @@ async def submit_text(
     attachments: list[dict[str, Any]] | None = None,
     *,
     steer: bool = False,
+    expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
-    async for item in _submit_text_once(settings, text, attachments, steer=steer):
+    async for item in _submit_text_once(
+        settings,
+        text,
+        attachments,
+        steer=steer,
+        expected_turn_id=expected_turn_id,
+    ):
         yield item
 
 
@@ -541,9 +557,16 @@ async def _submit_text_once(
     attachments: list[dict[str, Any]] | None = None,
     *,
     steer: bool = False,
+    expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
-    task = build_text_task(settings, text, attachments, steer=steer)
+    task = build_text_task(
+        settings,
+        text,
+        attachments,
+        steer=steer,
+        expected_turn_id=expected_turn_id,
+    )
     async with grpc.aio.insecure_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
@@ -555,23 +578,27 @@ async def _submit_text_once(
             yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
 
 
-async def notify_session_end(settings: ClientSettings) -> None:
+async def abort_turn(
+    settings: ClientSettings,
+    expected_turn_id: str = "",
+) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
-    task = build_session_end_task(settings)
+    task = build_abort_task(settings, expected_turn_id)
     async with grpc.aio.insecure_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
             response_deserializer=lambda raw: raw,
         )
-        async for _ in call(task):
-            pass
+        async for raw in call(task):
+            yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
 
 
 async def start_voice_session(
     settings: ClientSettings,
     *,
     steer: bool = False,
+    expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_VOICE)
     context: dict[str, Any] = {
@@ -580,12 +607,14 @@ async def start_voice_session(
     }
     if steer:
         context["steer"] = True
+        if expected_turn_id:
+            context["expected_turn_id"] = expected_turn_id
     req = liaison_pb2.StartVoiceSession_Request(
         session_id=settings.session_id or str(uuid.uuid4()),
         client_user_id=settings.user_id,
         record_seconds=settings.record_seconds,
         language=settings.language,
-        tts_enabled=settings.tts_enabled,
+        tts_enabled=True,
         mic_node_id=settings.mic_node_id,
         asr_node_id=settings.asr_node_id,
         voiceprint_node_id=settings.voiceprint_node_id,
