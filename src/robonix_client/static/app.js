@@ -19,6 +19,7 @@ const state = {
   taskRunning: false,
   activeStreams: 0,
   activeTurnId: "",
+  activePilotSessionId: "",
   stopInFlight: false,
   voiceActive: false,
   activeVoiceSocket: null,
@@ -289,6 +290,14 @@ function collectSettings() {
   };
 }
 
+function interactionSettings(useActiveTurn = false) {
+  const settings = collectSettings();
+  if (useActiveTurn && state.activePilotSessionId) {
+    settings.sessionId = state.activePilotSessionId;
+  }
+  return settings;
+}
+
 function bindEvents() {
   $("composer").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -555,6 +564,7 @@ function newSession() {
   persistCurrentConversation();
   state.sessionId = getSessionId();
   state.activeTurnId = "";
+  state.activePilotSessionId = "";
   state.sessionTitle = "";
   state.messages = [];
   state.timeline = [];
@@ -597,7 +607,7 @@ async function sendTask() {
     socket.send(JSON.stringify({
       text,
       attachments,
-      settings: collectSettings(),
+      settings: interactionSettings(wasBusy),
       steer: wasBusy,
       interactionMode: wasBusy ? "steer" : "task",
       expectedTurnId: wasBusy ? state.activeTurnId : "",
@@ -619,7 +629,7 @@ function stopCurrentTask() {
 
   const socket = new WebSocket(wsUrl("/ws/abort"));
   socket.onopen = () => socket.send(JSON.stringify({
-    settings: collectSettings(),
+    settings: interactionSettings(true),
     expectedTurnId: state.activeTurnId,
   }));
   wireStream(socket, () => {
@@ -665,7 +675,7 @@ function startVoice() {
   socket.robonixVoiceMode = wasBusy ? "voice steer" : "voice";
   state.activeVoiceSocket = socket;
   socket.onopen = () => socket.send(JSON.stringify({
-    settings: collectSettings(),
+    settings: interactionSettings(wasBusy),
     steer: wasBusy,
     interactionMode: wasBusy ? "steer" : "voice",
     expectedTurnId: wasBusy ? state.activeTurnId : "",
@@ -736,6 +746,7 @@ function handlePilotEvent(event) {
     const taskStatus = String(event.taskState.status || "").trim().toLowerCase();
     if (["in_progress", "running", "planning", "executing"].includes(taskStatus)) {
       state.taskRunning = true;
+      state.activePilotSessionId = String(event.sessionId || state.activePilotSessionId || "");
     } else if (["done", "completed", "failed", "cancelled", "canceled", "aborted"].includes(taskStatus)) {
       state.taskRunning = false;
     }
@@ -748,10 +759,12 @@ function handlePilotEvent(event) {
     const turnMatch = String(event.status.message || "").match(/^turn_id=(.+)$/);
     if (turnMatch) {
       state.activeTurnId = turnMatch[1];
+      state.activePilotSessionId = String(event.status.sessionId || event.sessionId || "");
       return;
     }
     if ([1, 2].includes(Number(event.status.state))) {
       state.activeTurnId = "";
+      state.activePilotSessionId = "";
       state.taskRunning = false;
       setBusy(state.activeStreams > 0);
     }
