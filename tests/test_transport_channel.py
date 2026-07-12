@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 
-from robonix_client.transport import GRPC_CHANNEL_OPTIONS, grpc_channel
+from robonix_client.transport import GRPC_CHANNEL_OPTIONS, build_voice_context, grpc_channel
 
 
 class GrpcChannelTest(unittest.TestCase):
@@ -16,6 +16,28 @@ class GrpcChannelTest(unittest.TestCase):
             "robot.local:50051", options=GRPC_CHANNEL_OPTIONS
         )
         self.assertEqual(GRPC_CHANNEL_OPTIONS, (("grpc.enable_http_proxy", 0),))
+
+    def test_voice_context_marks_f2_as_barge_in(self):
+        self.assertEqual(
+            build_voice_context(),
+            {
+                "client": "robonix-client-gui",
+                "interaction_mode": "voice",
+                "barge_in": True,
+            },
+        )
+
+    def test_voice_steer_is_bound_to_current_turn(self):
+        self.assertEqual(
+            build_voice_context(steer=True, expected_turn_id="turn-7"),
+            {
+                "client": "robonix-client-gui",
+                "interaction_mode": "steer",
+                "barge_in": True,
+                "steer": True,
+                "expected_turn_id": "turn-7",
+            },
+        )
 
 
 if __name__ == "__main__":

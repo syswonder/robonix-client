@@ -149,9 +149,12 @@ class AudioReverseBridge:
                 )
             await speaker.send(frame)
 
-        async def close_speaker() -> None:
+        async def close_speaker(*, interrupt: bool = False) -> None:
             nonlocal speaker
             if speaker is not None:
+                if interrupt:
+                    with suppress(Exception):
+                        await speaker.send(json.dumps({"type": "stop"}))
                 await speaker.close()
                 speaker = None
 
@@ -192,6 +195,8 @@ class AudioReverseBridge:
                     await stop_mic()
                 elif command.get("type") == "speaker_end":
                     await close_speaker()
+                elif command.get("type") == "speaker_stop":
+                    await close_speaker(interrupt=True)
                 elif command.get("type") == "control_request":
                     request_id = str(command.get("id") or "")
                     try:

@@ -16,13 +16,13 @@ const state = {
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
+  taskRunning: false,
   activeStreams: 0,
   activeTurnId: "",
   stopInFlight: false,
   voiceActive: false,
   activeVoiceSocket: null,
   activeVoiceMode: "voice",
-  pendingVoiceBargeIn: false,
   ttsPlaying: false,
   handsfree: { available: false, enabled: false, state: "unavailable", busy: false },
   handsfreeSocket: null,
@@ -303,10 +303,6 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if (event.key !== "F2") return;
     event.preventDefault();
-    if (handsfreeOwnsMicrophone()) {
-      addStatusLine("Hands-free is listening. Turn it off before starting an F2 voice session.");
-      return;
-    }
     startVoice();
   });
   $("stopButton").addEventListener("click", stopCurrentTask);
@@ -404,6 +400,8 @@ function renderHandsfree() {
         ? "Acknowledging"
       : status === "in_voice"
         ? "Hands-free active"
+        : status === "suspended"
+          ? "Voice steer recording"
         : state.handsfree.enabled
           ? `Hands-free ${status}`
           : "Hands-free off";
@@ -420,12 +418,9 @@ function handsfreeOwnsMicrophone() {
 }
 
 function syncVoiceControls() {
-  const handsfreeBlocked = handsfreeOwnsMicrophone() && !state.voiceActive;
   const recordingBlocked = state.voiceActive && !state.ttsPlaying;
-  const disabled = handsfreeBlocked || recordingBlocked;
-  const title = handsfreeBlocked
-    ? "Hands-free owns the microphone. Turn it off to start an F2 voice session."
-    : state.ttsPlaying
+  const disabled = recordingBlocked;
+  const title = state.ttsPlaying
       ? "Interrupt speech and start a new voice turn"
       : state.voiceActive
         ? "Voice recording is already active"
@@ -619,7 +614,6 @@ function stopCurrentTask() {
   addTimeline("cancel", `abort requested${state.activeTurnId ? ` for ${state.activeTurnId}` : ""}`);
 
   stopActiveVoiceSession();
-  if (!state.activeTurnId) return;
 
   const socket = new WebSocket(wsUrl("/ws/abort"));
   socket.onopen = () => socket.send(JSON.stringify({
@@ -653,21 +647,11 @@ function stopActiveVoiceSession() {
 }
 
 function startVoice() {
-  if (handsfreeOwnsMicrophone()) {
-    addStatusLine("Hands-free is listening. Turn it off before starting a voice session.");
-    return;
-  }
   if (state.voiceActive) {
-    if (state.ttsPlaying) {
-      state.pendingVoiceBargeIn = true;
-      addStatusLine("Interrupting speech before starting a new voice turn.");
-      stopCurrentTask();
-    } else {
-      addStatusLine("Voice recording is already active.");
-    }
+    addStatusLine("Voice recording is already active.");
     return;
   }
-  const wasBusy = state.busy;
+  const wasBusy = hasActiveTurn();
   state.voiceActive = true;
   beginStream();
   maybe("voiceButton")?.classList.add("active");
@@ -676,6 +660,7 @@ function startVoice() {
   addStatusLine(wasBusy ? "Listening for voice steer input." : "Listening for voice input.");
   addTimeline(wasBusy ? "voice steer" : "voice", wasBusy ? "voice steer requested" : "voice session requested");
   const socket = new WebSocket(wsUrl("/ws/voice"));
+  socket.robonixVoiceMode = wasBusy ? "voice steer" : "voice";
   state.activeVoiceSocket = socket;
   socket.onopen = () => socket.send(JSON.stringify({
     settings: collectSettings(),
@@ -684,26 +669,23 @@ function startVoice() {
     expectedTurnId: wasBusy ? state.activeTurnId : "",
   }));
   wireStream(socket, () => {
-    const restartAfterBargeIn = state.pendingVoiceBargeIn;
-    state.pendingVoiceBargeIn = false;
-    if (state.activeVoiceSocket === socket) state.activeVoiceSocket = null;
-    state.voiceActive = false;
-    setTtsAura(false);
+    const ownsCapture = state.activeVoiceSocket === socket;
+    if (ownsCapture) {
+      state.activeVoiceSocket = null;
+      state.voiceActive = false;
+    }
     endStream();
-    maybe("voiceButton")?.classList.remove("active");
-    document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
-    if (maybe("voiceState")) $("voiceState").textContent = "ready";
+    if (ownsCapture) finishVoiceCaptureUi();
     syncVoiceControls();
-    if (restartAfterBargeIn) setTimeout(startVoice, 0);
-  });
+  }, socket);
   syncVoiceControls();
 }
 
-function wireStream(socket, done) {
+function wireStream(socket, done, voiceSocket = null) {
   socket.onmessage = (event) => {
     const payload = JSON.parse(event.data);
     if (payload.type === "pilot_event") handlePilotEvent(payload.event);
-    if (payload.type === "voice_event") handleVoiceEvent(payload.event);
+    if (payload.type === "voice_event") handleVoiceEvent(payload.event, voiceSocket);
     if (payload.type === "accepted") addStatusLine("Connected; waiting for Robonix events.");
     if (payload.type === "status") addTimeline("status", payload.message || "status");
     if (payload.type === "error") addMessage("error", payload.error);
@@ -749,6 +731,13 @@ function handlePilotEvent(event) {
     persistCurrentConversation();
   } else if (event.kind === "task_state" && event.taskState) {
     state.taskState = event.taskState;
+    const taskStatus = String(event.taskState.status || "").trim().toLowerCase();
+    if (["in_progress", "running", "planning", "executing"].includes(taskStatus)) {
+      state.taskRunning = true;
+    } else if (["done", "completed", "failed", "cancelled", "canceled", "aborted"].includes(taskStatus)) {
+      state.taskRunning = false;
+    }
+    setBusy(state.activeStreams > 0 || state.taskRunning);
     addTimeline("status", event.taskState.status || event.taskState.goal || "task update");
     addStatusLine(event.taskState.status || event.taskState.goal || "Task state updated.");
     renderPlan();
@@ -759,7 +748,11 @@ function handlePilotEvent(event) {
       state.activeTurnId = turnMatch[1];
       return;
     }
-    if ([1, 2].includes(Number(event.status.state))) state.activeTurnId = "";
+    if ([1, 2].includes(Number(event.status.state))) {
+      state.activeTurnId = "";
+      state.taskRunning = false;
+      setBusy(state.activeStreams > 0);
+    }
     addTimeline("status", event.status.message || `state ${event.status.state}`);
     if (event.status.message) addStatusLine(event.status.message);
   }
@@ -794,10 +787,17 @@ function updatePlanRecordResult(planId, update) {
   record.updatedAt = Date.now();
 }
 
-function handleVoiceEvent(event) {
+function handleVoiceEvent(event, sourceSocket = null) {
   const label = event.statusMessage || event.text || event.error || event.kind;
   if (event.kind === "asr_final") {
-    addMessage("user", event.text, state.activeVoiceMode);
+    const mode = sourceSocket?.robonixVoiceMode || (hasActiveTurn() ? "voice steer" : "voice");
+    addMessage("user", event.text, mode);
+    if (sourceSocket && state.activeVoiceSocket === sourceSocket) {
+      state.activeVoiceSocket = null;
+      state.voiceActive = false;
+      finishVoiceCaptureUi();
+      syncVoiceControls();
+    }
   } else if (event.kind === "pilot" && event.pilot) {
     handlePilotEvent(event.pilot);
   } else if (event.kind === "tts_started") {
@@ -814,6 +814,18 @@ function handleVoiceEvent(event) {
   } else {
     addTimeline("voice", label);
   }
+}
+
+function finishVoiceCaptureUi() {
+  maybe("voiceButton")?.classList.remove("active");
+  document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
+  if (maybe("voiceState")) $("voiceState").textContent = "ready";
+}
+
+function hasActiveTurn() {
+  if (state.activeTurnId) return true;
+  const status = String(state.taskState?.status || "").trim().toLowerCase();
+  return state.taskRunning || ["in_progress", "running", "planning", "executing"].includes(status);
 }
 
 function addMessage(role, text, meta = "", attachments = []) {
@@ -2376,7 +2388,7 @@ function beginStream() {
 
 function endStream() {
   state.activeStreams = Math.max(0, state.activeStreams - 1);
-  setBusy(state.activeStreams > 0);
+  setBusy(state.activeStreams > 0 || state.taskRunning);
 }
 
 function setTextAll(selector, text) {

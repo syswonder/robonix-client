@@ -238,6 +238,7 @@ async def serve_speaker(ws) -> None:
     # of the speech was missing on the wire.
     buf = bytearray()
     buf_lock = threading.Lock()
+    interrupted = False
 
     def callback(outdata, frames, time_info, status):
         if status:
@@ -276,10 +277,21 @@ async def serve_speaker(ws) -> None:
             if isinstance(msg, bytes):
                 with buf_lock:
                     buf.extend(msg)
+                continue
+            try:
+                command = json.loads(msg)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if command.get("type") == "stop":
+                interrupted = True
+                with buf_lock:
+                    buf.clear()
+                log.info("speaker playback interrupted; buffered audio discarded")
+                break
         # Hold the stream open after EOF until the buffer drains —
         # otherwise we close the device while the tail of the utterance
         # is still queued and the user hears the last word truncated.
-        while True:
+        while not interrupted:
             with buf_lock:
                 if not buf:
                     break

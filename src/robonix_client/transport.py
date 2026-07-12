@@ -611,14 +611,7 @@ async def start_voice_session(
     expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_VOICE)
-    context: dict[str, Any] = {
-        "client": "robonix-client-gui",
-        "interaction_mode": "steer" if steer else "voice",
-    }
-    if steer:
-        context["steer"] = True
-        if expected_turn_id:
-            context["expected_turn_id"] = expected_turn_id
+    context = build_voice_context(steer=steer, expected_turn_id=expected_turn_id)
     req = liaison_pb2.StartVoiceSession_Request(
         session_id=settings.session_id or str(uuid.uuid4()),
         client_user_id=settings.user_id,
@@ -641,6 +634,19 @@ async def start_voice_session(
         stream = call(req)
         async for raw in stream:
             yield {"type": "voice_event", "event": voice_event_to_dict(decode_voice_event(raw))}
+
+
+def build_voice_context(*, steer: bool = False, expected_turn_id: str = "") -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "client": "robonix-client-gui",
+        "interaction_mode": "steer" if steer else "voice",
+        "barge_in": True,
+    }
+    if steer:
+        context["steer"] = True
+        if expected_turn_id:
+            context["expected_turn_id"] = expected_turn_id
+    return context
 
 
 async def enroll_voiceprint(
