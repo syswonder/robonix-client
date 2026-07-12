@@ -576,7 +576,9 @@ async function sendTask() {
   const attachments = state.attachments.slice();
   if (!text && attachments.length === 0) return;
 
-  const wasBusy = state.busy;
+  // A still-closing WebSocket or TTS tail is not an active Pilot turn. Only
+  // mark input as steer while Pilot has task state that can actually accept it.
+  const wasBusy = hasActiveTurn();
   state.activeVoiceMode = wasBusy ? "voice steer" : "voice";
   const display = text || attachments.map((item) => item.name).join(", ");
   addMessage("user", display, wasBusy ? "steer" : (attachments.length ? `${attachments.length} image` : ""), attachments);

@@ -103,20 +103,25 @@ class AudioReverseBridge:
     async def _relay(self, robot) -> None:
         send_lock = asyncio.Lock()
         mic_task: asyncio.Task | None = None
+        mic_stream_id = ""
         speaker = None
 
-        async def stop_mic() -> None:
-            nonlocal mic_task
+        async def stop_mic(expected_stream_id: str = "") -> None:
+            nonlocal mic_task, mic_stream_id
             if mic_task is None:
+                return
+            if expected_stream_id and expected_stream_id != mic_stream_id:
                 return
             mic_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await mic_task
             mic_task = None
+            mic_stream_id = ""
 
-        async def start_mic() -> None:
-            nonlocal mic_task
+        async def start_mic(stream_id: str) -> None:
+            nonlocal mic_task, mic_stream_id
             await stop_mic()
+            mic_stream_id = stream_id
 
             async def pump() -> None:
                 frames = 0
@@ -137,7 +142,7 @@ class AudioReverseBridge:
                     log.info("audio relay microphone pump finished after %d frame(s)", frames)
                     with suppress(Exception):
                         async with send_lock:
-                            await robot.send(json.dumps({"type": "mic_end"}))
+                            await robot.send(json.dumps({"type": "mic_end", "stream_id": stream_id}))
 
             mic_task = asyncio.create_task(pump())
 
@@ -190,9 +195,9 @@ class AudioReverseBridge:
                 except json.JSONDecodeError:
                     continue
                 if command.get("type") == "mic_start":
-                    await start_mic()
+                    await start_mic(str(command.get("stream_id") or ""))
                 elif command.get("type") == "mic_stop":
-                    await stop_mic()
+                    await stop_mic(str(command.get("stream_id") or ""))
                 elif command.get("type") == "speaker_end":
                     await close_speaker()
                 elif command.get("type") == "speaker_stop":
