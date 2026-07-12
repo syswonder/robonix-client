@@ -28,7 +28,11 @@ _last_ui_host = DEFAULT_UI_HOST
 async def health(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT, timeout_s: float = 2.0) -> dict[str, Any]:
     url = f"ws://{host}:{port}/health"
     try:
-        async with websockets.connect(url, open_timeout=timeout_s) as ws:
+        # The audio device server is a local/private bridge.  Do not let
+        # HTTP_PROXY/ALL_PROXY capture its WebSocket health probe: when that
+        # happens the probe reports an otherwise healthy local server as
+        # unreachable and the UI never opens its VU stream.
+        async with websockets.connect(url, open_timeout=timeout_s, proxy=None) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
             payload = json.loads(msg) if isinstance(msg, str) else {}
             payload["reachable"] = True
