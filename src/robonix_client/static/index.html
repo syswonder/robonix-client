@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260713b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260713c" />
   </head>
   <body>
     <div class="app-shell">
@@ -113,10 +113,13 @@
                   </div>
                   <div class="plan-tree" data-plan-tree="full"></div>
                 </div>
-                <details class="rtdl-history" id="rtdlHistory">
-                  <summary>Execution history <span id="rtdlHistoryCount">0</span></summary>
-                  <div class="plan-tree history-plan-tree" id="rtdlHistoryTrees"></div>
-                </details>
+                <button class="rtdl-history-launch" id="openRtdlHistory" type="button">
+                  <span>
+                    <strong>Execution history</strong>
+                    <small>Open completed RTDL plans in a full workspace</small>
+                  </span>
+                  <span class="rtdl-history-count" id="rtdlHistoryCount">0</span>
+                </button>
                 <div class="execution-detail" id="executionDetail">
                   <div class="detail-title" id="executionDetailTitle">Node detail</div>
                   <div class="detail-grid">
@@ -313,6 +316,30 @@
       </main>
     </div>
 
-    <script src="/static/app.js?v=20260713b"></script>
+    <div class="modal-backdrop" id="rtdlHistoryModal" role="dialog" aria-modal="true" aria-labelledby="rtdlHistoryTitle" hidden>
+      <section class="rtdl-history-modal">
+        <header class="rtdl-history-modal-header">
+          <div>
+            <h2 id="rtdlHistoryTitle">Execution history</h2>
+            <span>Completed RTDL plans for this client session</span>
+          </div>
+          <button class="icon-button modal-close" id="closeRtdlHistory" type="button" aria-label="Close execution history">×</button>
+        </header>
+        <div class="rtdl-history-modal-body">
+          <div class="history-plan-tree" id="rtdlHistoryTrees"></div>
+          <aside class="history-execution-detail">
+            <div class="detail-title" id="historyExecutionDetailTitle">Node detail</div>
+            <div class="detail-grid history-detail-grid">
+              <div><span>Provider / ID</span><strong id="historyActiveProvider">-</strong></div>
+              <div><span>Started</span><strong id="historyActiveStarted">-</strong></div>
+              <div><span>Duration</span><strong id="historyActiveDuration">-</strong></div>
+            </div>
+            <pre class="args history-args" id="historyActiveArgs">Select an RTDL node to inspect its arguments and result.</pre>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/app.js?v=20260713c"></script>
   </body>
 </html>

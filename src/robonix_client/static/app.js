@@ -347,6 +347,28 @@ function bindEvents() {
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
     button.addEventListener("click", startVoice);
   });
+  maybe("openRtdlHistory")?.addEventListener("click", openRtdlHistory);
+  maybe("closeRtdlHistory")?.addEventListener("click", closeRtdlHistory);
+  maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeRtdlHistory();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
+  });
+}
+
+function openRtdlHistory() {
+  const modal = maybe("rtdlHistoryModal");
+  if (!modal) return;
+  modal.hidden = false;
+  maybe("closeRtdlHistory")?.focus();
+}
+
+function closeRtdlHistory() {
+  const modal = maybe("rtdlHistoryModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  maybe("openRtdlHistory")?.focus();
 }
 
 async function configureReverseAudio(providerId) {
@@ -947,16 +969,7 @@ function renderMessages() {
       action.className = "message-link";
       action.textContent = "Show RTDL";
       action.addEventListener("click", () => {
-        if (maybe("rtdlHistory")) $("rtdlHistory").open = true;
-        const sidebar = maybe("dashboardSidebar");
-        const execution = document.querySelector(".execution-panel");
-        execution?.scrollIntoView({ block: "start", behavior: "smooth" });
-        execution?.classList.add("attention");
-        sidebar?.classList.add("attention");
-        setTimeout(() => {
-          execution?.classList.remove("attention");
-          sidebar?.classList.remove("attention");
-        }, 900);
+        openRtdlHistory();
       });
       el.appendChild(action);
     }
@@ -1045,7 +1058,7 @@ function normalizedPlanRecords() {
   return [{ key: planRecordKey(state.plan), plan: state.plan, nodeStates: state.nodeStates || {}, batches: state.batches || [] }];
 }
 
-function renderPlanRecord(root, record) {
+function renderPlanRecord(root, record, onSelect = renderExecutionDetail) {
   const wrapper = document.createElement("section");
   wrapper.className = "plan-record";
   const label = document.createElement("div");
@@ -1056,7 +1069,7 @@ function renderPlanRecord(root, record) {
   const runningIndex = recordIsActive(record)
     ? pickRunningIndex(record.plan, maps.byIndex)
     : null;
-  renderBehaviorTree(wrapper, record.plan, maps, runningIndex);
+  renderBehaviorTree(wrapper, record.plan, maps, runningIndex, onSelect);
   root.appendChild(wrapper);
 }
 
@@ -1064,7 +1077,7 @@ function renderPlanHistory(records) {
   const root = maybe("rtdlHistoryTrees");
   if (!root) return;
   clear(root);
-  records.forEach((record) => renderPlanRecord(root, record));
+  records.forEach((record) => renderPlanRecord(root, record, renderHistoryExecutionDetail));
   if (!records.length) {
     const empty = document.createElement("div");
     empty.className = "plan-empty";
@@ -1073,7 +1086,7 @@ function renderPlanHistory(records) {
   }
 }
 
-function renderBehaviorTree(root, plan, resultMaps, runningIndex) {
+function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
   const nodes = plan?.nodes || [];
   const nodeStateByIndex = resultMaps.byIndex;
   const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
@@ -1102,22 +1115,22 @@ function renderBehaviorTree(root, plan, resultMaps, runningIndex) {
     header.append(title, pill);
     const viewport = document.createElement("div");
     viewport.className = "bt-tree-viewport";
-    viewport.appendChild(makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex));
+    viewport.appendChild(makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect));
     card.append(header, viewport);
     root.appendChild(card);
   });
 }
 
-function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
+function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
   const nodes = plan?.nodes || [];
   const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
   const nodeStateByIndex = resultMaps.byIndex;
-  const nodeW = 74;
-  const nodeH = 28;
-  const leafGap = 9;
-  const levelGap = 34;
-  const topPad = 13;
-  const sidePad = 10;
+  const nodeW = 104;
+  const nodeH = 38;
+  const leafGap = 22;
+  const levelGap = 72;
+  const topPad = 18;
+  const sidePad = 18;
   const laid = [];
   let cursor = sidePad;
 
@@ -1149,16 +1162,22 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
 
   const posByIndex = new Map(laid.map((item) => [Number(item.node.index), item]));
   laid.forEach(({ node, x, y }) => {
-    (node.children || []).forEach((child) => {
-      const cp = posByIndex.get(Number(child));
-      if (!cp) return;
-      const line = document.createElementNS(ns, "path");
-      const y1 = y + nodeH;
-      const y2 = cp.y;
-      line.setAttribute("class", "bt-edge");
-      line.setAttribute("d", `M ${x} ${y1} C ${x} ${y1 + 12}, ${cp.x} ${y2 - 12}, ${cp.x} ${y2}`);
-      svg.appendChild(line);
-    });
+    const childPositions = (node.children || [])
+      .map((child) => posByIndex.get(Number(child)))
+      .filter(Boolean);
+    if (!childPositions.length) return;
+    const y1 = y + nodeH;
+    const y2 = childPositions[0].y;
+    const branchY = y1 + (y2 - y1) / 2;
+    const minX = Math.min(...childPositions.map((child) => child.x));
+    const maxX = Math.max(...childPositions.map((child) => child.x));
+    const path = document.createElementNS(ns, "path");
+    const segments = [`M ${x} ${y1} V ${branchY}`];
+    if (childPositions.length > 1) segments.push(`M ${minX} ${branchY} H ${maxX}`);
+    childPositions.forEach((child) => segments.push(`M ${child.x} ${branchY} V ${child.y}`));
+    path.setAttribute("class", "bt-edge");
+    path.setAttribute("d", segments.join(" "));
+    svg.appendChild(path);
   });
 
   const rootPos = posByIndex.get(Number(treeRoot?.index));
@@ -1198,17 +1217,17 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
     accent.setAttribute("rx", "1.25");
     const text = document.createElementNS(ns, "text");
     text.setAttribute("x", String(nodeW / 2));
-    text.setAttribute("y", "12.2");
+    text.setAttribute("y", "16");
     text.setAttribute("text-anchor", "middle");
-    text.textContent = ellipsize(nodeLabel(node), 10);
+    text.textContent = ellipsize(nodeLabel(node), 15);
     const meta = document.createElementNS(ns, "text");
     meta.setAttribute("class", "bt-node-meta");
     meta.setAttribute("x", String(nodeW / 2));
-    meta.setAttribute("y", "22.2");
+    meta.setAttribute("y", "30");
     meta.setAttribute("text-anchor", "middle");
-    meta.textContent = node.call ? ellipsize(compactProvider(node.call), 12) : displayStatus(status);
+    meta.textContent = node.call ? ellipsize(compactProvider(node.call), 17) : displayStatus(status);
     g.append(title, rect, accent, text, meta);
-    g.addEventListener("click", () => renderExecutionDetail(node, status, resultForNode(node, resultMaps)));
+    g.addEventListener("click", () => onSelect(node, status, resultForNode(node, resultMaps)));
     svg.appendChild(g);
   });
 
@@ -1490,6 +1509,24 @@ function renderExecutionDetail(node, status, nodeState = null) {
   $("activeArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
 }
 
+function renderHistoryExecutionDetail(node, status, nodeState = null) {
+  if (!maybe("historyActiveProvider")) return;
+  if (maybe("historyExecutionDetailTitle")) {
+    $("historyExecutionDetailTitle").textContent = node ? nodeLabel(node) : "Node detail";
+  }
+  if (!node) {
+    $("historyActiveProvider").textContent = "-";
+    $("historyActiveStarted").textContent = "-";
+    $("historyActiveDuration").textContent = "-";
+    $("historyActiveArgs").textContent = "Select an RTDL node to inspect its arguments and result.";
+    return;
+  }
+  $("historyActiveProvider").textContent = detailProvider(node);
+  $("historyActiveStarted").textContent = startedForNode(node, status);
+  $("historyActiveDuration").textContent = durationForNode(node, status);
+  $("historyActiveArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
+}
+
 function buildResultMaps(record = null) {
   const byIndex = new Map();
   const byCallId = new Map();
@@ -1564,21 +1601,92 @@ function activePlanNode() {
     || null;
 }
 
+function currentExecutionContext() {
+  if (state.executorPlansReady) {
+    for (const plan of state.executorPlans) {
+      const runningOp = (plan.ops || []).find((op) => String(op.state || "").toLowerCase() === "running") || null;
+      const record = normalizedPlanRecords().find(
+        (item) => String(item.plan?.planId || "") === String(plan.planId || ""),
+      );
+      const node = runningOp && record
+        ? record.plan.nodes.find((item) => String(item.opId || "") === String(runningOp.op_id || runningOp.opId || "")) || null
+        : null;
+      return {
+        source: runningOp ? "Executor verified" : "Executor plan verified",
+        plan,
+        op: runningOp,
+        node: node || (record ? activeNodeForRecord(record) : null),
+      };
+    }
+    return null;
+  }
+  const node = activePlanNode();
+  return node ? { source: "Pilot stream estimate", plan: null, op: null, node } : null;
+}
+
+function activeNodeForRecord(record) {
+  const maps = buildResultMaps(record);
+  const runningIndex = pickRunningIndex(record.plan, maps.byIndex);
+  return record.plan.nodes.find((node) => Number(node.index) === Number(runningIndex))
+    || record.plan.nodes.find((node) => node.call)
+    || null;
+}
+
+function appendGoalField(root, label, value) {
+  const row = document.createElement("div");
+  const key = document.createElement("span");
+  const content = document.createElement("strong");
+  key.textContent = label;
+  content.textContent = value || "-";
+  row.append(key, content);
+  root.appendChild(row);
+}
+
 function renderGoalPanel() {
   const task = state.taskState || {};
-  const active = activePlanNode();
+  const context = currentExecutionContext();
+  const active = context?.node || null;
   const taskText = task.goal || task.task || firstUserMessage() || "waiting for task";
-  const status = task.status || (active ? "executing" : "idle");
+  const status = task.status || (context ? "executing" : "idle");
   if (maybe("goalLine")) $("goalLine").textContent = `${status}: ${taskText}`;
   document.querySelectorAll("[data-goal-preview]").forEach((goal) => {
     clear(goal);
     const card = document.createElement("div");
     card.className = "goal-card";
+    const source = document.createElement("span");
+    source.className = `goal-source${context?.source === "Executor verified" ? " verified" : ""}`;
+    source.textContent = context?.source || (state.executorPlansReady ? "Executor verified" : "Executor unavailable");
     const title = document.createElement("strong");
-    title.textContent = active ? nodeLabel(active) : "No active RTDL node";
-    const provider = document.createElement("span");
-    provider.textContent = active ? capabilityLabel(active) : "Submit a task to start a plan.";
-    card.append(title, provider);
+    title.textContent = active?.call?.name
+      || context?.op?.description
+      || context?.plan?.description
+      || "No active Executor call";
+    card.append(source, title);
+    if (context) {
+      const fields = document.createElement("div");
+      fields.className = "goal-call-grid";
+      const providerId = active?.call?.providerId || context.op?.provider_id || context.op?.providerId || "-";
+      const contractId = active?.call?.contractId || context.op?.contract_id || context.op?.contractId || "-";
+      appendGoalField(fields, "Provider", providerId);
+      appendGoalField(fields, "Contract", contractId);
+      appendGoalField(
+        fields,
+        "Operation",
+        active?.call?.name || (contractId !== "-" ? contractId.split("/").pop() : "") || context.op?.description || nodeLabel(active || {}),
+      );
+      appendGoalField(
+        fields,
+        "Plan / node",
+        `${context.plan?.planId || "-"} / ${context.op?.op_id || context.op?.opId || active?.opId || active?.index || "-"}`,
+      );
+      card.appendChild(fields);
+    } else {
+      const empty = document.createElement("span");
+      empty.textContent = state.executorPlansReady
+        ? "Executor reports no running RTDL plan."
+        : "Connect to Executor to read the authoritative running call.";
+      card.appendChild(empty);
+    }
     const target = goalSummary(active);
     if (target) {
       const detail = document.createElement("pre");
