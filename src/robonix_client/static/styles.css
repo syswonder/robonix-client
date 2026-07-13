@@ -102,7 +102,7 @@ select {
 
 .nav-rail {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   padding: 16px 12px;
   border-right: 1px solid var(--line-soft);
@@ -155,39 +155,6 @@ select {
   color: #d9f3ff;
 }
 
-.client-user-card {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 10px;
-  align-items: center;
-  padding: 10px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: #0d171b;
-}
-
-.client-user-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: #263b47;
-  color: #dff5ff;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.client-user-card strong,
-.client-user-card span {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.client-user-card span,
 .panel-header span,
 .field span,
 .metric span,
@@ -2426,10 +2393,6 @@ select:focus {
   .nav-list {
     display: flex;
     overflow: auto;
-  }
-
-  .client-user-card {
-    display: none;
   }
 
   .workspace {

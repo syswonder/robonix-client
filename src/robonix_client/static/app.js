@@ -212,7 +212,6 @@ function bindSettings() {
   if (maybe("speakerDeviceId")) $("speakerDeviceId").value = state.settings.speakerDeviceId || "";
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
-  if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
   if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
 
   [
@@ -237,9 +236,6 @@ function bindSettings() {
     maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
   });
   maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true, true));
-  maybe("userId")?.addEventListener("input", () => {
-    if (maybe("clientUserId")) $("clientUserId").textContent = $("userId").value.trim() || "local";
-  });
 }
 
 async function syncConnectionSettings(fromSettings = false, persist = false) {
@@ -259,7 +255,6 @@ async function syncConnectionSettings(fromSettings = false, persist = false) {
   if (maybe("settingsRecordSeconds") && maybe(secondsSource)) $("settingsRecordSeconds").value = $(secondsSource).value;
   state.settings = collectSettings();
   saveSettings();
-  if (maybe("clientUserId")) $("clientUserId").textContent = state.settings.userId || "local";
   if (!persist) {
     setText("settingsStatus", "Changed locally. Select Save to persist.");
     return;
