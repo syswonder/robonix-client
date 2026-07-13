@@ -22,6 +22,7 @@ const state = {
   busy: false,
   taskRunning: false,
   activeStreams: 0,
+  interactionSockets: new Set(),
   activeTurnId: "",
   activePilotSessionId: "",
   stopInFlight: false,
@@ -638,7 +639,6 @@ async function sendTask() {
   addMessage("user", display, wasBusy ? "steer" : (attachments.length ? `${attachments.length} image` : ""), attachments);
   addStatusLine(wasBusy ? "Queued steer input; waiting for Pilot to react." : "Submitted task; waiting for Pilot stream.");
   addTimeline(wasBusy ? "steer" : "task", wasBusy ? `steer: ${display}` : `task: ${display}`);
-  beginStream();
   persistCurrentConversation(display);
   $("taskInput").value = "";
   autoGrowInput();
@@ -647,6 +647,7 @@ async function sendTask() {
   renderSceneAssets();
 
   const socket = new WebSocket(wsUrl("/ws/task"));
+  beginStream(socket);
   socket.onopen = () => {
     socket.send(JSON.stringify({
       text,
@@ -657,7 +658,7 @@ async function sendTask() {
       expectedTurnId: wasBusy ? state.activeTurnId : "",
     }));
   };
-  wireStream(socket, endStream);
+  wireStream(socket, () => endStream(socket));
 }
 
 function stopCurrentTask() {
@@ -676,9 +677,7 @@ function stopCurrentTask() {
     settings: interactionSettings(true),
     expectedTurnId: state.activeTurnId,
   }));
-  wireStream(socket, () => {
-    if (!state.busy) resetStopState();
-  });
+  wireStream(socket, () => (socket.robonixDone ? completeStopState() : resetStopState()));
   socket.addEventListener("message", (event) => {
     const payload = JSON.parse(event.data);
     if (payload.type === "error") resetStopState();
@@ -690,6 +689,23 @@ function resetStopState() {
   state.stopInFlight = false;
   $("stopButton").disabled = false;
   $("stopButton").textContent = "Stop";
+}
+
+function completeStopState() {
+  state.taskRunning = false;
+  state.activeTurnId = "";
+  state.activePilotSessionId = "";
+  state.taskState = state.taskState ? { ...state.taskState, status: "canceled" } : null;
+  const sockets = [...state.interactionSockets];
+  state.interactionSockets.clear();
+  state.activeStreams = 0;
+  sockets.forEach((socket) => {
+    if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+  });
+  setBusy(false);
+  refreshActivePlans();
+  renderPlan();
+  persistCurrentConversation();
 }
 
 function stopActiveVoiceSession() {
@@ -709,13 +725,13 @@ function startVoice() {
   }
   const wasBusy = hasActiveTurn();
   state.voiceActive = true;
-  beginStream();
   maybe("voiceButton")?.classList.add("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.add("active"));
   if (maybe("voiceState")) $("voiceState").textContent = "recording";
   addStatusLine(wasBusy ? "Listening for voice steer input." : "Listening for voice input.");
   addTimeline(wasBusy ? "voice steer" : "voice", wasBusy ? "voice steer requested" : "voice session requested");
   const socket = new WebSocket(wsUrl("/ws/voice"));
+  beginStream(socket);
   socket.robonixVoiceMode = wasBusy ? "voice steer" : "voice";
   state.activeVoiceSocket = socket;
   socket.onopen = () => socket.send(JSON.stringify({
@@ -730,7 +746,7 @@ function startVoice() {
       state.activeVoiceSocket = null;
       state.voiceActive = false;
     }
-    endStream();
+    endStream(socket);
     if (ownsCapture) finishVoiceCaptureUi();
     syncVoiceControls();
   }, socket);
@@ -745,7 +761,10 @@ function wireStream(socket, done, voiceSocket = null) {
     if (payload.type === "accepted") addStatusLine("Connected; waiting for Robonix events.");
     if (payload.type === "status") addTimeline("status", payload.message || "status");
     if (payload.type === "error") addMessage("error", payload.error);
-    if (payload.type === "done") socket.close();
+    if (payload.type === "done") {
+      socket.robonixDone = true;
+      socket.close();
+    }
   };
   socket.onerror = () => addMessage("error", "stream failed");
   socket.onclose = done;
@@ -2673,12 +2692,14 @@ function setBusy(value) {
   });
 }
 
-function beginStream() {
+function beginStream(socket = null) {
+  if (socket) state.interactionSockets.add(socket);
   state.activeStreams += 1;
   setBusy(true);
 }
 
-function endStream() {
+function endStream(socket = null) {
+  if (socket) state.interactionSockets.delete(socket);
   state.activeStreams = Math.max(0, state.activeStreams - 1);
   setBusy(state.activeStreams > 0 || state.taskRunning);
 }
