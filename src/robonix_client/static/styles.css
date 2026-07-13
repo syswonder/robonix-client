@@ -820,79 +820,43 @@ select:focus {
   grid-row: 1 / 2;
 }
 
-.active-rtdl-panel {
-  min-height: 0;
-  max-height: 190px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  margin: 0 14px 14px;
-  border: 1px solid rgba(91, 143, 176, 0.28);
-  border-radius: 8px;
-  background: rgba(7, 18, 24, 0.72);
-  overflow: hidden;
-}
-
-.active-rtdl-list {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.active-rtdl-header,
-.active-rtdl-row {
+.active-rtdl-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.active-rtdl-header {
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(91, 143, 176, 0.18);
-}
-
-.active-rtdl-header div,
-.active-rtdl-row div {
+.active-rtdl-card-header > div,
+.active-rtdl-op-main {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.active-rtdl-header span,
-.active-rtdl-row span,
+.active-rtdl-card-header span,
+.active-rtdl-op span,
 .active-rtdl-empty {
   color: var(--muted);
   font-size: 11px;
 }
 
-.active-rtdl-count {
-  white-space: nowrap;
-}
-
-.active-rtdl-row {
-  padding: 9px 12px;
-  border-top: 1px solid rgba(91, 143, 176, 0.12);
-}
-
-.active-rtdl-row:first-child {
-  border-top: 0;
-}
-
-.active-rtdl-row strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.active-rtdl-card-header strong,
+.active-rtdl-op strong {
+  overflow-wrap: anywhere;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
 }
 
-.active-rtdl-row.canceling {
+.active-rtdl-card.canceling {
   opacity: 0.72;
 }
 
 .active-rtdl-empty {
-  padding: 11px 12px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: rgba(8, 16, 20, 0.58);
 }
 
 .active-rtdl-empty.error {
@@ -1058,6 +1022,11 @@ select:focus {
   text-align: left;
 }
 
+.active-rtdl-launch {
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(90deg, rgba(20, 62, 81, 0.48), rgba(12, 23, 28, 0.78));
+}
+
 .rtdl-history-launch:hover,
 .rtdl-history-launch:focus-visible {
   background: rgba(32, 69, 88, 0.42);
@@ -1125,7 +1094,8 @@ select:focus {
   display: none;
 }
 
-.rtdl-history-modal {
+.rtdl-history-modal,
+.active-rtdl-modal {
   width: min(92vw, 1560px);
   height: min(84vh, 960px);
   min-width: 0;
@@ -1137,6 +1107,61 @@ select:focus {
   border-radius: 12px;
   background: #091216;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.58);
+}
+
+.active-rtdl-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.active-rtdl-modal-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  background: rgba(5, 12, 15, 0.76);
+}
+
+.active-rtdl-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(91, 143, 176, 0.3);
+  border-radius: 10px;
+  background: rgba(11, 22, 27, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.active-rtdl-card-header {
+  padding-bottom: 12px;
+}
+
+.active-rtdl-ops {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.active-rtdl-op {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1.25fr) minmax(220px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: rgba(7, 15, 19, 0.72);
+}
+
+.active-rtdl-op-target {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--cyan);
+  font: 600 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .rtdl-history-modal-header {
@@ -2657,6 +2682,15 @@ select:focus {
   .object-head span:nth-child(n + 4) {
     display: none;
   }
+
+  .active-rtdl-op {
+    grid-template-columns: 1fr auto;
+  }
+
+  .active-rtdl-op-target {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 @media (max-width: 820px) {
@@ -2664,7 +2698,8 @@ select:focus {
     padding: 0;
   }
 
-  .rtdl-history-modal {
+  .rtdl-history-modal,
+  .active-rtdl-modal {
     width: 100vw;
     height: 100vh;
     border-radius: 0;

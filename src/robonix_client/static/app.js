@@ -349,12 +349,33 @@ function bindEvents() {
   });
   maybe("openRtdlHistory")?.addEventListener("click", openRtdlHistory);
   maybe("closeRtdlHistory")?.addEventListener("click", closeRtdlHistory);
+  maybe("openActiveRtdl")?.addEventListener("click", openActiveRtdl);
+  maybe("closeActiveRtdl")?.addEventListener("click", closeActiveRtdl);
+  maybe("activeRtdlModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeActiveRtdl();
+  });
   maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeRtdlHistory();
   });
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
     if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
   });
+}
+
+function openActiveRtdl() {
+  const modal = maybe("activeRtdlModal");
+  if (!modal) return;
+  modal.hidden = false;
+  refreshActivePlans();
+  maybe("closeActiveRtdl")?.focus();
+}
+
+function closeActiveRtdl() {
+  const modal = maybe("activeRtdlModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  maybe("openActiveRtdl")?.focus();
 }
 
 function openRtdlHistory() {
@@ -1453,17 +1474,24 @@ async function refreshActivePlans() {
 function renderActivePlans(error = "") {
   const root = maybe("activeRtdlList");
   const count = maybe("activeRtdlCount");
+  const summary = maybe("activeRtdlSummary");
+  const modalSummary = maybe("activeRtdlModalSummary");
   if (!root || !count) return;
   clear(root);
   if (error) {
     count.textContent = "unavailable";
+    if (summary) summary.textContent = "Executor state unavailable";
+    if (modalSummary) modalSummary.textContent = "Live Executor query failed";
     const row = document.createElement("div");
     row.className = "active-rtdl-empty error";
     row.textContent = error;
     root.appendChild(row);
     return;
   }
-  count.textContent = `${state.executorPlans.length} running`;
+  const planCount = state.executorPlans.length;
+  count.textContent = String(planCount);
+  if (summary) summary.textContent = planCount ? `${planCount} running · open live workspace` : "No plans running";
+  if (modalSummary) modalSummary.textContent = `${planCount} live plan${planCount === 1 ? "" : "s"} reported by Executor`;
   if (!state.executorPlans.length) {
     const row = document.createElement("div");
     row.className = "active-rtdl-empty";
@@ -1472,8 +1500,10 @@ function renderActivePlans(error = "") {
     return;
   }
   state.executorPlans.forEach((plan) => {
-    const row = document.createElement("div");
-    row.className = `active-rtdl-row${plan.cancelled ? " canceling" : ""}`;
+    const card = document.createElement("article");
+    card.className = `active-rtdl-card${plan.cancelled ? " canceling" : ""}`;
+    const header = document.createElement("header");
+    header.className = "active-rtdl-card-header";
     const body = document.createElement("div");
     const title = document.createElement("strong");
     title.textContent = plan.description || `Plan ${plan.planId}`;
@@ -1484,8 +1514,43 @@ function renderActivePlans(error = "") {
     const statePill = document.createElement("span");
     statePill.className = `status ${plan.cancelled ? "ended" : "running"}`;
     statePill.textContent = plan.cancelled ? "CANCELING" : "RUNNING";
-    row.append(body, statePill);
-    root.appendChild(row);
+    header.append(body, statePill);
+    card.appendChild(header);
+
+    const ops = document.createElement("div");
+    ops.className = "active-rtdl-ops";
+    const planOps = Array.isArray(plan.ops) ? plan.ops : [];
+    if (!planOps.length) {
+      const empty = document.createElement("span");
+      empty.className = "active-rtdl-empty";
+      empty.textContent = "No operation details reported.";
+      ops.appendChild(empty);
+    } else {
+      planOps.forEach((op) => {
+        const opRow = document.createElement("div");
+        opRow.className = "active-rtdl-op";
+        const opMain = document.createElement("div");
+        opMain.className = "active-rtdl-op-main";
+        const opTitle = document.createElement("strong");
+        opTitle.textContent = op.description || `Operation ${op.op_id || "-"}`;
+        const opMeta = document.createElement("span");
+        opMeta.textContent = `op ${op.op_id || "-"} · ${op.kind || "do"}`;
+        opMain.append(opTitle, opMeta);
+        const target = document.createElement("div");
+        target.className = "active-rtdl-op-target";
+        target.textContent = op.provider_id || op.contract_id
+          ? `${op.provider_id || "?"} · ${op.contract_id || "operator"}`
+          : "operator node";
+        const opState = document.createElement("span");
+        const stateName = String(op.state || "pending").toLowerCase();
+        opState.className = `status ${stateName}`;
+        opState.textContent = stateName.toUpperCase();
+        opRow.append(opMain, target, opState);
+        ops.appendChild(opRow);
+      });
+    }
+    card.appendChild(ops);
+    root.appendChild(card);
   });
 }
 

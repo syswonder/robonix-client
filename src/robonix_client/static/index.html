@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260713d" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260713e" />
   </head>
   <body>
     <div class="app-shell">
@@ -92,16 +92,13 @@
                     <span data-plan-summary>waiting for real plan</span>
                   </div>
                 </div>
-                <section class="active-rtdl-panel" aria-live="polite">
-                  <div class="active-rtdl-header">
-                    <div>
-                      <strong>Active RTDL</strong>
-                      <span>Executor authority · polled every 2s</span>
-                    </div>
-                    <span class="active-rtdl-count" id="activeRtdlCount">unavailable</span>
-                  </div>
-                  <div class="active-rtdl-list" id="activeRtdlList"></div>
-                </section>
+                <button class="rtdl-history-launch active-rtdl-launch" id="openActiveRtdl" type="button">
+                  <span>
+                    <strong>Active RTDL</strong>
+                    <small id="activeRtdlSummary">Open live Executor plans</small>
+                  </span>
+                  <span class="rtdl-history-count" id="activeRtdlCount">unavailable</span>
+                </button>
                 <div class="execution-table">
                   <div class="table-head">
                     <span>Node</span>
@@ -316,6 +313,19 @@
       </main>
     </div>
 
+    <div class="modal-backdrop" id="activeRtdlModal" role="dialog" aria-modal="true" aria-labelledby="activeRtdlTitle" hidden>
+      <section class="active-rtdl-modal">
+        <header class="rtdl-history-modal-header">
+          <div>
+            <h2 id="activeRtdlTitle">Active RTDL</h2>
+            <span id="activeRtdlModalSummary">Live plans reported by Executor</span>
+          </div>
+          <button class="icon-button modal-close" id="closeActiveRtdl" type="button" aria-label="Close active RTDL">×</button>
+        </header>
+        <div class="active-rtdl-modal-body" id="activeRtdlList" aria-live="polite"></div>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="rtdlHistoryModal" role="dialog" aria-modal="true" aria-labelledby="rtdlHistoryTitle" hidden>
       <section class="rtdl-history-modal">
         <header class="rtdl-history-modal-header">
@@ -340,6 +350,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260713d"></script>
+    <script src="/static/app.js?v=20260713e"></script>
   </body>
 </html>
