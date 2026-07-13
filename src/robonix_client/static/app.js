@@ -13,6 +13,10 @@ const state = {
   taskState: null,
   batches: [],
   nodeStates: {},
+  executorPlans: [],
+  executorPlansReady: false,
+  executorPlanIds: new Set(),
+  executorMissingPolls: new Map(),
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
@@ -184,8 +188,10 @@ async function init() {
   renderPlan();
   renderSceneAssets();
   refreshSystem();
+  refreshActivePlans();
   refreshAudioRoute();
   setInterval(refreshSystem, 7000);
+  setInterval(refreshActivePlans, 2000);
   setInterval(refreshHandsfree, 2500);
 }
 
@@ -719,6 +725,7 @@ function handlePilotEvent(event) {
     addTimeline("plan", `live round ${event.plan.round}: ${planCalls(event.plan).length} call(s)`);
     renderPlan();
     persistCurrentConversation();
+    refreshActivePlans();
   } else if (event.kind === "batch_result" && event.batchResult) {
     state.batches.unshift(event.batchResult);
     (event.batchResult.results || []).forEach((result) => {
@@ -1007,11 +1014,12 @@ function renderPlan() {
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
   const records = normalizedPlanRecords();
-  const latestRecord = records[0] || null;
-  const historyRecords = records.slice(1);
+  const activeRecords = records.filter((record) => recordIsActive(record));
+  const latestRecord = activeRecords[0] || null;
+  const historyRecords = records.filter((record) => !activeRecords.includes(record));
   const latestCalls = planCalls(latestRecord?.plan).length;
   setTextAll("[data-plan-summary]", latestRecord
-    ? `plan ${latestRecord.plan.planId || "-"} · round ${latestRecord.plan.round} · ${latestCalls} call(s)`
+    ? `${activeRecords.length} active · plan ${latestRecord.plan.planId || "-"} · round ${latestRecord.plan.round} · ${latestCalls} call(s)`
     : "No RTDL tree is currently executing");
   if (maybe("rtdlHistoryCount")) $("rtdlHistoryCount").textContent = String(historyRecords.length);
   renderGoalPanel();
@@ -1050,7 +1058,10 @@ function renderPlanRecord(root, record) {
   label.textContent = `Plan ${record.plan.planId || "-"} · round ${record.plan.round}`;
   wrapper.appendChild(label);
   const maps = buildResultMaps(record);
-  renderBehaviorTree(wrapper, record.plan, maps, pickRunningIndex(record.plan, maps.byIndex));
+  const runningIndex = recordIsActive(record)
+    ? pickRunningIndex(record.plan, maps.byIndex)
+    : null;
+  renderBehaviorTree(wrapper, record.plan, maps, runningIndex);
   root.appendChild(wrapper);
 }
 
@@ -1173,7 +1184,7 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex) {
     const status = aggregateNodeStatus(node, plan, resultMaps, runningIndex);
     const key = statusKey(status);
     const g = document.createElementNS(ns, "g");
-    g.setAttribute("class", `bt-node status-${key}${Number(node.index) === Number(runningIndex) ? " active" : ""}`);
+    g.setAttribute("class", `bt-node status-${key}${isRunningNode(node, runningIndex) ? " active" : ""}`);
     g.setAttribute("transform", `translate(${x - nodeW / 2}, ${y})`);
     g.setAttribute("role", "button");
     g.style.cursor = "pointer";
@@ -1300,8 +1311,11 @@ function planForestNodes(plan) {
 
 function aggregateNodeStatus(node, plan, resultMaps, runningIndex) {
   const own = resultForNode(node, resultMaps);
-  if (own?.state) return own.state;
-  if (Number(node?.index) === Number(runningIndex)) return "RUNNING";
+  if (own?.state) {
+    if (String(own.state).toUpperCase() === "RUNNING" && runningIndex === null) return "ENDED";
+    return own.state;
+  }
+  if (isRunningNode(node, runningIndex)) return "RUNNING";
   const children = (node?.children || [])
     .map((idx) => (plan?.nodes || []).find((item) => Number(item.index) === Number(idx)))
     .filter(Boolean);
@@ -1324,6 +1338,12 @@ function pickRunningIndex(plan, nodeStateByIndex) {
   if (explicitRunning) return explicitRunning.index;
   const firstPending = callable.find((node) => !nodeStateByIndex.has(node.index));
   return firstPending?.index ?? callable.at(-1)?.index ?? plan.rootIndex ?? 0;
+}
+
+function isRunningNode(node, runningIndex) {
+  return runningIndex !== null
+    && runningIndex !== undefined
+    && Number(node?.index) === Number(runningIndex);
 }
 
 function nodeStatus(node, nodeStateByIndex, runningIndex) {
@@ -1361,7 +1381,98 @@ function statusKey(status) {
   if (raw === "succeeded" || raw === "success" || raw === "done" || raw === "completed") return "success";
   if (["failed", "failure", "error", "canceled", "cancelled", "timeout", "aborted"].includes(raw)) return "failed";
   if (raw === "running" || raw === "in_progress" || raw === "active") return "running";
+  if (raw === "ended" || raw === "inactive") return "ended";
   return "pending";
+}
+
+function recordHasTerminalBatch(record) {
+  return Array.isArray(record?.batches) && record.batches.length > 0;
+}
+
+function recordIsActive(record) {
+  if (!record?.plan || recordHasTerminalBatch(record)) return false;
+  if (!state.executorPlansReady) return record === normalizedPlanRecords()[0];
+  const planId = String(record.plan.planId || "");
+  if (state.executorPlanIds.has(planId)) return true;
+  return Number(state.executorMissingPolls.get(planId) || 0) < 2;
+}
+
+async function refreshActivePlans() {
+  const atlas = buildAtlasEndpoint(maybe("robotHost")?.value, maybe("atlasPort")?.value);
+  if (!atlas) {
+    state.executorPlansReady = false;
+    state.executorPlans = [];
+    state.executorPlanIds = new Set();
+    renderActivePlans("Set Robot Host first.");
+    return;
+  }
+  const settings = { ...collectSettings(), atlasEndpoint: atlas };
+  const result = await fetch("/api/executor/active-plans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings }),
+  }).then((response) => response.json()).catch((error) => ({
+    available: false,
+    count: 0,
+    plans: [],
+    error: String(error),
+  }));
+  if (!result.available) {
+    renderActivePlans(result.error || "Executor query unavailable.");
+    return;
+  }
+  state.executorPlansReady = true;
+  state.executorPlans = Array.isArray(result.plans) ? result.plans : [];
+  state.executorPlanIds = new Set(state.executorPlans.map((plan) => String(plan.planId || "")));
+  normalizedPlanRecords().forEach((record) => {
+    const planId = String(record.plan?.planId || "");
+    if (!planId || state.executorPlanIds.has(planId) || recordHasTerminalBatch(record)) {
+      state.executorMissingPolls.set(planId, 0);
+      return;
+    }
+    state.executorMissingPolls.set(planId, Number(state.executorMissingPolls.get(planId) || 0) + 1);
+  });
+  renderActivePlans();
+  renderPlan();
+}
+
+function renderActivePlans(error = "") {
+  const root = maybe("activeRtdlList");
+  const count = maybe("activeRtdlCount");
+  if (!root || !count) return;
+  clear(root);
+  if (error) {
+    count.textContent = "unavailable";
+    const row = document.createElement("div");
+    row.className = "active-rtdl-empty error";
+    row.textContent = error;
+    root.appendChild(row);
+    return;
+  }
+  count.textContent = `${state.executorPlans.length} running`;
+  if (!state.executorPlans.length) {
+    const row = document.createElement("div");
+    row.className = "active-rtdl-empty";
+    row.textContent = "Executor reports no active RTDL plans.";
+    root.appendChild(row);
+    return;
+  }
+  state.executorPlans.forEach((plan) => {
+    const row = document.createElement("div");
+    row.className = `active-rtdl-row${plan.cancelled ? " canceling" : ""}`;
+    const body = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = plan.description || `Plan ${plan.planId}`;
+    const meta = document.createElement("span");
+    const runningOps = (plan.ops || []).filter((op) => op.state === "running").length;
+    meta.textContent = `plan ${plan.planId} · ${runningOps}/${plan.opCount} running`;
+    body.append(title, meta);
+    const statePill = document.createElement("span");
+    statePill.className = `status ${plan.cancelled ? "ended" : "running"}`;
+    statePill.textContent = plan.cancelled ? "CANCELING" : "RUNNING";
+    row.append(body, statePill);
+    root.appendChild(row);
+  });
 }
 
 function displayStatus(status) {
@@ -1449,15 +1560,13 @@ function planCalls(plan) {
 }
 
 function activePlanNode() {
-  const plan = state.plan;
-  if (!plan) return null;
-  const nodeStateByIndex = new Map();
-  Object.entries(state.nodeStates || {}).forEach(([index, result]) => nodeStateByIndex.set(Number(index), result));
-  state.batches.forEach((batch) => {
-    (batch.results || []).forEach((result) => nodeStateByIndex.set(Number(result.nodeIndex), result));
-  });
-  const runningIndex = pickRunningIndex(plan, nodeStateByIndex);
-  return plan.nodes.find((node) => node.index === runningIndex) || plan.nodes.find((node) => node.call) || null;
+  const record = normalizedPlanRecords().find((item) => recordIsActive(item));
+  if (!record) return null;
+  const maps = buildResultMaps(record);
+  const runningIndex = pickRunningIndex(record.plan, maps.byIndex);
+  return record.plan.nodes.find((node) => node.index === runningIndex)
+    || record.plan.nodes.find((node) => node.call)
+    || null;
 }
 
 function renderGoalPanel() {

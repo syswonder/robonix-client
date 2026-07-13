@@ -20,6 +20,7 @@ if str(PROTO_DIR) not in sys.path:
 
 import atlas_pb2  # type: ignore  # noqa: E402
 import audio_pb2  # type: ignore  # noqa: E402
+import executor_pb2  # type: ignore  # noqa: E402
 import liaison_pb2  # type: ignore  # noqa: E402
 import pilot_pb2  # type: ignore  # noqa: E402
 import tts_pb2  # type: ignore  # noqa: E402
@@ -35,6 +36,7 @@ CONTRACT_LIAISON_SUBMIT = "robonix/system/liaison/submit"
 CONTRACT_LIAISON_VOICE = "robonix/system/liaison/voice"
 CONTRACT_PILOT = "robonix/system/pilot"
 CONTRACT_EXECUTOR = "robonix/system/executor"
+CONTRACT_EXECUTOR_LIST_ACTIVE = "robonix/system/executor/list_active_plans"
 CONTRACT_MIC = "robonix/primitive/audio/mic"
 CONTRACT_SPEAKER = "robonix/primitive/audio/speaker"
 CONTRACT_AUDIO_LIST_DEVICES = "robonix/primitive/audio/list_devices"
@@ -303,6 +305,40 @@ async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint
             if endpoint:
                 return endpoint
     raise RobonixApiError(f"no provider found for {contract_id}")
+
+
+async def list_active_plans(settings: ClientSettings) -> dict[str, Any]:
+    """Read Executor's control-plane snapshot without creating an RTDL plan."""
+    endpoint = await discover_endpoint(
+        settings.atlas_endpoint,
+        CONTRACT_EXECUTOR_LIST_ACTIVE,
+    )
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.contracts.RobonixSystemExecutorListActivePlans/ListActivePlans",
+        executor_pb2.ListActivePlans_Request(),
+        executor_pb2.ListActivePlans_Response,
+    )
+    if not response.success:
+        raise RobonixApiError(response.error or "Executor active-plan query failed")
+    payload = _safe_json(response.plans_json)
+    if not isinstance(payload, dict) or not isinstance(payload.get("plans", []), list):
+        raise RobonixApiError("Executor returned an invalid active-plan snapshot")
+    plans = []
+    for plan in payload.get("plans", []):
+        if not isinstance(plan, dict):
+            continue
+        plans.append(
+            {
+                "planId": str(plan.get("plan_id", "")),
+                "description": str(plan.get("description", "")),
+                "opCount": int(plan.get("op_count", 0)),
+                "cancelled": bool(plan.get("cancelled", False)),
+                "stopPoints": int(plan.get("stop_points", 0)),
+                "ops": plan.get("ops", []),
+            }
+        )
+    return {"available": True, "count": len(plans), "plans": plans}
 
 
 async def resolve_liaison(settings: ClientSettings, contract_id: str = CONTRACT_LIAISON_SUBMIT) -> str:

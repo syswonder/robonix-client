@@ -24,6 +24,7 @@ from .transport import (
     discover_audio_bridge,
     enroll_voiceprint,
     get_handsfree_status,
+    list_active_plans,
     list_audio_devices,
     list_audio_providers,
     play_tts_test,
@@ -241,6 +242,14 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
             "providers": [],
             "error": str(exc),
         }
+
+
+@app.post("/api/executor/active-plans")
+async def executor_active_plans(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        return await list_active_plans(ClientSettings.from_payload(req.settings))
+    except Exception as exc:
+        return {"available": False, "count": 0, "plans": [], "error": str(exc)}
 
 
 @app.post("/api/handsfree/set")

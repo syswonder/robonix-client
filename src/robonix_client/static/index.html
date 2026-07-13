@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260711a" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260713a" />
   </head>
   <body>
     <div class="app-shell">
@@ -99,6 +99,16 @@
                     <span data-plan-summary>waiting for real plan</span>
                   </div>
                 </div>
+                <section class="active-rtdl-panel" aria-live="polite">
+                  <div class="active-rtdl-header">
+                    <div>
+                      <strong>Active RTDL</strong>
+                      <span>Executor authority · polled every 2s</span>
+                    </div>
+                    <span class="active-rtdl-count" id="activeRtdlCount">unavailable</span>
+                  </div>
+                  <div class="active-rtdl-list" id="activeRtdlList"></div>
+                </section>
                 <div class="execution-table">
                   <div class="table-head">
                     <span>Node</span>

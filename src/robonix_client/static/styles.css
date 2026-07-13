@@ -853,6 +853,81 @@ select:focus {
   grid-row: 1 / 2;
 }
 
+.active-rtdl-panel {
+  margin: 0 14px 14px;
+  border: 1px solid rgba(91, 143, 176, 0.28);
+  border-radius: 8px;
+  background: rgba(7, 18, 24, 0.72);
+  overflow: hidden;
+}
+
+.active-rtdl-header,
+.active-rtdl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.active-rtdl-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(91, 143, 176, 0.18);
+}
+
+.active-rtdl-header div,
+.active-rtdl-row div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.active-rtdl-header span,
+.active-rtdl-row span,
+.active-rtdl-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.active-rtdl-count {
+  white-space: nowrap;
+}
+
+.active-rtdl-row {
+  padding: 9px 12px;
+  border-top: 1px solid rgba(91, 143, 176, 0.12);
+}
+
+.active-rtdl-row:first-child {
+  border-top: 0;
+}
+
+.active-rtdl-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.active-rtdl-row.canceling {
+  opacity: 0.72;
+}
+
+.active-rtdl-empty {
+  padding: 11px 12px;
+}
+
+.active-rtdl-empty.error {
+  color: var(--danger);
+}
+
+.status.ended,
+.status-ended rect {
+  color: var(--muted);
+  border-color: rgba(126, 145, 156, 0.35);
+  background: rgba(126, 145, 156, 0.1);
+}
+
 .goal-line {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line-soft);
