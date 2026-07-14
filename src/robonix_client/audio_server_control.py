@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 import platform
@@ -23,6 +24,33 @@ _log_handle = None
 _last_host = DEFAULT_BRIDGE_HOST
 _last_port = DEFAULT_BRIDGE_PORT
 _last_ui_host = DEFAULT_UI_HOST
+
+SUPPORTED_AUDIO_PLATFORMS = {"Darwin", "Linux"}
+
+
+def _audio_backend(system: str | None = None) -> str:
+    current = system or platform.system()
+    if current == "Darwin":
+        return "PortAudio/CoreAudio"
+    if current == "Linux":
+        return "PortAudio/Linux"
+    return "unsupported"
+
+
+def _audio_install_hint(system: str | None = None) -> str:
+    current = system or platform.system()
+    if current == "Linux":
+        return (
+            "Install PortAudio and the client audio extra: "
+            "sudo apt install libportaudio2 portaudio19-dev && "
+            "pip install 'robonix-client[audio]'"
+        )
+    if current == "Darwin":
+        return (
+            "Install PortAudio and the client audio extra: "
+            "brew install portaudio && pip install 'robonix-client[audio]'"
+        )
+    return "Local audio is supported on Linux and macOS."
 
 
 async def health(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT, timeout_s: float = 2.0) -> dict[str, Any]:
@@ -81,11 +109,27 @@ def start(
             ),
         }
 
-    if platform.system() != "Darwin":
+    system = platform.system()
+    if system not in SUPPORTED_AUDIO_PLATFORMS:
         return {
             "ok": False,
-            "error": "The bundled audio device server is intended to run on macOS with CoreAudio.",
-            "platform": platform.system(),
+            "running": False,
+            "error": _audio_install_hint(system),
+            "platform": system,
+            "backend": _audio_backend(system),
+        }
+    try:
+        importlib.import_module("sounddevice")
+    except Exception as exc:  # noqa: BLE001 - optional native dependency
+        return {
+            "ok": False,
+            "running": False,
+            "error": (
+                f"Local audio backend is unavailable ({exc}). "
+                f"{_audio_install_hint(system)}"
+            ),
+            "platform": system,
+            "backend": _audio_backend(system),
         }
 
     log_path = Path.home() / ".robonix-client" / "audio-device-server.log"
@@ -102,12 +146,24 @@ def start(
         "--ui-host",
         ui_host,
     ]
-    _process = subprocess.Popen(
-        cmd,
-        stdout=_log_handle,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    try:
+        _process = subprocess.Popen(
+            cmd,
+            stdout=_log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        _log_handle.close()
+        _log_handle = None
+        return {
+            "ok": False,
+            "running": False,
+            "error": f"failed to start local audio device server: {exc}",
+            "platform": system,
+            "backend": _audio_backend(system),
+            "logPath": str(log_path),
+        }
     return status(log_path=log_path)
 
 
@@ -138,6 +194,8 @@ def status(already_running: bool = False, external: bool = False, log_path: Path
         "wsUrl": f"ws://{_last_host}:{_last_port}",
         "uiUrl": f"http://{_last_ui_host}:{_last_port + 1}/",
         "logPath": str(log_path) if log_path else "",
+        "platform": platform.system(),
+        "backend": _audio_backend(),
     }
 
 

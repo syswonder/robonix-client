@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MulanPSL-2.0
-"""Web-UI variant of `server.py`.
+"""Cross-platform local audio device server with a diagnostic Web UI.
 
 Same WebSocket protocol (`/mic`, `/speaker`, `/health`) as the headless
 server, plus a small in-process HTTP+WS UI:
 
   http://<host>:<port+1>/     single-page debug UI
                               (device pickers, live VU meter, log panel)
-  ws://<host>:<port>/devices  JSON list of CoreAudio devices
+  ws://<host>:<port>/devices  JSON list of PortAudio devices
   ws://<host>:<port>/vu       server-stream peak RMS values (50 ms tick)
   ws://<host>:<port>/log      newline-delimited live log feed
   ws://<host>:<port>/set_device  one-shot setter; client sends a JSON
@@ -20,12 +20,9 @@ only runtime dep beyond `sounddevice`; HTTP is served via stdlib
 `http.server` on a sibling port so the front-end is a single static
 HTML page baked into this file.
 
-Run on the macOS box (in a real desktop session — open the UI URL in
-Safari / Chrome on the same Mac):
+Run on the client machine in a real desktop audio session:
 
-    cd ~/robonix-scripts/mac_server
-    . .venv/bin/activate
-    python3 server_web.py --port 60000
+    robonix-client-audio-server --port 60000
     # then open http://localhost:60001/
 
 Run with --headless to skip the HTTP UI; equivalent to `server.py`.
@@ -52,7 +49,7 @@ DTYPE = "int16"
 FRAME_SAMPLES = SAMPLE_RATE // 10
 FRAME_BYTES = FRAME_SAMPLES * 2
 
-log = logging.getLogger("mac-bridge-web")
+log = logging.getLogger("audio-device-server")
 
 state_lock = threading.Lock()
 state = {
@@ -97,7 +94,10 @@ def pick_input_device(explicit: int | None) -> int | None:
         info = sd.query_devices(default)
     except Exception:  # noqa: BLE001
         return None
-    if not _is_likely_bluetooth(info):
+    # CoreAudio can expose a Bluetooth device using a profile that rejects
+    # our 16 kHz mono stream. Linux desktop audio servers handle profile and
+    # resampling policy themselves, so honor the Linux default unchanged.
+    if platform.system() != "Darwin" or not _is_likely_bluetooth(info):
         return None
     log.warning(
         "default input device #%d (%s) looks like Bluetooth; "
@@ -122,7 +122,8 @@ def pick_output_device(explicit: int | None) -> int | None:
         info = sd.query_devices(default)
     except Exception:  # noqa: BLE001
         return None
-    if info.get("max_output_channels", 0) > 0 and not _is_likely_bluetooth(info):
+    avoid_bluetooth = platform.system() == "Darwin" and _is_likely_bluetooth(info)
+    if info.get("max_output_channels", 0) > 0 and not avoid_bluetooth:
         return default
     log.warning(
         "default output device #%s (%s) is not suitable for 16 kHz mono playback; "
@@ -350,7 +351,7 @@ async def serve_inject_mic(ws) -> None:
 
     This is intentionally a test hook, not a replacement for live capture:
     the regular /mic path first consumes the queued frames once, then goes
-    straight back to CoreAudio on subsequent calls.
+    straight back to the local PortAudio device on subsequent calls.
     """
     pending: list[bytes] = []
     cleared = False

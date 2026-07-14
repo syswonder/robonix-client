@@ -1,6 +1,6 @@
 # Robonix Client
 
-A macOS web client for operating a running Robonix deployment. It provides
+A Linux and macOS web client for operating a running Robonix deployment. It provides
 text tasks, voice turns, hands-free control, explicit Stop/steer behavior,
 audio-device routing, and live Pilot/RTDL execution events.
 
@@ -8,7 +8,7 @@ audio-device routing, and live Pilot/RTDL execution events.
 
 Requirements:
 
-- macOS
+- Linux or macOS
 - Python 3.11 or newer
 - network access to the machine running Robonix Atlas
 - a running Robonix deployment with Atlas, Liaison, Pilot, and Executor
@@ -24,8 +24,18 @@ python -m pip install --upgrade pip
 pip install -e ".[audio]"
 ```
 
-The `audio` extra installs the CoreAudio dependency used for microphone and
-speaker access. If `sounddevice` cannot find PortAudio, install it first:
+The `audio` extra installs the PortAudio adapter used for microphone and
+speaker access. Install the system library first when needed.
+
+Ubuntu/Debian:
+
+```bash
+sudo apt update
+sudo apt install -y libportaudio2 portaudio19-dev
+pip install -e ".[audio]"
+```
+
+macOS:
 
 ```bash
 brew install portaudio
@@ -43,7 +53,8 @@ robonix-client --robot-host 100.87.172.93
 
 Open <http://127.0.0.1:7860/>.
 
-The client starts its local macOS audio service automatically. In the UI:
+The client starts its local audio service automatically. On Linux it uses the
+desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 
 1. Confirm **Robot Host** is `100.87.172.93` and **Atlas Port** is `50051`.
 2. Click **Connect**. The status should become online.
@@ -103,12 +114,12 @@ bridge endpoint through Atlas, opens one outbound WebSocket, and carries both
 microphone and speaker PCM over that connection.
 
 In **Audio**, select `audio_client_bridge` for input and/or output, choose the
-macOS devices, click **Apply Route**, then run **Test microphone** and **Test
+client machine's devices, click **Apply Route**, then run **Test microphone** and **Test
 speaker**. Hands-free mode is disabled until explicitly enabled in the UI.
 
 ## Testing with the Robonix Webots Example
 
-This flow runs Webots and Robonix on a Linux machine and the client on macOS.
+This flow runs Webots and Robonix on a Linux machine and the client on Linux or macOS.
 The same-host case also works by using `127.0.0.1` as Robot Host.
 
 ### 1. Prepare Robonix
@@ -162,7 +173,7 @@ ready. `rbnx caps` can be used to confirm capability registration.
 
 ### 4. Start the client
 
-On the Mac:
+On the client machine:
 
 ```bash
 cd robonix-client
@@ -233,7 +244,7 @@ Pilot owns task/steer/abort semantics; Executor owns running capability calls.
 ### Audio path
 
 ```text
-macOS CoreAudio
+Linux audio or macOS CoreAudio
   <-> local audio service
   <-> outbound WebSocket to audio_client_bridge on the robot
   <-> standard Robonix mic/speaker contracts
@@ -249,15 +260,18 @@ drivers do not need that capability.
 - **Client page does not open:** check that `robonix-client` is running on
   `127.0.0.1:7860`.
 - **Robot stays offline:** verify the entered host is the Atlas machine and that
-  `<robot-host>:50051` is reachable from the Mac.
+  `<robot-host>:50051` is reachable from the client machine.
 - **Liaison unavailable:** leave the endpoint empty and confirm Liaison is
   registered in Atlas.
 - **Audio bridge unavailable:** confirm the deployment uses
   `audio_client_bridge`, port `60002` is reachable, and the provider exposes
   `bridge_info`.
 - **Microphone test reports digital silence:** every PCM sample was zero. Check
-  hardware mute and ALSA/CoreAudio routing, or select `audio_client_bridge` and
-  a real macOS input device. Quiet nonzero background audio is accepted.
+  hardware mute and Linux/macOS audio routing, or select `audio_client_bridge`
+  and a real input device. Quiet nonzero background audio is accepted.
+- **Linux audio service is offline:** install `libportaudio2` and the `audio`
+  extra, then run `python -m sounddevice` to confirm that input and output
+  devices are visible in the same desktop session that runs the client.
 - **Stop does not end a task:** inspect the RTDL event history and Executor log;
   a successful Stop must produce an interrupted turn and a cancelled running
   plan.
