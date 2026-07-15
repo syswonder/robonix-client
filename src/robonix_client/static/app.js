@@ -194,6 +194,9 @@ async function init() {
   refreshSystem();
   refreshActivePlans();
   refreshAudioRoute();
+  // The speaking aura is visible on every page, so its physical output-level
+  // stream must be connected at startup rather than only after opening Audio.
+  checkAudioServer();
   setInterval(refreshSystem, 7000);
   setInterval(refreshActivePlans, 2000);
   setInterval(refreshHandsfree, 2500);
@@ -2469,7 +2472,7 @@ function renderAudioLevel(level, outputLevel = 0) {
   const raw = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
   const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
   const outputRaw = Math.max(0, Math.min(1, Number.isFinite(outputLevel) ? outputLevel : 0));
-  state.audio.outputLevelTarget = Math.max(0, Math.min(1, Math.sqrt(outputRaw) * 1.25));
+  state.audio.outputLevelTarget = Math.max(0, Math.min(1, Math.pow(outputRaw, 0.4) * 1.5));
   if (state.ttsPlaying || state.audio.outputLevelTarget > 0.002 || state.audio.auraLevel > 0.002) {
     document.body.classList.add("tts-speaking");
     startTtsAuraAnimation();
@@ -2500,7 +2503,7 @@ function updateTtsAuraFrame() {
     state.audio.auraLevel = target;
   }
   const opacity = state.audio.auraLevel > 0
-    ? Math.min(1, 0.12 + state.audio.auraLevel * 0.88)
+    ? Math.min(1, 0.34 + state.audio.auraLevel * 0.66)
     : 0;
   document.documentElement.style.setProperty("--voice-level", state.audio.auraLevel.toFixed(4));
   document.documentElement.style.setProperty("--voice-opacity", opacity.toFixed(4));
