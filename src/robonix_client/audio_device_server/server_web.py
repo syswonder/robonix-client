@@ -312,9 +312,18 @@ async def serve_speaker(ws) -> None:
     except websockets.ConnectionClosed:
         log.info("speaker client disconnected")
     finally:
-        _set_state("output_level", 0.0)
-        stream.stop()
-        stream.close()
+        try:
+            # A normal stop drains PortAudio's pending device buffers.  Keep
+            # publishing the last callback level until that drain completes so
+            # the client aura follows audible playback instead of the WebSocket
+            # lifetime.  Barge-in must discard pending output immediately.
+            if interrupted:
+                stream.abort()
+            else:
+                stream.stop()
+        finally:
+            _set_state("output_level", 0.0)
+            stream.close()
         _set_state("speaker_clients", _state("speaker_clients") - 1)
 
 

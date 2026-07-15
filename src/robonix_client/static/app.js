@@ -2470,7 +2470,10 @@ function renderAudioLevel(level, outputLevel = 0) {
   const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
   const outputRaw = Math.max(0, Math.min(1, Number.isFinite(outputLevel) ? outputLevel : 0));
   state.audio.outputLevelTarget = Math.max(0, Math.min(1, Math.sqrt(outputRaw) * 1.25));
-  if (state.ttsPlaying) startTtsAuraAnimation();
+  if (state.ttsPlaying || state.audio.outputLevelTarget > 0.002 || state.audio.auraLevel > 0.002) {
+    document.body.classList.add("tts-speaking");
+    startTtsAuraAnimation();
+  }
   state.audio.levelHistory.push(display);
   state.audio.levelHistory = state.audio.levelHistory.slice(-28);
   if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
@@ -2487,9 +2490,10 @@ function startTtsAuraAnimation() {
 
 function updateTtsAuraFrame() {
   state.audio.auraFrame = 0;
-  const target = state.ttsPlaying
-    ? Math.max(0.10, state.audio.outputLevelTarget)
-    : 0;
+  const outputActive = state.audio.outputLevelTarget > 0.002;
+  const target = outputActive
+    ? state.audio.outputLevelTarget
+    : (state.ttsPlaying ? 0.10 : 0);
   const response = target > state.audio.auraLevel ? 0.32 : 0.14;
   state.audio.auraLevel += (target - state.audio.auraLevel) * response;
   if (Math.abs(target - state.audio.auraLevel) < 0.002) {
@@ -2500,7 +2504,7 @@ function updateTtsAuraFrame() {
     : 0;
   document.documentElement.style.setProperty("--voice-level", state.audio.auraLevel.toFixed(4));
   document.documentElement.style.setProperty("--voice-opacity", opacity.toFixed(4));
-  if (state.ttsPlaying || state.audio.auraLevel > 0.002) {
+  if (state.ttsPlaying || outputActive || state.audio.auraLevel > 0.002) {
     state.audio.auraFrame = requestAnimationFrame(updateTtsAuraFrame);
   } else {
     document.body.classList.remove("tts-speaking");
@@ -2509,10 +2513,8 @@ function updateTtsAuraFrame() {
 
 function setTtsAura(active) {
   state.ttsPlaying = Boolean(active);
-  if (state.ttsPlaying) {
+  if (state.ttsPlaying || state.audio.outputLevelTarget > 0.002) {
     document.body.classList.add("tts-speaking");
-  } else {
-    state.audio.outputLevelTarget = 0;
   }
   startTtsAuraAnimation();
   syncVoiceControls();
