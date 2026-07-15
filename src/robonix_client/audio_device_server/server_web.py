@@ -8,7 +8,7 @@ server, plus a small in-process HTTP+WS UI:
   http://<host>:<port+1>/     single-page debug UI
                               (device pickers, live VU meter, log panel)
   ws://<host>:<port>/devices  JSON list of PortAudio devices
-  ws://<host>:<port>/vu       server-stream peak RMS values (50 ms tick)
+  ws://<host>:<port>/vu       server-stream input/output peak values (50 ms tick)
   ws://<host>:<port>/log      newline-delimited live log feed
   ws://<host>:<port>/set_device  one-shot setter; client sends a JSON
                               `{"input": <id|null>, "output": <id|null>}`
@@ -57,6 +57,7 @@ state = {
     "output_device": None,
     "mic_clients": 0,
     "speaker_clients": 0,
+    "output_level": 0.0,
 }
 inject_lock = threading.Lock()
 inject_frames: list[bytes] = []
@@ -77,6 +78,15 @@ def _state(key):
 def _set_state(key, value):
     with state_lock:
         state[key] = value
+
+
+def _pcm_peak_level(raw: bytes) -> float:
+    """Return the normalized absolute peak of native-endian PCM s16 samples."""
+    if len(raw) < 2:
+        return 0.0
+    samples = memoryview(raw[: len(raw) - (len(raw) % 2)]).cast("h")
+    peak = max((abs(sample) for sample in samples), default=0)
+    return min(1.0, peak / 32768.0)
 
 
 def _is_likely_bluetooth(dev: dict) -> bool:
@@ -240,6 +250,7 @@ async def serve_speaker(ws) -> None:
     buf = bytearray()
     buf_lock = threading.Lock()
     interrupted = False
+    _set_state("output_level", 0.0)
 
     def callback(outdata, frames, time_info, status):
         if status:
@@ -252,6 +263,7 @@ async def serve_speaker(ws) -> None:
                 del buf[:avail]
             if avail < n:
                 outdata[avail:] = b"\x00" * (n - avail)
+        _set_state("output_level", _pcm_peak_level(bytes(outdata)))
 
     try:
         stream = sd.RawOutputStream(
@@ -300,6 +312,7 @@ async def serve_speaker(ws) -> None:
     except websockets.ConnectionClosed:
         log.info("speaker client disconnected")
     finally:
+        _set_state("output_level", 0.0)
         stream.stop()
         stream.close()
         _set_state("speaker_clients", _state("speaker_clients") - 1)
@@ -455,8 +468,13 @@ async def serve_vu(ws) -> None:
             if vu_monitor is not None and cur != last_dev:
                 vu_monitor.restart(cur)
                 last_dev = cur
-            level = vu_monitor.level if vu_monitor is not None else 0.0
-            await ws.send(json.dumps({"level": level}))
+            input_level = vu_monitor.level if vu_monitor is not None else 0.0
+            await ws.send(json.dumps({
+                # Keep `level` for older clients that only render input VU.
+                "level": input_level,
+                "input_level": input_level,
+                "output_level": _state("output_level"),
+            }))
             await asyncio.sleep(0.05)
     except websockets.ConnectionClosed:
         pass

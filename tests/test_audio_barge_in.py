@@ -6,6 +6,12 @@ import json
 from robonix_client.audio_device_server import server_web
 
 
+def test_pcm_peak_level_tracks_s16_output() -> None:
+    assert server_web._pcm_peak_level(b"") == 0.0
+    assert server_web._pcm_peak_level(b"\x00\x00\x00\x40") == 0.5
+    assert server_web._pcm_peak_level(b"\x00\x80") == 1.0
+
+
 def test_speaker_stop_discards_buffer_without_drain(monkeypatch) -> None:
     lifecycle: list[str] = []
 
@@ -45,4 +51,3 @@ def test_speaker_stop_discards_buffer_without_drain(monkeypatch) -> None:
     asyncio.run(asyncio.wait_for(server_web.serve_speaker(FakeWebSocket()), timeout=0.5))
 
     assert lifecycle == ["start", "stop", "close"]
-

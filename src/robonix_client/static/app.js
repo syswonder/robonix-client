@@ -43,6 +43,9 @@ const state = {
     logSocket: null,
     logLines: [],
     levelHistory: Array(28).fill(0),
+    outputLevelTarget: 0,
+    auraLevel: 0,
+    auraFrame: 0,
     route: { micProviders: [], speakerProviders: [], micDevices: [], speakerDevices: [] },
   },
 };
@@ -2433,9 +2436,12 @@ function startAudioVuStream() {
   socket.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data);
-      renderAudioLevel(Number(payload.level || 0));
+      renderAudioLevel(
+        Number(payload.input_level ?? payload.level ?? 0),
+        Number(payload.output_level ?? 0),
+      );
     } catch (_) {
-      renderAudioLevel(0);
+      renderAudioLevel(0, 0);
     }
   };
   socket.onerror = () => setText("audioLevelState", "offline");
@@ -2459,12 +2465,12 @@ function startAudioLogStream() {
   };
 }
 
-function renderAudioLevel(level) {
+function renderAudioLevel(level, outputLevel = 0) {
   const raw = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
   const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
-  if (state.ttsPlaying) {
-    document.documentElement.style.setProperty("--voice-level", String(Math.max(0.16, Math.min(0.86, display))));
-  }
+  const outputRaw = Math.max(0, Math.min(1, Number.isFinite(outputLevel) ? outputLevel : 0));
+  state.audio.outputLevelTarget = Math.max(0, Math.min(1, Math.sqrt(outputRaw) * 1.25));
+  if (state.ttsPlaying) startTtsAuraAnimation();
   state.audio.levelHistory.push(display);
   state.audio.levelHistory = state.audio.levelHistory.slice(-28);
   if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
@@ -2474,10 +2480,41 @@ function renderAudioLevel(level) {
   renderAudioBars();
 }
 
+function startTtsAuraAnimation() {
+  if (state.audio.auraFrame) return;
+  state.audio.auraFrame = requestAnimationFrame(updateTtsAuraFrame);
+}
+
+function updateTtsAuraFrame() {
+  state.audio.auraFrame = 0;
+  const target = state.ttsPlaying
+    ? Math.max(0.10, state.audio.outputLevelTarget)
+    : 0;
+  const response = target > state.audio.auraLevel ? 0.32 : 0.14;
+  state.audio.auraLevel += (target - state.audio.auraLevel) * response;
+  if (Math.abs(target - state.audio.auraLevel) < 0.002) {
+    state.audio.auraLevel = target;
+  }
+  const opacity = state.audio.auraLevel > 0
+    ? Math.min(1, 0.12 + state.audio.auraLevel * 0.88)
+    : 0;
+  document.documentElement.style.setProperty("--voice-level", state.audio.auraLevel.toFixed(4));
+  document.documentElement.style.setProperty("--voice-opacity", opacity.toFixed(4));
+  if (state.ttsPlaying || state.audio.auraLevel > 0.002) {
+    state.audio.auraFrame = requestAnimationFrame(updateTtsAuraFrame);
+  } else {
+    document.body.classList.remove("tts-speaking");
+  }
+}
+
 function setTtsAura(active) {
   state.ttsPlaying = Boolean(active);
-  document.body.classList.toggle("tts-speaking", state.ttsPlaying);
-  document.documentElement.style.setProperty("--voice-level", state.ttsPlaying ? "0.28" : "0");
+  if (state.ttsPlaying) {
+    document.body.classList.add("tts-speaking");
+  } else {
+    state.audio.outputLevelTarget = 0;
+  }
+  startTtsAuraAnimation();
   syncVoiceControls();
 }
 
