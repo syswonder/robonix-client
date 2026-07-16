@@ -35,8 +35,18 @@ GRPC_CHANNEL_OPTIONS = (("grpc.enable_http_proxy", 0),)
 CONTRACT_LIAISON_SUBMIT = "robonix/system/liaison/submit"
 CONTRACT_LIAISON_VOICE = "robonix/system/liaison/voice"
 CONTRACT_PILOT = "robonix/system/pilot"
-CONTRACT_EXECUTOR = "robonix/system/executor"
+CONTRACT_EXECUTOR_EXECUTE = "robonix/system/executor/execute"
+CONTRACT_EXECUTOR_GET_HEALTH = "robonix/system/executor/get_health"
+CONTRACT_EXECUTOR_CONTROL_PLAN = "robonix/system/executor/control_plan"
 CONTRACT_EXECUTOR_LIST_ACTIVE = "robonix/system/executor/list_active_plans"
+CONTRACT_EXECUTOR_CANCEL_ALL = "robonix/system/executor/cancel_all_plans"
+EXECUTOR_CONTRACTS = (
+    CONTRACT_EXECUTOR_EXECUTE,
+    CONTRACT_EXECUTOR_GET_HEALTH,
+    CONTRACT_EXECUTOR_CONTROL_PLAN,
+    CONTRACT_EXECUTOR_LIST_ACTIVE,
+    CONTRACT_EXECUTOR_CANCEL_ALL,
+)
 CONTRACT_MIC = "robonix/primitive/audio/mic"
 CONTRACT_SPEAKER = "robonix/primitive/audio/speaker"
 CONTRACT_AUDIO_LIST_DEVICES = "robonix/primitive/audio/list_devices"
@@ -924,28 +934,30 @@ async def system_snapshot(atlas_endpoint: str) -> dict[str, Any]:
 
 def required_contracts(provider_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     expected = [
-        ("Liaison submit", CONTRACT_LIAISON_SUBMIT),
-        ("Liaison voice", CONTRACT_LIAISON_VOICE),
-        ("Pilot", CONTRACT_PILOT),
-        ("Executor", CONTRACT_EXECUTOR),
-        ("Mic", CONTRACT_MIC),
-        ("Speaker", CONTRACT_SPEAKER),
-        ("ASR", CONTRACT_ASR),
-        ("Voiceprint", CONTRACT_VOICEPRINT),
-        ("Voice enroll", CONTRACT_VOICEPRINT_ENROLL),
-        ("TTS", CONTRACT_TTS),
+        ("Liaison submit", (CONTRACT_LIAISON_SUBMIT,)),
+        ("Liaison voice", (CONTRACT_LIAISON_VOICE,)),
+        ("Pilot", (CONTRACT_PILOT,)),
+        ("Executor", EXECUTOR_CONTRACTS),
+        ("Mic", (CONTRACT_MIC,)),
+        ("Speaker", (CONTRACT_SPEAKER,)),
+        ("ASR", (CONTRACT_ASR,)),
+        ("Voiceprint", (CONTRACT_VOICEPRINT,)),
+        ("Voice enroll", (CONTRACT_VOICEPRINT_ENROLL,)),
+        ("TTS", (CONTRACT_TTS,)),
     ]
     out = []
-    for label, contract in expected:
+    for label, contracts in expected:
         matches = []
         for provider in provider_rows:
-            for cap in provider["capabilities"]:
-                if cap["contractId"] == contract:
-                    matches.append(provider["id"])
+            provider_contracts = {
+                cap["contractId"] for cap in provider["capabilities"]
+            }
+            if provider_contracts.intersection(contracts):
+                matches.append(provider["id"])
         out.append(
             {
                 "label": label,
-                "contractId": contract,
+                "contractId": contracts[0],
                 "available": bool(matches),
                 "providers": matches,
             }
