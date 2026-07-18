@@ -218,6 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 .DS_Store
+
+# Frontend build and browser-test artifacts
+frontend/node_modules/
+frontend/playwright-report/
+frontend/test-results/
 .vscode/
 .venv/
 .cursor/

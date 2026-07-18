@@ -2,7 +2,8 @@
 
 A Linux, macOS, and Windows web client for operating a running Robonix deployment. It provides
 text tasks, voice turns, hands-free control, explicit Stop/steer behavior,
-audio-device routing, and live Pilot/RTDL execution events.
+audio-device routing, live Pilot/RTDL execution events, and a Vitals workspace
+for robot hardware and software health.
 
 ## Install Guide
 
@@ -75,6 +76,8 @@ desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 3. Enter a small text task and click **Send**.
 4. While a task is active, **Send** becomes **Steer** and **Stop** appears.
 5. Open **Audio** to select and test microphone/speaker providers and devices.
+6. Open **Vitals** to inspect the Soma-derived robot model, hardware signals,
+   module reports, and Atlas providers.
 
 `--host` and `--robot-host` are different:
 
@@ -203,9 +206,11 @@ order:
 3. Start another long Bash task and click **Stop**; verify the task becomes
    interrupted and its child process exits.
 4. Inspect the RTDL tree and execution history for one plan/call per request.
-5. If audio bridge is enabled, apply the route and test microphone, speaker,
+5. Open **Vitals** and confirm the TIAGo body, hardware components, module
+   health, and Atlas providers update without refreshing the page.
+6. If audio bridge is enabled, apply the route and test microphone, speaker,
    one Voice turn, then hands-free wake detection.
-6. Only after those checks, test simulated camera/navigation capabilities.
+7. Only after those checks, test simulated camera/navigation capabilities.
 
 Stop the environment with:
 
@@ -232,6 +237,33 @@ Browser UI
 The client does not embed a planner and does not call robot drivers directly.
 Atlas is the source of provider endpoints; Liaison is the interaction gateway;
 Pilot owns task/steer/abort semantics; Executor owns running capability calls.
+
+### Vitals path
+
+The browser opens `/ws/vitals` on the local FastAPI process. That adapter
+discovers and combines these robot-local contracts through Atlas:
+
+- `robonix/system/soma/get_yaml` and `robonix/system/soma/get_urdf` describe
+  the body and its components;
+- `robonix/system/vitals/stream` supplies hardware health and power state;
+- `robonix/system/vitals/modules/get` supplies software module health;
+- the Atlas provider snapshot supplies provider lifecycle state.
+
+The 3D view uses a model URL when the Soma description provides one, then a
+URDF with browser-renderable visual geometry, and finally a procedural renderer
+selected from robot family and component types. The procedural path keeps a
+new robot visible even when its URDF references simulator-local mesh files.
+
+The compiled browser bundle is committed under `src/robonix_client/static`, so
+Node.js is not required to run the Python package. To rebuild or test the
+Vitals frontend after changing `frontend/src/vitals.js`:
+
+```bash
+cd frontend
+npm install
+npm run build
+npm run test:visual
+```
 
 ### Turn behavior
 
@@ -275,6 +307,8 @@ drivers do not need that capability.
   `127.0.0.1:7860`.
 - **Robot stays offline:** verify the entered host is the Atlas machine and that
   `<robot-host>:50051` is reachable from the client machine.
+- **Vitals stays unknown:** confirm Soma and Vitals are active in Atlas and
+  expose the contracts listed in the Vitals path section.
 - **Liaison unavailable:** leave the endpoint empty and confirm Liaison is
   registered in Atlas.
 - **Audio bridge unavailable:** confirm the deployment uses

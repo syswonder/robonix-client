@@ -262,6 +262,7 @@ async function syncConnectionSettings(fromSettings = false, persist = false) {
   if (maybe("settingsRecordSeconds") && maybe(secondsSource)) $("settingsRecordSeconds").value = $(secondsSource).value;
   state.settings = collectSettings();
   saveSettings();
+  window.dispatchEvent(new CustomEvent("robonix:settings"));
   if (!persist) {
     setText("settingsStatus", "Changed locally. Select Save to persist.");
     return;
@@ -602,6 +603,7 @@ function renderAttachments() {
 function activatePage(name) {
   document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
+  window.dispatchEvent(new CustomEvent("robonix:page", { detail: { name } }));
   if (name === "audio") {
     checkAudioServer();
   }

@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package robonix.client.vitals;
+
+message BodyComponent {
+  string id = 1;
+  string parent_id = 2;
+  string name = 3;
+  string kind = 4;
+  string model = 5;
+}
+
+message BodyHealth {
+  enum BodyHealthEnum {
+    NORMAL = 0;
+    FAULT = 1;
+    ESTOP = 2;
+  }
+
+  string key = 1;
+  string model = 2;
+  uint32 status = 3;
+  repeated BodyComponent components = 4;
+}
+
+message HealthSignal {
+  enum HealthSignalEnum {
+    OK = 0;
+    WARN = 1;
+    ERROR = 2;
+    STALE = 3;
+  }
+
+  string key = 1;
+  uint32 status = 2;
+  string detail = 3;
+  float observed_value = 4;
+  float reference_value = 5;
+}
+
+message PowerState {
+  float soc_percent = 1;
+  float voltage = 2;
+  bool charging = 3;
+  int64 remaining_s = 4;
+}
+
+message VitalsSnapshot {
+  uint64 ts_ns = 1;
+  PowerState power = 2;
+  repeated HealthSignal health_signals = 3;
+  repeated BodyHealth bodies = 4;
+}
+
+message GetVitals_Request {}
+
+message GetVitals_Response {
+  VitalsSnapshot snapshot = 1;
+}
+
+message StreamVitals_Request {}

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package robonix.client.soma;
+
+message GetUrdf_Request {
+  string robot_id = 1;
+}
+
+message GetUrdf_Response {
+  string robot_id = 1;
+  string urdf_xml = 2;
+}
+
+message GetYaml_Request {
+  string robot_id = 1;
+}
+
+message GetYaml_Response {
+  string robot_id = 1;
+  string yaml_text = 2;
+}

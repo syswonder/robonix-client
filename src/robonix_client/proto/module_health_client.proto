@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package robonix.client.module_health;
+
+message ModuleHealth {
+  string module_key = 1;
+  string module_id = 2;
+  string provider_id = 3;
+  uint32 health = 4;
+  string state = 5;
+  string reason_code = 6;
+  string detail = 7;
+  string source = 8;
+  uint64 received_ts_ns = 9;
+  uint32 ttl_ms = 10;
+}
+
+message ModuleHealthSnapshot {
+  uint32 schema_version = 1;
+  uint64 ts_ns = 2;
+  uint64 seq = 3;
+  repeated ModuleHealth modules = 4;
+}
+
+message GetModuleHealthSnapshot_Request {}
+
+message GetModuleHealthSnapshot_Response {
+  ModuleHealthSnapshot snapshot = 1;
+}

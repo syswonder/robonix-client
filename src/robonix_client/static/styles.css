@@ -2500,6 +2500,570 @@ select:focus {
   align-items: start;
 }
 
+.vitals-page {
+  background: #091115;
+}
+
+.vitals-page.active {
+  display: block;
+}
+
+.vitals-shell {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(300px, 1fr) minmax(172px, 27vh);
+  overflow: hidden;
+  background: #091115;
+}
+
+.vitals-overview {
+  min-width: 0;
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(480px, 1.5fr) minmax(200px, auto);
+  align-items: center;
+  gap: 18px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #0d171b;
+}
+
+.vitals-identity,
+.vitals-pane-header > div,
+.vitals-title-line,
+.vitals-overview-actions {
+  min-width: 0;
+}
+
+.vitals-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.vitals-title-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.vitals-title-line h2,
+.vitals-pane-header h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.vitals-title-line h2 {
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.vitals-identity > span:last-child,
+.vitals-pane-header span,
+.vitals-software-header > span,
+.vitals-stage-caption span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.health-label {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #111c20;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.health-label.ok {
+  border-color: rgba(111, 209, 125, 0.42);
+  color: var(--green);
+}
+
+.health-label.warn {
+  border-color: rgba(241, 186, 79, 0.44);
+  color: var(--amber);
+}
+
+.health-label.error {
+  border-color: rgba(240, 103, 88, 0.46);
+  color: var(--red);
+}
+
+.health-label.stale {
+  border-color: #68747a;
+  color: #b8c0c2;
+}
+
+.vitals-overview-metrics {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(90px, 1fr));
+  border-left: 1px solid var(--line-soft);
+}
+
+.vitals-overview-metric {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 2px 14px;
+  border-right: 1px solid var(--line-soft);
+}
+
+.vitals-overview-metric span {
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.vitals-overview-metric strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #e5eceb;
+  font-size: 13px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-overview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.vitals-source-strip {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+}
+
+.vitals-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.vitals-source::before,
+.vitals-status-dot,
+.vitals-live-dot {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  box-shadow: 0 0 0 2px rgba(101, 118, 124, 0.1);
+}
+
+.vitals-source.ready::before,
+.vitals-status-dot.ok,
+.vitals-live-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 2px rgba(111, 209, 125, 0.12);
+}
+
+.vitals-source.error::before,
+.vitals-status-dot.error {
+  background: var(--red);
+  box-shadow: 0 0 0 2px rgba(240, 103, 88, 0.12);
+}
+
+.vitals-source.connecting::before,
+.vitals-status-dot.warn {
+  background: var(--amber);
+}
+
+.vitals-status-dot.stale {
+  background: #899398;
+}
+
+.vitals-refresh {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.vitals-refresh svg,
+.vitals-component-icon svg {
+  display: block;
+}
+
+.vitals-refresh.busy svg {
+  animation: vitals-spin 0.9s linear infinite;
+}
+
+@keyframes vitals-spin {
+  to { transform: rotate(360deg); }
+}
+
+.vitals-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(340px, 1fr) minmax(250px, 300px);
+  overflow: hidden;
+}
+
+.vitals-components-pane,
+.vitals-inspector {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #0d171b;
+}
+
+.vitals-components-pane {
+  border-right: 1px solid var(--line);
+}
+
+.vitals-inspector {
+  border-left: 1px solid var(--line);
+}
+
+.vitals-pane-header {
+  min-width: 0;
+  min-height: 53px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.vitals-pane-header h3 {
+  margin-bottom: 2px;
+  font-size: 13px;
+}
+
+.vitals-pane-header div > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-component-list,
+.vitals-inspector-body,
+.vitals-software-list {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.vitals-component-list {
+  padding: 6px;
+}
+
+.vitals-component-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px calc(8px + var(--component-depth, 0) * 12px);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vitals-component-row:hover {
+  background: #132126;
+}
+
+.vitals-component-row.active {
+  border-color: #28526a;
+  background: #14252c;
+}
+
+.vitals-component-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: #b8c7ca;
+}
+
+.vitals-component-copy {
+  min-width: 0;
+  display: grid;
+}
+
+.vitals-component-copy strong,
+.vitals-component-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-component-copy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.vitals-component-copy span {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.vitals-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #081115;
+}
+
+.vitals-canvas,
+.vitals-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.vitals-canvas canvas {
+  outline: none;
+  touch-action: none;
+}
+
+.vitals-stage-status,
+.vitals-stage-caption {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.vitals-stage-status {
+  top: 12px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #c8d1d2;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.vitals-stage-caption {
+  right: 14px;
+  bottom: 12px;
+  display: grid;
+  justify-items: end;
+  gap: 1px;
+  text-align: right;
+}
+
+.vitals-stage-caption strong {
+  max-width: min(360px, 60vw);
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-inspector-body {
+  padding: 4px 12px 12px;
+}
+
+.vitals-inspector-section {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.vitals-inspector-section:last-child {
+  border-bottom: 0;
+}
+
+.vitals-inspector-section h4 {
+  margin: 0 0 8px;
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.vitals-detail-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(70px, 0.44fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.vitals-detail-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.vitals-detail-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #dce5e4;
+  font-size: 11px;
+  font-weight: 620;
+  text-align: right;
+}
+
+.vitals-signal-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.vitals-signal-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.vitals-signal-copy strong,
+.vitals-signal-copy span {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.vitals-signal-copy span {
+  color: var(--muted);
+}
+
+.vitals-empty {
+  padding: 14px 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.vitals-software {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  background: #0c1519;
+}
+
+.vitals-software-header {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(78px, 1fr));
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #081115;
+}
+
+.segmented-control button {
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented-control button.active {
+  background: #1a2b32;
+  color: var(--text);
+}
+
+.vitals-software-list {
+  display: grid;
+  align-content: start;
+}
+
+.vitals-software-head,
+.vitals-software-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(90px, 0.45fr) minmax(160px, 1.35fr) minmax(110px, 0.55fr) 82px;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+}
+
+.vitals-software-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--line-soft);
+  background: #101b20;
+  color: var(--dim);
+  font-size: 9px;
+  font-weight: 720;
+  text-transform: uppercase;
+}
+
+.vitals-software-row {
+  min-height: 38px;
+  border-bottom: 1px solid #17252a;
+  color: #cdd6d6;
+  font-size: 11px;
+}
+
+.vitals-software-row:hover {
+  background: #101d22;
+}
+
+.vitals-software-row > span,
+.vitals-software-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-software-row > strong {
+  color: #e0e7e7;
+  font-weight: 640;
+}
+
+.vitals-software-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .full-panel {
   min-height: calc(100vh - 134px);
 }
@@ -2563,6 +3127,15 @@ select:focus {
   .dashboard-grid {
     grid-template-columns: minmax(0, 1.35fr) clamp(360px, 34vw, 500px);
   }
+
+  .vitals-overview {
+    grid-template-columns: minmax(210px, 0.75fr) minmax(420px, 1.4fr) minmax(170px, auto);
+    gap: 12px;
+  }
+
+  .vitals-main {
+    grid-template-columns: minmax(200px, 230px) minmax(320px, 1fr) minmax(230px, 270px);
+  }
 }
 
 @media (max-width: 1180px) {
@@ -2617,6 +3190,67 @@ select:focus {
   .rtdl-panel,
   .full-panel {
     min-height: 520px;
+  }
+
+  .vitals-page.active {
+    height: auto;
+    overflow: visible;
+  }
+
+  .vitals-shell {
+    height: auto;
+    min-height: 980px;
+    grid-template-rows: auto auto minmax(300px, auto);
+    overflow: visible;
+  }
+
+  .vitals-overview {
+    grid-template-columns: minmax(200px, 0.7fr) minmax(420px, 1.3fr);
+  }
+
+  .vitals-overview-actions {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .vitals-source-strip {
+    justify-content: flex-start;
+  }
+
+  .vitals-main {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: 480px minmax(280px, auto);
+    grid-template-areas:
+      "stage stage"
+      "components inspector";
+    overflow: visible;
+  }
+
+  .vitals-stage {
+    grid-area: stage;
+  }
+
+  .vitals-components-pane {
+    grid-area: components;
+  }
+
+  .vitals-inspector {
+    grid-area: inspector;
+  }
+
+  .vitals-components-pane,
+  .vitals-inspector {
+    min-height: 280px;
+    border-top: 1px solid var(--line);
+  }
+
+  .vitals-component-list,
+  .vitals-inspector-body {
+    max-height: 360px;
+  }
+
+  .vitals-software {
+    min-height: 320px;
   }
 }
 
@@ -2683,6 +3317,95 @@ select:focus {
   .active-rtdl-op-target {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .vitals-overview {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .vitals-overview-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid var(--line-soft);
+    border-left: 0;
+  }
+
+  .vitals-overview-metric {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .vitals-overview-actions {
+    grid-column: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    align-items: center;
+  }
+
+  .vitals-source-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(78px, 1fr));
+    justify-content: stretch;
+    gap: 5px 10px;
+  }
+
+  .vitals-overview-actions .vitals-refresh {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+  }
+
+  .workspace:has(.vitals-page.active) .command-bar {
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .workspace:has(.vitals-page.active) .command-bar > .select-field.wide,
+  .workspace:has(.vitals-page.active) .command-bar > .select-field:has(#userId),
+  .workspace:has(.vitals-page.active) #handsfreeToggle {
+    display: none;
+  }
+
+  .workspace:has(.vitals-page.active) .command-bar > .select-field.endpoint {
+    grid-column: 1;
+  }
+
+  .workspace:has(.vitals-page.active) .command-bar > .select-field:has(#atlasPort) {
+    grid-column: 2;
+  }
+
+  .workspace:has(.vitals-page.active) #refreshSystem {
+    grid-column: 1;
+  }
+
+  .workspace:has(.vitals-page.active) #connectNow {
+    grid-column: 2;
+  }
+
+  .vitals-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 370px auto auto;
+    grid-template-areas:
+      "stage"
+      "components"
+      "inspector";
+  }
+
+  .vitals-components-pane,
+  .vitals-inspector {
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .vitals-software-head,
+  .vitals-software-row {
+    grid-template-columns: minmax(130px, 1fr) 90px minmax(120px, 1fr);
+  }
+
+  .vitals-software-head > :nth-child(n + 4),
+  .vitals-software-row > :nth-child(n + 4) {
+    display: none;
   }
 }
 

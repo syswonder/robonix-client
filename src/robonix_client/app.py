@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from . import audio_server_control
 from .audio_reverse_bridge import AudioReverseBridge
+from .vitals_api import router as vitals_router
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
@@ -42,6 +43,7 @@ STATIC_DIR = Path(__file__).with_name("static")
 
 app = FastAPI(title="Robonix Client", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(vitals_router)
 _reverse_audio: AudioReverseBridge | None = None
 SETTINGS_PATH = Path(
     os.environ.get(

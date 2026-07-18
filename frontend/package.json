@@ -1,0 +1,17 @@
+{
+  "name": "robonix-client-vitals",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/vitals.js --bundle --minify --format=iife --target=es2020 --outfile=../src/robonix_client/static/vitals.bundle.js",
+    "test:visual": "playwright test"
+  },
+  "dependencies": {
+    "lucide": "1.24.0",
+    "three": "0.185.1",
+    "urdf-loader": "0.13.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "esbuild": "0.28.1"
+  }
+}

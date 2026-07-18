@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260715b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260717a" />
   </head>
   <body>
     <div class="app-shell">
@@ -12,6 +12,7 @@
         <div class="brand">Robonix Client</div>
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
+          <button class="nav-item" type="button" data-page="vitals"><span>Vitals</span></button>
           <button class="nav-item" type="button" data-page="audio"><span>Audio</span></button>
           <button class="nav-item" type="button" data-page="settings"><span>Settings</span></button>
         </nav>
@@ -140,6 +141,91 @@
               </section>
             </section>
           </section>
+        </section>
+
+        <section class="page vitals-page" data-page-panel="vitals" aria-labelledby="vitalsRobotName">
+          <div class="vitals-shell" id="vitalsRoot">
+            <header class="vitals-overview">
+              <div class="vitals-identity">
+                <span class="vitals-eyebrow">Live robot</span>
+                <div class="vitals-title-line">
+                  <h2 id="vitalsRobotName">Robot</h2>
+                  <span class="health-label unknown" id="vitalsOverallHealth">unknown</span>
+                </div>
+                <span id="vitalsRobotMeta">Waiting for Soma</span>
+              </div>
+              <div class="vitals-overview-metrics" aria-label="Robot health summary">
+                <div class="vitals-overview-metric">
+                  <span>Hardware</span>
+                  <strong id="vitalsHardwareSummary">0 components</strong>
+                </div>
+                <div class="vitals-overview-metric">
+                  <span>Battery</span>
+                  <strong id="vitalsBatterySummary">--</strong>
+                </div>
+                <div class="vitals-overview-metric">
+                  <span>Software</span>
+                  <strong id="vitalsSoftwareSummary">0 modules</strong>
+                </div>
+                <div class="vitals-overview-metric">
+                  <span>Updated</span>
+                  <strong id="vitalsUpdatedAt">--</strong>
+                </div>
+              </div>
+              <div class="vitals-overview-actions">
+                <div class="vitals-source-strip" id="vitalsSourceStrip" aria-label="Data source status"></div>
+                <button class="icon-button vitals-refresh" id="vitalsReconnect" type="button" title="Reconnect health streams" aria-label="Reconnect health streams">
+                  <span id="vitalsReconnectIcon" aria-hidden="true"></span>
+                </button>
+              </div>
+            </header>
+
+            <div class="vitals-main">
+              <aside class="vitals-components-pane" aria-label="Robot components">
+                <header class="vitals-pane-header">
+                  <div>
+                    <h3>Body</h3>
+                    <span id="vitalsComponentCount">0 components</span>
+                  </div>
+                </header>
+                <div class="vitals-component-list" id="vitalsComponentList"></div>
+              </aside>
+
+              <section class="vitals-stage" aria-label="Robot digital twin">
+                <div class="vitals-canvas" id="vitalsCanvas"></div>
+                <div class="vitals-stage-status">
+                  <span class="vitals-live-dot"></span>
+                  <span id="vitalsRenderMode">procedural model</span>
+                </div>
+                <div class="vitals-stage-caption">
+                  <strong id="vitalsStageName">Robot</strong>
+                  <span id="vitalsStageDimensions">--</span>
+                </div>
+              </section>
+
+              <aside class="vitals-inspector" aria-label="Selected component details">
+                <header class="vitals-pane-header">
+                  <div>
+                    <h3 id="vitalsInspectorTitle">Robot</h3>
+                    <span id="vitalsInspectorPath">body</span>
+                  </div>
+                  <span class="health-label unknown" id="vitalsInspectorHealth">unknown</span>
+                </header>
+                <div class="vitals-inspector-body" id="vitalsInspectorBody"></div>
+              </aside>
+            </div>
+
+            <section class="vitals-software" aria-label="Software health">
+              <header class="vitals-software-header">
+                <div class="segmented-control" role="tablist" aria-label="Software health view">
+                  <button class="active" id="vitalsModulesTab" type="button" role="tab" aria-selected="true">Modules</button>
+                  <button id="vitalsProvidersTab" type="button" role="tab" aria-selected="false">Providers</button>
+                </div>
+                <span id="vitalsSoftwareDetail">Waiting for Vitals</span>
+              </header>
+              <div class="vitals-software-list" id="vitalsSoftwareList"></div>
+            </section>
+          </div>
         </section>
 
         <section class="page work-page audio-page" data-page-panel="audio">
@@ -350,6 +436,7 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260715b"></script>
+    <script src="/static/app.js?v=20260717a"></script>
+    <script src="/static/vitals.bundle.js?v=20260717a"></script>
   </body>
 </html>
