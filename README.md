@@ -1,6 +1,6 @@
 # Robonix Client
 
-A Linux and macOS web client for operating a running Robonix deployment. It provides
+A Linux, macOS, and Windows web client for operating a running Robonix deployment. It provides
 text tasks, voice turns, hands-free control, explicit Stop/steer behavior,
 audio-device routing, and live Pilot/RTDL execution events.
 
@@ -8,7 +8,7 @@ audio-device routing, and live Pilot/RTDL execution events.
 
 Requirements:
 
-- Linux or macOS
+- Linux, macOS, or Windows
 - Python 3.11 or newer
 - network access to the machine running Robonix Atlas
 - a running Robonix deployment with Atlas, Liaison, Pilot, and Executor
@@ -39,6 +39,20 @@ macOS:
 
 ```bash
 brew install portaudio
+pip install -e ".[audio]"
+```
+
+Windows:
+
+On Windows `sounddevice` ships its own PortAudio DLL and works
+out of the box. If the audio server still cannot find any devices,
+install a pre-built PyAudio wheel (which includes PortAudio) from
+[elibroftw/pyaudio_portaudio](https://github.com/elibroftw/pyaudio_portaudio/releases)
+— wheels are available for Python 3.10–3.14 (win_amd64):
+
+```powershell
+# Pick the wheel matching your Python version, e.g. cp312 for 3.12:
+pip install https://github.com/elibroftw/pyaudio_portaudio/releases/download/0.2.15/pyaudio-0.2.15-cp312-cp312-win_amd64.whl
 pip install -e ".[audio]"
 ```
 
