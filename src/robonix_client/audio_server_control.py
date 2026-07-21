@@ -25,7 +25,7 @@ _last_host = DEFAULT_BRIDGE_HOST
 _last_port = DEFAULT_BRIDGE_PORT
 _last_ui_host = DEFAULT_UI_HOST
 
-SUPPORTED_AUDIO_PLATFORMS = {"Darwin", "Linux"}
+SUPPORTED_AUDIO_PLATFORMS = {"Darwin", "Linux", "Windows"}
 
 
 def _audio_backend(system: str | None = None) -> str:
@@ -34,6 +34,8 @@ def _audio_backend(system: str | None = None) -> str:
         return "PortAudio/CoreAudio"
     if current == "Linux":
         return "PortAudio/Linux"
+    if current == "Windows":
+        return "PortAudio/WASAPI"
     return "unsupported"
 
 
@@ -50,7 +52,14 @@ def _audio_install_hint(system: str | None = None) -> str:
             "Install PortAudio and the client audio extra: "
             "brew install portaudio && pip install 'robonix-client[audio]'"
         )
-    return "Local audio is supported on Linux and macOS."
+    if current == "Windows":
+        return (
+            "Install the client audio extra: "
+            "pip install 'robonix-client[audio]'"
+            "  (sounddevice ships its own PortAudio DLL on Windows, "
+            "no system library required)"
+        )
+    return "Local audio is supported on Linux, macOS, and Windows."
 
 
 async def health(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT, timeout_s: float = 2.0) -> dict[str, Any]:
