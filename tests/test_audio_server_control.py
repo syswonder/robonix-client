@@ -90,13 +90,46 @@ def test_start_reports_linux_audio_dependency(monkeypatch) -> None:
     assert "apt install" in result["error"]
 
 
+def test_start_supports_windows_portaudio(monkeypatch, tmp_path) -> None:
+    _reset_audio_process()
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        pid = 5678
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setattr(audio_server_control.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(audio_server_control.importlib, "import_module", lambda _name: object())
+    monkeypatch.setattr(audio_server_control, "_port_open", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(audio_server_control.subprocess, "Popen", fake_popen)
+
+    result = audio_server_control.start(port=60200)
+
+    assert result["ok"] is True
+    assert result["platform"] == "Windows"
+    assert result["backend"] == "PortAudio/WASAPI"
+    assert result["pid"] == 5678
+    assert captured["cmd"][0] == audio_server_control.sys.executable
+    assert "server_web.py" in captured["cmd"][1]
+    assert captured["cmd"][-2:] == ["--ui-host", audio_server_control.DEFAULT_UI_HOST]
+    _reset_audio_process()
+
+
 def test_start_rejects_unsupported_local_audio_platform(monkeypatch) -> None:
     _reset_audio_process()
-    monkeypatch.setattr(audio_server_control.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(audio_server_control.platform, "system", lambda: "FreeBSD")
     monkeypatch.setattr(audio_server_control, "_port_open", lambda *_args, **_kwargs: False)
 
     result = audio_server_control.start()
 
     assert result["ok"] is False
     assert result["backend"] == "unsupported"
-    assert "Linux and macOS" in result["error"]
+    assert "Linux, macOS, and Windows" in result["error"]
