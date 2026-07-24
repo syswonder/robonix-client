@@ -1,8 +1,14 @@
+import asyncio
 import unittest
+from contextlib import suppress
+from unittest.mock import AsyncMock, patch
 
 from robonix_client.proto import module_health_client_pb2, vitals_client_pb2
+from robonix_client.transport import ClientSettings
 from robonix_client.vitals_transport import (
+    _description_loop,
     aggregate_component_health,
+    fallback_robot_description,
     module_snapshot_to_dict,
     normalize_robot_description,
     provider_snapshot_to_dict,
@@ -136,6 +142,61 @@ class ComponentHealthTest(unittest.TestCase):
         self.assertEqual(result["signals"][0]["health"], "ok")
         self.assertEqual(result["summary"]["overall"], "ok")
         self.assertEqual(result["updatedAtMs"], 1_700_000_000_000)
+
+
+class VitalsStreamOrderingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_description_reprojects_hardware_that_arrived_first(self):
+        """A slow Soma description must replace provisional health topology."""
+        description = normalize_robot_description(SOMA_YAML)
+        snapshot = vitals_client_pb2.VitalsSnapshot(
+            health_signals=[
+                vitals_client_pb2.HealthSignal(
+                    key="body/base/left_wheel/motor_temp",
+                    status=0,
+                )
+            ],
+            bodies=[vitals_client_pb2.BodyHealth(key="body", status=0)],
+        )
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state = {"value": snapshot}
+
+        with patch(
+            "robonix_client.vitals_transport.load_robot_description",
+            AsyncMock(return_value=description),
+        ):
+            task = asyncio.create_task(
+                _description_loop(
+                    ClientSettings(), queue, description_state, hardware_state
+                )
+            )
+            description_event = await asyncio.wait_for(queue.get(), timeout=1)
+            hardware_event = await asyncio.wait_for(queue.get(), timeout=1)
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(description_event["type"], "description")
+        self.assertEqual(hardware_event["type"], "hardware")
+        component_ids = {
+            row["componentId"] for row in hardware_event["data"]["componentHealth"]
+        }
+        self.assertEqual(
+            component_ids,
+            {
+                "body",
+                "body/base",
+                "body/base/left_wheel",
+                "body/base/battery",
+                "body/head_camera",
+            },
+        )
+        wheel = next(
+            row
+            for row in hardware_event["data"]["componentHealth"]
+            if row["componentId"] == "body/base/left_wheel"
+        )
+        self.assertEqual(wheel["health"], "ok")
 
 
 class SoftwareHealthTest(unittest.TestCase):

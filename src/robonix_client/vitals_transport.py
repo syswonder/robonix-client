@@ -15,6 +15,7 @@ from .transport import (
     grpc_channel,
     system_snapshot,
 )
+from .urdf_assets import urdf_asset_store
 
 CONTRACT_SOMA_GET_YAML = "robonix/system/soma/get_yaml"
 CONTRACT_SOMA_GET_URDF = "robonix/system/soma/get_urdf"
@@ -170,6 +171,7 @@ def normalize_robot_description(
             "urdfModelName": str(urdf.get("model_name") or ""),
         },
         "urdfXml": urdf_xml,
+        "urdfAssetBaseUrl": "",
         "summary": str(_mapping(document.get("description")).get("summary") or ""),
     }
 
@@ -200,6 +202,7 @@ def fallback_robot_description() -> dict[str, Any]:
             "urdfModelName": "",
         },
         "urdfXml": "",
+        "urdfAssetBaseUrl": "",
         "summary": "",
     }
 
@@ -216,6 +219,7 @@ async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
     )
 
     urdf_xml = ""
+    urdf_asset_base_url = ""
     try:
         urdf_endpoint = await discover_endpoint(
             settings.atlas_endpoint, CONTRACT_SOMA_GET_URDF
@@ -223,18 +227,30 @@ async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
         urdf_response = await _unary_unary(
             urdf_endpoint,
             SOMA_GET_URDF_PATH,
-            soma_client_pb2.GetUrdf_Request(robot_id=yaml_response.robot_id),
+            soma_client_pb2.GetUrdf_Request(
+                robot_id=yaml_response.robot_id,
+                include_assets=True,
+            ),
             soma_client_pb2.GetUrdf_Response,
         )
         urdf_xml = urdf_response.urdf_xml
+        resource_set_id = urdf_asset_store.put(
+            (asset.path, asset.data) for asset in urdf_response.assets
+        )
+        if resource_set_id:
+            urdf_asset_base_url = (
+                f"/api/vitals/urdf-assets/{resource_set_id}/"
+            )
     except (grpc.aio.AioRpcError, RuntimeError):
         pass
 
-    return normalize_robot_description(
+    description = normalize_robot_description(
         yaml_response.yaml_text,
         urdf_xml,
         yaml_response.robot_id,
     )
+    description["urdfAssetBaseUrl"] = urdf_asset_base_url
+    return description
 
 
 def _matches_component(signal_key: str, component_id: str) -> bool:
@@ -491,7 +507,9 @@ async def _description_loop(
     settings: ClientSettings,
     queue: asyncio.Queue[dict[str, Any]],
     description_state: dict[str, dict[str, Any]],
+    hardware_state: dict[str, Any],
 ) -> None:
+    """Refresh Soma topology and reproject the latest hardware snapshot."""
     retry_seconds = 1.0
     while True:
         try:
@@ -500,6 +518,14 @@ async def _description_loop(
             description_state["value"] = description
             if changed:
                 await queue.put({"type": "description", "data": description})
+                snapshot = hardware_state["value"]
+                if snapshot is not None:
+                    await queue.put(
+                        {
+                            "type": "hardware",
+                            "data": vitals_snapshot_to_dict(snapshot, description),
+                        }
+                    )
             await _put_source(queue, "soma", "ready")
             retry_seconds = 1.0
             await asyncio.sleep(30.0)
@@ -515,7 +541,9 @@ async def _hardware_loop(
     settings: ClientSettings,
     queue: asyncio.Queue[dict[str, Any]],
     description_state: dict[str, dict[str, Any]],
+    hardware_state: dict[str, Any],
 ) -> None:
+    """Stream Vitals snapshots and retain the latest frame for reprojection."""
     retry_seconds = 1.0
     while True:
         try:
@@ -531,6 +559,7 @@ async def _hardware_loop(
                     response_deserializer=vitals_client_pb2.VitalsSnapshot.FromString,
                 )
                 async for snapshot in call(vitals_client_pb2.StreamVitals_Request()):
+                    hardware_state["value"] = snapshot
                     await queue.put(
                         {
                             "type": "hardware",
@@ -605,14 +634,19 @@ async def stream_vitals_events(
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
     description_state = {"value": fallback_robot_description()}
+    hardware_state = {"value": None}
     yield {
         "type": "description",
         "data": description_state["value"],
         "provisional": True,
     }
     tasks = [
-        asyncio.create_task(_description_loop(settings, queue, description_state)),
-        asyncio.create_task(_hardware_loop(settings, queue, description_state)),
+        asyncio.create_task(
+            _description_loop(settings, queue, description_state, hardware_state)
+        ),
+        asyncio.create_task(
+            _hardware_loop(settings, queue, description_state, hardware_state)
+        ),
         asyncio.create_task(_modules_loop(settings, queue)),
         asyncio.create_task(_providers_loop(settings, queue)),
     ]

@@ -30,7 +30,11 @@ CONSUMER_ID = "robonix-client/gui"
 DEFAULT_ATLAS = "127.0.0.1:50051"
 DEFAULT_ATLAS_PORT = 50051
 DEFAULT_LIAISON_PORT = 50081
-GRPC_CHANNEL_OPTIONS = (("grpc.enable_http_proxy", 0),)
+GRPC_MAX_RECEIVE_BYTES = 32 * 1024 * 1024
+GRPC_CHANNEL_OPTIONS = (
+    ("grpc.enable_http_proxy", 0),
+    ("grpc.max_receive_message_length", GRPC_MAX_RECEIVE_BYTES),
+)
 
 CONTRACT_LIAISON_SUBMIT = "robonix/system/liaison/submit"
 CONTRACT_LIAISON_VOICE = "robonix/system/liaison/voice"

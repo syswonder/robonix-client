@@ -4,11 +4,18 @@ package robonix.client.soma;
 
 message GetUrdf_Request {
   string robot_id = 1;
+  bool include_assets = 2;
+}
+
+message UrdfAsset {
+  string path = 1;
+  bytes data = 2;
 }
 
 message GetUrdf_Response {
   string robot_id = 1;
   string urdf_xml = 2;
+  repeated UrdfAsset assets = 3;
 }
 
 message GetYaml_Request {

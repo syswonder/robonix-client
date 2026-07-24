@@ -15,7 +15,13 @@ class GrpcChannelTest(unittest.TestCase):
         create.assert_called_once_with(
             "robot.local:50051", options=GRPC_CHANNEL_OPTIONS
         )
-        self.assertEqual(GRPC_CHANNEL_OPTIONS, (("grpc.enable_http_proxy", 0),))
+        self.assertEqual(
+            GRPC_CHANNEL_OPTIONS,
+            (
+                ("grpc.enable_http_proxy", 0),
+                ("grpc.max_receive_message_length", 32 * 1024 * 1024),
+            ),
+        )
 
     def test_voice_context_marks_f2_as_barge_in(self):
         self.assertEqual(

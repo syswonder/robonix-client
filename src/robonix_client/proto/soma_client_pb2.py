@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11soma_client.proto\x12\x13robonix.client.soma\"#\n\x0fGetUrdf_Request\x12\x10\n\x08robot_id\x18\x01 \x01(\t\"6\n\x10GetUrdf_Response\x12\x10\n\x08robot_id\x18\x01 \x01(\t\x12\x10\n\x08urdf_xml\x18\x02 \x01(\t\"#\n\x0fGetYaml_Request\x12\x10\n\x08robot_id\x18\x01 \x01(\t\"7\n\x10GetYaml_Response\x12\x10\n\x08robot_id\x18\x01 \x01(\t\x12\x11\n\tyaml_text\x18\x02 \x01(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11soma_client.proto\x12\x13robonix.client.soma\";\n\x0fGetUrdf_Request\x12\x10\n\x08robot_id\x18\x01 \x01(\t\x12\x16\n\x0einclude_assets\x18\x02 \x01(\x08\"\'\n\tUrdfAsset\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"f\n\x10GetUrdf_Response\x12\x10\n\x08robot_id\x18\x01 \x01(\t\x12\x10\n\x08urdf_xml\x18\x02 \x01(\t\x12.\n\x06\x61ssets\x18\x03 \x03(\x0b\x32\x1e.robonix.client.soma.UrdfAsset\"#\n\x0fGetYaml_Request\x12\x10\n\x08robot_id\x18\x01 \x01(\t\"7\n\x10GetYaml_Response\x12\x10\n\x08robot_id\x18\x01 \x01(\t\x12\x11\n\tyaml_text\x18\x02 \x01(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,11 +32,13 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'soma_client_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_GETURDF_REQUEST']._serialized_start=42
-  _globals['_GETURDF_REQUEST']._serialized_end=77
-  _globals['_GETURDF_RESPONSE']._serialized_start=79
-  _globals['_GETURDF_RESPONSE']._serialized_end=133
-  _globals['_GETYAML_REQUEST']._serialized_start=135
-  _globals['_GETYAML_REQUEST']._serialized_end=170
-  _globals['_GETYAML_RESPONSE']._serialized_start=172
-  _globals['_GETYAML_RESPONSE']._serialized_end=227
+  _globals['_GETURDF_REQUEST']._serialized_end=101
+  _globals['_URDFASSET']._serialized_start=103
+  _globals['_URDFASSET']._serialized_end=142
+  _globals['_GETURDF_RESPONSE']._serialized_start=144
+  _globals['_GETURDF_RESPONSE']._serialized_end=246
+  _globals['_GETYAML_REQUEST']._serialized_start=248
+  _globals['_GETYAML_REQUEST']._serialized_end=283
+  _globals['_GETYAML_RESPONSE']._serialized_start=285
+  _globals['_GETYAML_RESPONSE']._serialized_end=340
 # @@protoc_insertion_point(module_scope)
