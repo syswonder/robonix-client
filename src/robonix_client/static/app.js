@@ -27,6 +27,7 @@ const state = {
   activePilotSessionId: "",
   stopInFlight: false,
   voiceActive: false,
+  account: loadAccountSession(),
   activeVoiceSocket: null,
   activeVoiceMode: "voice",
   ttsPlaying: false,
@@ -70,7 +71,28 @@ function audioServerWsUrl(path) {
 }
 
 function saveSettings() {
-  localStorage.setItem("robonix.settings", JSON.stringify(collectSettings()));
+  const { authToken, ...settings } = collectSettings();
+  localStorage.setItem("robonix.settings", JSON.stringify(settings));
+}
+
+function loadAccountSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem("robonix.account") || "null");
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveAccountSession(account) {
+  if (account) sessionStorage.setItem("robonix.account", JSON.stringify(account));
+  else sessionStorage.removeItem("robonix.account");
+}
+
+function clearSecretFields() {
+  ["loginPassword", "signupPassword", "adminPassword", "currentPassword", "newPassword"]
+    .forEach((id) => {
+      if (maybe(id)) $(id).value = "";
+    });
 }
 
 async function persistSettings() {
@@ -175,8 +197,8 @@ async function init() {
     enrollUserId: "",
     enrollUserName: "",
     ...defaults,
-    ...stored,
     ...persisted,
+    ...stored,
   };
   // CLI/environment values are launch defaults, not immutable policy. Stored
   // browser settings must win so changing robot host or audio routing survives
@@ -184,6 +206,7 @@ async function init() {
   if (defaults.sessionId) state.sessionId = defaults.sessionId;
   if (defaults.sessionTitle) state.sessionTitle = defaults.sessionTitle;
   bindSettings();
+  bindAuthEvents();
   bindEvents();
   renderAudioBars();
   renderHistory();
@@ -191,6 +214,7 @@ async function init() {
   renderTimeline();
   renderPlan();
   renderSceneAssets();
+  await restoreAccount();
   refreshSystem();
   refreshActivePlans();
   refreshAudioRoute();
@@ -203,11 +227,7 @@ async function init() {
 }
 
 function bindSettings() {
-  if (maybe("robotHost")) $("robotHost").value = state.settings.robotHost || "";
-  if (maybe("robotHostSettings")) $("robotHostSettings").value = state.settings.robotHost || "";
-  if (maybe("atlasPort")) $("atlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
-  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
-  if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
+  renderConnectionSettings();
   if (maybe("userId")) $("userId").value = state.settings.userId || "";
   if (maybe("settingsUserId")) $("settingsUserId").value = state.settings.userId || "";
   if (maybe("recordSeconds")) $("recordSeconds").value = state.settings.recordSeconds || 30;
@@ -220,6 +240,9 @@ function bindSettings() {
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
   if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
+  if (maybe("authRobotHost")) $("authRobotHost").value = state.settings.robotHost || "";
+  if (maybe("authAtlasPort")) $("authAtlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("authLiaisonEndpoint")) $("authLiaisonEndpoint").value = state.settings.liaisonEndpoint || "";
 
   [
     "robotHost",
@@ -243,6 +266,17 @@ function bindSettings() {
     maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
   });
   maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true, true));
+}
+
+function renderConnectionSettings() {
+  if (maybe("robotHost")) $("robotHost").value = state.settings.robotHost || "";
+  if (maybe("robotHostSettings")) $("robotHostSettings").value = state.settings.robotHost || "";
+  if (maybe("atlasPort")) $("atlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
+  if (maybe("authRobotHost")) $("authRobotHost").value = state.settings.robotHost || "";
+  if (maybe("authAtlasPort")) $("authAtlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("authLiaisonEndpoint")) $("authLiaisonEndpoint").value = state.settings.liaisonEndpoint || "";
 }
 
 async function syncConnectionSettings(fromSettings = false, persist = false) {
@@ -295,7 +329,381 @@ function collectSettings() {
     ttsNodeId: state.settings.ttsNodeId || "",
     enrollUserId: maybe("enrollUserId")?.value.trim() || state.settings.enrollUserId || "",
     enrollUserName: maybe("enrollUserName")?.value.trim() || state.settings.enrollUserName || "",
+    authToken: state.account?.sessionToken || "",
   };
+}
+
+function authConnectionSettings() {
+  const host = normalizeRobotHost(maybe("authRobotHost")?.value || state.settings.robotHost || "");
+  const port = normalizeAtlasPort(maybe("authAtlasPort")?.value || state.settings.atlasPort || DEFAULT_ATLAS_PORT);
+  return {
+    ...collectSettings(),
+    robotHost: host,
+    atlasPort: port,
+    atlasEndpoint: buildAtlasEndpoint(host, port),
+    liaisonEndpoint: maybe("authLiaisonEndpoint")?.value.trim() || "",
+    authToken: state.account?.sessionToken || "",
+  };
+}
+
+function bindAuthEvents() {
+  document.querySelectorAll("[data-auth-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-auth-tab]").forEach((item) => item.classList.toggle("active", item === button));
+      document.querySelectorAll("[data-auth-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.authPanel === button.dataset.authTab));
+      setText("authError", "");
+    });
+  });
+  maybe("loginForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loginAccount("login");
+  });
+  maybe("adminLoginForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loginAccount("admin");
+  });
+  maybe("signupForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    signupAccount();
+  });
+  maybe("logoutButton")?.addEventListener("click", logoutAccount);
+  maybe("profileForm")?.addEventListener("submit", updateOwnProfile);
+  maybe("passwordForm")?.addEventListener("submit", changeOwnPassword);
+  maybe("replaceVoiceprint")?.addEventListener("click", replaceOwnVoiceprint);
+  maybe("removeVoiceprint")?.addEventListener("click", removeOwnVoiceprint);
+  maybe("refreshAdminUsers")?.addEventListener("click", loadAdminUsers);
+}
+
+async function accountFetch(path, payload, method = "POST") {
+  const response = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json();
+  if (!result.ok) throw new Error(result.error || "Account request failed");
+  return result;
+}
+
+async function restoreAccount() {
+  if (!state.account?.sessionToken) {
+    showAuth();
+    return;
+  }
+  try {
+    const result = await accountFetch("/api/account/profile", {
+      settings: { ...authConnectionSettings(), authToken: state.account.sessionToken },
+    });
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    enterAccount();
+  } catch (_) {
+    state.account = null;
+    saveAccountSession(null);
+    showAuth();
+  }
+}
+
+function showAuth() {
+  maybe("authShell")?.classList.remove("auth-hidden");
+  maybe("appShell")?.classList.add("auth-hidden");
+}
+
+function enterAccount(preferredPage = "dashboard") {
+  const user = state.account?.user;
+  if (!user) return showAuth();
+  state.settings = {
+    ...state.settings,
+    ...authConnectionSettings(),
+    authToken: state.account.sessionToken,
+    userId: user.userId,
+  };
+  renderConnectionSettings();
+  saveSettings();
+  if (maybe("userId")) $("userId").value = user.displayName || user.username;
+  if (maybe("settingsUserId")) $("settingsUserId").value = user.userId;
+  setText("accountDockName", user.displayName || user.username);
+  setText("accountDockRole", user.roles.includes("admin") ? "administrator" : "user");
+  document.querySelectorAll(".admin-only").forEach((element) => {
+    element.hidden = !user.roles.includes("admin");
+  });
+  maybe("authShell")?.classList.add("auth-hidden");
+  maybe("appShell")?.classList.remove("auth-hidden");
+  renderOwnProfile();
+  activatePage(preferredPage);
+  if (preferredPage === "admin") loadAdminUsers();
+}
+
+async function loginAccount(mode) {
+  const usernameId = mode === "admin" ? "adminUsername" : "loginUsername";
+  const passwordId = mode === "admin" ? "adminPassword" : "loginPassword";
+  setText("authError", "");
+  try {
+    const result = await accountFetch("/api/auth/login", {
+      settings: authConnectionSettings(),
+      username: $(usernameId).value.trim(),
+      password: $(passwordId).value,
+    });
+    if (mode === "admin" && !result.user.roles.includes("admin")) {
+      throw new Error("This account does not have the administrator role.");
+    }
+    state.account = {
+      sessionToken: result.sessionToken,
+      expiresAtMs: result.expiresAtMs,
+      user: result.user,
+    };
+    clearSecretFields();
+    saveAccountSession(state.account);
+    enterAccount(mode === "admin" ? "admin" : "dashboard");
+  } catch (error) {
+    setText("authError", String(error.message || error));
+  }
+}
+
+async function signupAccount() {
+  setText("authError", "");
+  try {
+    const result = await accountFetch("/api/auth/signup", {
+      settings: authConnectionSettings(),
+      username: $("signupUsername").value.trim(),
+      displayName: $("signupDisplayName").value.trim(),
+      email: $("signupEmail").value.trim(),
+      password: $("signupPassword").value,
+    });
+    state.account = {
+      sessionToken: result.sessionToken,
+      expiresAtMs: result.expiresAtMs,
+      user: result.user,
+    };
+    clearSecretFields();
+    maybe("signupForm")?.reset();
+    saveAccountSession(state.account);
+    enterAccount("profile");
+  } catch (error) {
+    setText("authError", String(error.message || error));
+  }
+}
+
+async function logoutAccount() {
+  if (state.account?.sessionToken) {
+    await accountFetch("/api/auth/logout", {
+      settings: { ...collectSettings(), authToken: state.account.sessionToken },
+    }).catch(() => null);
+  }
+  state.account = null;
+  clearSecretFields();
+  saveAccountSession(null);
+  showAuth();
+}
+
+function renderOwnProfile() {
+  const user = state.account?.user;
+  if (!user) return;
+  setText("profileHeading", user.displayName || user.username);
+  setText("profileUsername", `@${user.username}`);
+  setText("profileAvatar", (user.displayName || user.username || "R").slice(0, 1).toUpperCase());
+  if (maybe("profileDisplayName")) $("profileDisplayName").value = user.displayName || "";
+  if (maybe("profileEmail")) $("profileEmail").value = user.email || "";
+  if (maybe("profileBadges")) {
+    $("profileBadges").replaceChildren(...[
+      ...user.roles.map((role) => badge(role)),
+      badge(user.enabled ? "active" : "disabled"),
+      badge(user.voiceGuardEnabled ? "voice guard on" : "voice guard off"),
+    ]);
+  }
+  setText(
+    "voiceprintSummary",
+    user.voiceprintEnrolled
+      ? `Voiceprint enrolled. ${user.voiceGuardEnabled ? "Every voice turn must match it." : "Voice guard is currently off."}`
+      : `No voiceprint enrolled. ${user.voiceGuardEnabled ? "Voice turns will be rejected until you enroll one." : ""}`,
+  );
+  if (maybe("removeVoiceprint")) $("removeVoiceprint").disabled = !user.voiceprintEnrolled;
+}
+
+function badge(text) {
+  const element = document.createElement("span");
+  element.className = "profile-badge";
+  element.textContent = text;
+  return element;
+}
+
+async function updateOwnProfile(event) {
+  event.preventDefault();
+  setText("profileStatus", "Saving...");
+  try {
+    const result = await accountFetch("/api/account/profile", {
+      settings: collectSettings(),
+      displayName: $("profileDisplayName").value.trim(),
+      email: $("profileEmail").value.trim(),
+    }, "PUT");
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    renderOwnProfile();
+    setText("profileStatus", "Profile saved.");
+  } catch (error) {
+    setText("profileStatus", String(error.message || error));
+  }
+}
+
+async function changeOwnPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setText("passwordStatus", "Changing password...");
+  try {
+    await accountFetch("/api/account/password", {
+      settings: collectSettings(),
+      currentPassword: $("currentPassword").value,
+      newPassword: $("newPassword").value,
+    }, "PUT");
+    form.reset();
+    setText("passwordStatus", "Password changed. Other sessions were signed out.");
+  } catch (error) {
+    setText("passwordStatus", String(error.message || error));
+  }
+}
+
+async function replaceOwnVoiceprint() {
+  setText("voiceprintStatus", "Recording voice sample...");
+  try {
+    const result = await accountFetch("/api/account/voiceprint", {
+      settings: collectSettings(),
+      seconds: Number(maybe("profileVoiceSeconds")?.value || 6),
+    });
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    renderOwnProfile();
+    setText("voiceprintStatus", `Voiceprint saved from ${result.bytes} bytes of audio.`);
+  } catch (error) {
+    setText("voiceprintStatus", String(error.message || error));
+  }
+}
+
+async function removeOwnVoiceprint() {
+  if (!confirm("Remove your enrolled voiceprint?")) return;
+  setText("voiceprintStatus", "Removing voiceprint...");
+  try {
+    const result = await accountFetch("/api/account/voiceprint", {
+      settings: collectSettings(),
+    }, "DELETE");
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    renderOwnProfile();
+    setText("voiceprintStatus", "Voiceprint removed.");
+  } catch (error) {
+    setText("voiceprintStatus", String(error.message || error));
+  }
+}
+
+async function loadAdminUsers() {
+  if (!state.account?.user?.roles.includes("admin")) return;
+  setText("adminStatus", "Loading users...");
+  try {
+    const result = await accountFetch("/api/admin/users", { settings: collectSettings() });
+    renderAdminUsers(result.users);
+    setText("adminStatus", "");
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
+}
+
+function renderAdminUsers(users) {
+  setText("adminSummary", `${users.length} account${users.length === 1 ? "" : "s"} · ${users.filter((user) => user.enabled).length} enabled · ${users.filter((user) => user.roles.includes("admin")).length} administrators`);
+  const list = maybe("adminUserList");
+  if (!list) return;
+  list.replaceChildren(...users.map((user) => adminUserCard(user)));
+}
+
+function adminUserCard(user) {
+  const card = document.createElement("article");
+  card.className = "admin-user-card";
+  const identity = document.createElement("div");
+  identity.className = "admin-user-identity";
+  const avatar = document.createElement("span");
+  avatar.textContent = (user.displayName || user.username).slice(0, 1).toUpperCase();
+  const copy = document.createElement("div");
+  const name = document.createElement("strong");
+  name.textContent = user.displayName || user.username;
+  const meta = document.createElement("small");
+  meta.textContent = `@${user.username}${user.email ? ` · ${user.email}` : ""}`;
+  copy.append(name, meta);
+  identity.append(avatar, copy);
+
+  const controls = document.createElement("div");
+  controls.className = "admin-user-controls";
+  const enabled = adminToggle("Enabled", user.enabled);
+  const admin = adminToggle("Administrator", user.roles.includes("admin"));
+  const voiceGuard = adminToggle("Voice guard", user.voiceGuardEnabled);
+  const save = button("Save", "button");
+  save.addEventListener("click", async () => {
+    setText("adminStatus", `Saving ${user.username}...`);
+    try {
+      await accountFetch("/api/admin/users", {
+        settings: collectSettings(),
+        targetUserId: user.userId,
+        enabled: enabled.input.checked,
+        roles: admin.input.checked ? ["user", "admin"] : ["user"],
+        voiceGuardEnabled: voiceGuard.input.checked,
+      }, "PUT");
+      await loadAdminUsers();
+    } catch (error) {
+      setText("adminStatus", String(error.message || error));
+    }
+  });
+  const resetVoice = button("Reset voiceprint", "ghost-button");
+  resetVoice.disabled = !user.voiceprintEnrolled;
+  resetVoice.addEventListener("click", () => adminResetVoiceprint(user));
+  const remove = button("Delete", "ghost-button danger-text");
+  remove.disabled = user.userId === state.account.user.userId;
+  remove.addEventListener("click", () => adminDeleteUser(user));
+  controls.append(enabled.label, admin.label, voiceGuard.label, save, resetVoice, remove);
+  card.append(identity, controls);
+  return card;
+}
+
+function adminToggle(labelText, checked) {
+  const label = document.createElement("label");
+  label.className = "admin-toggle";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  const text = document.createElement("span");
+  text.textContent = labelText;
+  label.append(input, text);
+  return { label, input };
+}
+
+function button(label, className) {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = className;
+  element.textContent = label;
+  return element;
+}
+
+async function adminResetVoiceprint(user) {
+  if (!confirm(`Reset ${user.displayName || user.username}'s voiceprint?`)) return;
+  try {
+    await accountFetch("/api/admin/users/reset-voiceprint", {
+      settings: collectSettings(),
+      targetUserId: user.userId,
+    });
+    await loadAdminUsers();
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
+}
+
+async function adminDeleteUser(user) {
+  if (!confirm(`Delete @${user.username}? This cannot be undone.`)) return;
+  try {
+    await accountFetch("/api/admin/users/delete", {
+      settings: collectSettings(),
+      targetUserId: user.userId,
+    });
+    await loadAdminUsers();
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
 }
 
 function interactionSettings(useActiveTurn = false) {
@@ -604,6 +1012,10 @@ function activatePage(name) {
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   if (name === "audio") {
     checkAudioServer();
+  } else if (name === "profile") {
+    renderOwnProfile();
+  } else if (name === "admin") {
+    loadAdminUsers();
   }
 }
 

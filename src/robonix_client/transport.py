@@ -22,6 +22,7 @@ import atlas_pb2  # type: ignore  # noqa: E402
 import audio_pb2  # type: ignore  # noqa: E402
 import executor_pb2  # type: ignore  # noqa: E402
 import liaison_pb2  # type: ignore  # noqa: E402
+import keystone_pb2  # type: ignore  # noqa: E402
 import pilot_pb2  # type: ignore  # noqa: E402
 import tts_pb2  # type: ignore  # noqa: E402
 import voiceprint_pb2  # type: ignore  # noqa: E402
@@ -139,6 +140,7 @@ class ClientSettings:
     tts_node_id: str = ""
     speaker_node_id: str = ""
     speaker_device_id: str = ""
+    auth_token: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ClientSettings":
@@ -161,6 +163,7 @@ class ClientSettings:
             tts_node_id=(payload.get("ttsNodeId") or "").strip(),
             speaker_node_id=(payload.get("speakerNodeId") or "").strip(),
             speaker_device_id=(payload.get("speakerDeviceId") or "").strip(),
+            auth_token=(payload.get("authToken") or "").strip(),
         )
 
 
@@ -506,6 +509,7 @@ async def set_handsfree_enabled(settings: ClientSettings, enabled: bool) -> dict
             enabled=enabled,
             mic_provider_id=settings.mic_node_id,
             speaker_provider_id=settings.speaker_node_id,
+            session_token=settings.auth_token,
         ),
         liaison_pb2.SetHandsfree_Response,
     )
@@ -550,6 +554,8 @@ def build_text_task(
         "client": "robonix-client-gui",
         "interaction_mode": "steer" if steer else "task",
     }
+    if settings.auth_token:
+        context["session_token"] = settings.auth_token
     if steer:
         context["steer"] = True
         if expected_turn_id:
@@ -576,6 +582,8 @@ def build_abort_task(settings: ClientSettings, expected_turn_id: str = "") -> An
         "client": "robonix-client-gui",
         "user_id": user_id,
     }
+    if settings.auth_token:
+        context["session_token"] = settings.auth_token
     if expected_turn_id:
         context["expected_turn_id"] = expected_turn_id
     return pilot_pb2.Task(
@@ -670,6 +678,7 @@ async def start_voice_session(
         tts_node_id=settings.tts_node_id,
         speaker_node_id=settings.speaker_node_id,
         context_json=json.dumps(context, ensure_ascii=False),
+        session_token=settings.auth_token,
     )
     async with grpc_channel(endpoint) as channel:
         call = channel.unary_stream(
@@ -693,6 +702,225 @@ def build_voice_context(*, steer: bool = False, expected_turn_id: str = "") -> d
         if expected_turn_id:
             context["expected_turn_id"] = expected_turn_id
     return context
+
+
+def keystone_user_to_dict(user: Any) -> dict[str, Any]:
+    return {
+        "userId": user.user_id,
+        "username": user.username,
+        "displayName": user.display_name,
+        "email": user.email,
+        "enabled": bool(user.enabled),
+        "roles": list(user.roles),
+        "voiceGuardEnabled": bool(user.voice_guard_enabled),
+        "voiceprintEnrolled": bool(user.voiceprint_enrolled),
+        "passwordChangeRequired": bool(user.password_change_required),
+        "createdAtMs": int(user.created_at_ms),
+        "updatedAtMs": int(user.updated_at_ms),
+    }
+
+
+async def account_register(
+    settings: ClientSettings,
+    username: str,
+    display_name: str,
+    email: str,
+    password: str,
+) -> dict[str, Any]:
+    endpoint = settings.liaison_endpoint or _fallback_liaison(settings.atlas_endpoint)
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.keystone.v1.Keystone/Register",
+        keystone_pb2.RegisterRequest(
+            username=username,
+            display_name=display_name,
+            email=email,
+            password=password,
+        ),
+        keystone_pb2.AuthResponse,
+    )
+    return {
+        "sessionToken": response.session_token,
+        "expiresAtMs": int(response.expires_at_ms),
+        "user": keystone_user_to_dict(response.user),
+    }
+
+
+async def account_login(
+    settings: ClientSettings, username: str, password: str
+) -> dict[str, Any]:
+    endpoint = settings.liaison_endpoint or _fallback_liaison(settings.atlas_endpoint)
+    response = await _unary_unary(
+        endpoint,
+        "/robonix.keystone.v1.Keystone/Login",
+        keystone_pb2.LoginRequest(username=username, password=password),
+        keystone_pb2.AuthResponse,
+    )
+    return {
+        "sessionToken": response.session_token,
+        "expiresAtMs": int(response.expires_at_ms),
+        "user": keystone_user_to_dict(response.user),
+    }
+
+
+async def account_call(
+    settings: ClientSettings,
+    method: str,
+    request: Any,
+    response_type: Any,
+    timeout: float = 6.0,
+) -> Any:
+    endpoint = settings.liaison_endpoint or _fallback_liaison(settings.atlas_endpoint)
+    return await _unary_unary(
+        endpoint,
+        f"/robonix.keystone.v1.Keystone/{method}",
+        request,
+        response_type,
+        timeout=timeout,
+    )
+
+
+async def account_profile(settings: ClientSettings) -> dict[str, Any]:
+    response = await account_call(
+        settings,
+        "GetProfile",
+        keystone_pb2.SessionRequest(session_token=settings.auth_token),
+        keystone_pb2.UserResponse,
+    )
+    return keystone_user_to_dict(response.user)
+
+
+async def account_update_profile(
+    settings: ClientSettings, display_name: str, email: str
+) -> dict[str, Any]:
+    response = await account_call(
+        settings,
+        "UpdateProfile",
+        keystone_pb2.UpdateProfileRequest(
+            session_token=settings.auth_token,
+            display_name=display_name,
+            email=email,
+        ),
+        keystone_pb2.UserResponse,
+    )
+    return keystone_user_to_dict(response.user)
+
+
+async def account_change_password(
+    settings: ClientSettings, current_password: str, new_password: str
+) -> None:
+    await account_call(
+        settings,
+        "ChangePassword",
+        keystone_pb2.ChangePasswordRequest(
+            session_token=settings.auth_token,
+            current_password=current_password,
+            new_password=new_password,
+        ),
+        keystone_pb2.Empty,
+    )
+
+
+async def account_logout(settings: ClientSettings) -> None:
+    await account_call(
+        settings,
+        "Logout",
+        keystone_pb2.SessionRequest(session_token=settings.auth_token),
+        keystone_pb2.Empty,
+    )
+
+
+async def account_list_users(settings: ClientSettings) -> list[dict[str, Any]]:
+    response = await account_call(
+        settings,
+        "ListUsers",
+        keystone_pb2.SessionRequest(session_token=settings.auth_token),
+        keystone_pb2.ListUsersResponse,
+    )
+    return [keystone_user_to_dict(user) for user in response.users]
+
+
+async def account_admin_update(
+    settings: ClientSettings,
+    target_user_id: str,
+    enabled: bool,
+    roles: list[str],
+    voice_guard_enabled: bool,
+) -> dict[str, Any]:
+    response = await account_call(
+        settings,
+        "AdminUpdateUser",
+        keystone_pb2.AdminUpdateUserRequest(
+            session_token=settings.auth_token,
+            target_user_id=target_user_id,
+            enabled=enabled,
+            roles=roles,
+            voice_guard_enabled=voice_guard_enabled,
+        ),
+        keystone_pb2.UserResponse,
+    )
+    return keystone_user_to_dict(response.user)
+
+
+async def account_admin_delete(settings: ClientSettings, target_user_id: str) -> None:
+    await account_call(
+        settings,
+        "AdminDeleteUser",
+        keystone_pb2.AdminDeleteUserRequest(
+            session_token=settings.auth_token,
+            target_user_id=target_user_id,
+        ),
+        keystone_pb2.Empty,
+    )
+
+
+async def account_unbind_voiceprint(settings: ClientSettings) -> dict[str, Any]:
+    response = await account_call(
+        settings,
+        "UnbindVoiceprint",
+        keystone_pb2.SessionRequest(session_token=settings.auth_token),
+        keystone_pb2.UserResponse,
+    )
+    return keystone_user_to_dict(response.user)
+
+
+async def account_admin_reset_voiceprint(
+    settings: ClientSettings, target_user_id: str
+) -> dict[str, Any]:
+    response = await account_call(
+        settings,
+        "AdminResetVoiceprint",
+        keystone_pb2.AdminResetVoiceprintRequest(
+            session_token=settings.auth_token,
+            target_user_id=target_user_id,
+        ),
+        keystone_pb2.UserResponse,
+    )
+    return keystone_user_to_dict(response.user)
+
+
+async def account_replace_voiceprint(
+    settings: ClientSettings, seconds: float = 6.0
+) -> dict[str, Any]:
+    capture_seconds = max(1.0, float(seconds or 6.0))
+    pcm = await record_pcm(settings, capture_seconds)
+    response = await account_call(
+        settings,
+        "ReplaceVoiceprint",
+        keystone_pb2.ReplaceVoiceprintRequest(
+            session_token=settings.auth_token,
+            audio_data=pcm,
+            sample_rate_hz=16_000,
+            voiceprint_provider_id=settings.voiceprint_node_id,
+        ),
+        keystone_pb2.UserResponse,
+        timeout=max(12.0, capture_seconds + 10.0),
+    )
+    return {
+        "user": keystone_user_to_dict(response.user),
+        "bytes": len(pcm),
+        "seconds": capture_seconds,
+    }
 
 
 async def enroll_voiceprint(

@@ -1,8 +1,10 @@
 # Robonix Client
 
-A Linux, macOS, and Windows web client for operating a running Robonix deployment. It provides
-text tasks, voice turns, hands-free control, explicit Stop/steer behavior,
-audio-device routing, and live Pilot/RTDL execution events.
+A Linux, macOS, and Windows web client for operating a running Robonix
+deployment. It provides account login and signup, self-service profile and
+voiceprint management, administrator-owned user policy, text tasks, voice
+turns, hands-free control, explicit Stop/steer behavior, audio-device routing,
+and live Pilot/RTDL execution events.
 
 ## Install Guide
 
@@ -70,11 +72,19 @@ Open <http://127.0.0.1:7860/>.
 The client starts its local audio service automatically. On Linux it uses the
 desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 
-1. Confirm **Robot Host** is `100.87.172.93` and **Atlas Port** is `50051`.
-2. Click **Connect**. The status should become online.
-3. Enter a small text task and click **Send**.
-4. While a task is active, **Send** becomes **Steer** and **Stop** appears.
-5. Open **Audio** to select and test microphone/speaker providers and devices.
+1. On the login screen, expand **Robot connection** and confirm **Robot Host**
+   is `100.87.172.93` and **Atlas Port** is `50051`.
+2. Log in, create a normal account with **Sign up**, or use the separate
+   **Admin** entry for an administrator account.
+3. Click **Connect**. The status should become online.
+4. Enter a small text task and click **Send**.
+5. While a task is active, **Send** becomes **Steer** and **Stop** appears.
+6. Open **Audio** to select and test microphone/speaker providers and devices.
+
+The first Robonix boot creates an administrator. If the deployment did not set
+an explicit bootstrap password, read the one-time credentials from
+`rbnx-boot/data/keystone-bootstrap-admin.txt` on the robot host and change the
+password from **Profile** after logging in.
 
 `--host` and `--robot-host` are different:
 
@@ -103,10 +113,30 @@ The required fields are:
 | Robot Host | Atlas machine IP or hostname, for example `100.87.172.93` |
 | Atlas Port | `50051` unless the deployment changed it |
 | Liaison Endpoint | Leave empty; the client discovers Liaison through Atlas |
-| User ID | Optional identity used by the deployment's access policy |
+| Account | Supplied by login; it is not an editable connection setting |
 
 Liaison normally listens on port `50081`, but clients should discover it
 through Atlas instead of hard-coding that port.
+
+### Accounts and voice guard
+
+The login session is stored only in the browser tab's session storage. It is
+not written to the Client settings file. Reloading the tab restores the live
+session; logging out or closing the tab removes it.
+
+Every account has a **Profile** page for changing its display name, email,
+password, and Voiceprint enrollment. Administrators are ordinary accounts with
+the `admin` role and can also open **Admin Board** to:
+
+- enable, disable, or delete users;
+- grant or remove the administrator role;
+- enable a user's voice guard;
+- reset a user's enrolled Voiceprint.
+
+Text interaction always uses the logged-in account. With voice guard disabled,
+voice turns use the session identity without Voiceprint matching. With voice
+guard enabled, each voice turn is rejected unless Voiceprint identifies the
+same logged-in user. Administrators do not bypass this check.
 
 ### Audio routing
 
@@ -195,8 +225,8 @@ source .venv/bin/activate
 robonix-client --robot-host <webots-machine-ip>
 ```
 
-Open <http://127.0.0.1:7860/>, click **Connect**, and run the checks in this
-order:
+Open <http://127.0.0.1:7860/>, create or log in to an account, click
+**Connect**, and run the checks in this order:
 
 1. Send a harmless text request such as `Use Bash to print WEBOTS_CLIENT_OK`.
 2. Send a longer Bash task, then send a **Steer** update while it runs.
@@ -223,7 +253,8 @@ bash sim/stop.sh
 Browser UI
   -> local robonix-client FastAPI/WebSocket adapter
   -> Atlas discovery
-  -> Liaison task/voice API
+  -> Liaison account + task/voice API
+  -> Keystone identity and per-user policy
   -> Pilot planning harness
   -> Executor and registered capabilities
   -> structured Pilot/RTDL events back to the UI
