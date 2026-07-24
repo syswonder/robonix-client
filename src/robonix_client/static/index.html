@@ -7,14 +7,75 @@
     <link rel="stylesheet" href="/static/styles.css?v=20260715b" />
   </head>
   <body>
-    <div class="app-shell">
+    <main class="auth-shell" id="authShell">
+      <section class="auth-stage">
+        <div class="auth-brand">
+          <span class="auth-mark" aria-hidden="true">R</span>
+          <div>
+            <strong>Robonix</strong>
+            <span>Robot access console</span>
+          </div>
+        </div>
+        <div class="identity-field" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="auth-copy">
+          <p class="eyebrow">IDENTITY / CONTROL</p>
+          <h1>Your account travels with every task.</h1>
+          <p>Sign in before sending text or voice to the robot. Voice verification follows your account policy.</p>
+        </div>
+      </section>
+      <section class="auth-card">
+        <div class="auth-tabs" role="tablist">
+          <button class="auth-tab active" type="button" data-auth-tab="login">Log in</button>
+          <button class="auth-tab" type="button" data-auth-tab="signup">Sign up</button>
+          <button class="auth-tab" type="button" data-auth-tab="admin">Admin</button>
+        </div>
+        <form class="auth-form active" id="loginForm" data-auth-panel="login">
+          <header><h2>Welcome back</h2><p>Use your Robonix account.</p></header>
+          <label><span>Username</span><input id="loginUsername" autocomplete="username" required /></label>
+          <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+          <button class="auth-primary" type="submit">Log in</button>
+        </form>
+        <form class="auth-form" id="signupForm" data-auth-panel="signup">
+          <header><h2>Create account</h2><p>An administrator can change your role and voice policy later.</p></header>
+          <label><span>Username</span><input id="signupUsername" autocomplete="username" minlength="3" required /></label>
+          <label><span>Display name</span><input id="signupDisplayName" autocomplete="name" required /></label>
+          <label><span>Email</span><input id="signupEmail" type="email" autocomplete="email" /></label>
+          <label><span>Password</span><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required /></label>
+          <button class="auth-primary" type="submit">Create account</button>
+        </form>
+        <form class="auth-form" id="adminLoginForm" data-auth-panel="admin">
+          <header><h2>Administrator</h2><p>Admin accounts can manage users after signing in.</p></header>
+          <label><span>Username</span><input id="adminUsername" autocomplete="username" required /></label>
+          <label><span>Password</span><input id="adminPassword" type="password" autocomplete="current-password" required /></label>
+          <button class="auth-primary" type="submit">Open Admin Board</button>
+        </form>
+        <p class="auth-error" id="authError" role="alert"></p>
+        <details class="auth-connection">
+          <summary>Robot connection</summary>
+          <label><span>Robot host</span><input id="authRobotHost" placeholder="100.x.y.z" /></label>
+          <label><span>Atlas port</span><input id="authAtlasPort" inputmode="numeric" placeholder="50051" /></label>
+          <label><span>Liaison endpoint</span><input id="authLiaisonEndpoint" placeholder="Optional; defaults to robot:50081" /></label>
+        </details>
+      </section>
+    </main>
+
+    <div class="app-shell auth-hidden" id="appShell">
       <aside class="nav-rail">
         <div class="brand">Robonix Client</div>
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
           <button class="nav-item" type="button" data-page="audio"><span>Audio</span></button>
           <button class="nav-item" type="button" data-page="settings"><span>Settings</span></button>
+          <button class="nav-item" type="button" data-page="profile"><span>Profile</span></button>
+          <button class="nav-item admin-only" type="button" data-page="admin" hidden><span>Admin Board</span></button>
         </nav>
+        <div class="account-dock">
+          <strong id="accountDockName">Account</strong>
+          <span id="accountDockRole">user</span>
+          <button type="button" id="logoutButton">Log out</button>
+        </div>
       </aside>
 
       <main class="workspace">
@@ -32,8 +93,8 @@
             <input id="atlasPort" autocomplete="off" inputmode="numeric" placeholder="50051" />
           </label>
           <label class="select-field">
-            <span>User</span>
-            <input id="userId" autocomplete="off" placeholder="voice:client" />
+            <span>Account</span>
+            <input id="userId" autocomplete="off" readonly />
           </label>
           <button class="status-chip" id="refreshSystem" type="button">
             <span class="dot"></span>
@@ -236,25 +297,11 @@
             <section class="panel enroll-panel">
               <div class="panel-header">
                 <div>
-                  <h2>Voiceprint</h2>
-                  <span id="enrollState">ready</span>
+                  <h2>Voiceprint profile</h2>
+                  <span>Voice identity is managed from your Profile page.</span>
                 </div>
               </div>
-              <div class="form-grid compact">
-                <label class="field">
-                  <span>User ID</span>
-                  <input id="enrollUserId" placeholder="wheatfox" />
-                </label>
-                <label class="field">
-                  <span>User Name</span>
-                  <input id="enrollUserName" placeholder="Client User" />
-                </label>
-                <label class="field">
-                  <span>Record Seconds</span>
-                  <input id="recordSeconds" type="number" min="2" max="30" step="1" />
-                </label>
-                <button class="button form-button" id="enrollVoice" type="button">Enroll Voice</button>
-              </div>
+              <button class="button" type="button" data-page-link="profile">Open Profile</button>
             </section>
             </section>
 
@@ -296,7 +343,7 @@
                 </label>
                 <label class="field">
                   <span>User ID</span>
-                  <input id="settingsUserId" autocomplete="off" placeholder="voice:client" />
+                  <input id="settingsUserId" autocomplete="off" readonly aria-readonly="true" />
                 </label>
                 <label class="field">
                   <span>Voice Record Limit (s)</span>
@@ -308,6 +355,57 @@
               </div>
               <span class="audio-route-status" id="settingsStatus">Changes are saved locally.</span>
             </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="profile">
+          <section class="profile-grid">
+            <section class="panel profile-identity">
+              <p class="eyebrow">YOUR ACCOUNT</p>
+              <div class="profile-avatar" id="profileAvatar">R</div>
+              <h2 id="profileHeading">Profile</h2>
+              <p id="profileUsername">@username</p>
+              <div class="profile-badges" id="profileBadges"></div>
+            </section>
+            <section class="panel profile-editor">
+              <div class="panel-header"><div><h2>Personal information</h2><span>Changes apply to future robot interactions.</span></div></div>
+              <form class="profile-form" id="profileForm">
+                <label class="field"><span>Display name</span><input id="profileDisplayName" required /></label>
+                <label class="field"><span>Email</span><input id="profileEmail" type="email" /></label>
+                <button class="button" type="submit">Save profile</button>
+                <span class="form-status" id="profileStatus"></span>
+              </form>
+              <div class="profile-section">
+                <h3>Change password</h3>
+                <form class="profile-form compact-profile-form" id="passwordForm">
+                  <label class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password" required /></label>
+                  <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="8" autocomplete="new-password" required /></label>
+                  <button class="button" type="submit">Change password</button>
+                  <span class="form-status" id="passwordStatus"></span>
+                </form>
+              </div>
+              <div class="profile-section voice-profile-section">
+                <div><h3>Voiceprint</h3><p id="voiceprintSummary">No voiceprint enrolled.</p></div>
+                <label class="field short-field"><span>Recording length</span><input id="profileVoiceSeconds" type="number" min="2" max="30" value="6" /></label>
+                <div class="profile-actions">
+                  <button class="button" type="button" id="replaceVoiceprint">Record / replace</button>
+                  <button class="ghost-button danger-text" type="button" id="removeVoiceprint">Remove</button>
+                </div>
+                <span class="form-status" id="voiceprintStatus"></span>
+              </div>
+            </section>
+          </section>
+        </section>
+
+        <section class="page work-page" data-page-panel="admin">
+          <section class="admin-board">
+            <header class="admin-board-header">
+              <div><p class="eyebrow">ADMINISTRATION</p><h1>User accounts</h1><p>Manage access, administrator roles, and per-user voice verification.</p></div>
+              <button class="button" type="button" id="refreshAdminUsers">Refresh users</button>
+            </header>
+            <div class="admin-summary" id="adminSummary"></div>
+            <section class="admin-user-list" id="adminUserList"></section>
+            <span class="form-status" id="adminStatus"></span>
           </section>
         </section>
       </main>
