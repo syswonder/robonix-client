@@ -964,6 +964,7 @@ class VitalsDashboard {
     byId("vitalsAlertPanelScrim")?.addEventListener("click", () => this.closeAlertPanel());
     byId("vitalsOpenAlertsTab")?.addEventListener("click", () => this.setAlertMode("open"));
     byId("vitalsAlertHistoryTab")?.addEventListener("click", () => this.setAlertMode("history"));
+    byId("vitalsClearAlertHistory")?.addEventListener("click", () => this.clearAlertHistory());
     byId("vitalsWarningDismiss")?.addEventListener("click", () => this.closeWarning());
     byId("vitalsWarningInspect")?.addEventListener("click", () => this.inspectCurrentAlert());
     byId("vitalsModulesTab")?.addEventListener("click", () => this.setSoftwareMode("modules"));
@@ -1172,10 +1173,12 @@ class VitalsDashboard {
     this.alertMode = mode === "history" ? "history" : "open";
     const openTab = byId("vitalsOpenAlertsTab");
     const historyTab = byId("vitalsAlertHistoryTab");
+    const clearButton = byId("vitalsClearAlertHistory");
     openTab?.classList.toggle("active", this.alertMode === "open");
     historyTab?.classList.toggle("active", this.alertMode === "history");
     openTab?.setAttribute("aria-selected", String(this.alertMode === "open"));
     historyTab?.setAttribute("aria-selected", String(this.alertMode === "history"));
+    if (clearButton) clearButton.hidden = this.alertMode !== "history";
     if (this.alertMode === "history") {
       try {
         const response = await fetch("/api/vitals/alerts?include_resolved=true");
@@ -1194,6 +1197,11 @@ class VitalsDashboard {
     if (byId("vitalsAlertCount")) byId("vitalsAlertCount").textContent = String(count);
     byId("vitalsAlertsOpen")?.classList.toggle("has-alerts", count > 0);
     const rows = this.alertMode === "history" ? this.alertHistory : this.alerts;
+    const clearButton = byId("vitalsClearAlertHistory");
+    if (clearButton) {
+      clearButton.hidden = this.alertMode !== "history";
+      clearButton.disabled = this.alertMode === "history" && rows.length === 0;
+    }
     if (byId("vitalsAlertSummary")) {
       byId("vitalsAlertSummary").textContent = this.alertMode === "history"
         ? `${rows.length} resolved incidents`
@@ -1285,6 +1293,33 @@ class VitalsDashboard {
       if (this.alertMode === "history") await this.setAlertMode("history");
     } catch (error) {
       button.disabled = false;
+      if (byId("vitalsAlertSummary")) byId("vitalsAlertSummary").textContent = String(error);
+    }
+  }
+
+  async clearAlertHistory() {
+    if (this.alertMode !== "history") return;
+    const count = this.alertHistory.length;
+    if (!count) return;
+    const confirmed = window.confirm(
+      `Delete ${count} resolved incident${count === 1 ? "" : "s"} from local history? Open alerts are kept.`
+    );
+    if (!confirmed) return;
+    const button = byId("vitalsClearAlertHistory");
+    if (button) button.disabled = true;
+    try {
+      const settings = this.settings();
+      const response = await fetch("/api/vitals/alerts/history/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operator: settings.userId || "operator" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Clear history failed (${response.status})`);
+      this.handleAlerts({ ...data, notifyAlertIds: [] });
+      await this.setAlertMode("history");
+    } catch (error) {
+      if (button) button.disabled = false;
       if (byId("vitalsAlertSummary")) byId("vitalsAlertSummary").textContent = String(error);
     }
   }

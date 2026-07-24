@@ -255,7 +255,12 @@
                     <button class="active" id="vitalsOpenAlertsTab" type="button" role="tab" aria-selected="true">Open</button>
                     <button id="vitalsAlertHistoryTab" type="button" role="tab" aria-selected="false">History</button>
                   </div>
-                  <span id="vitalsAlertSummary">No open alerts</span>
+                  <div class="vitals-alert-toolbar-actions">
+                    <span id="vitalsAlertSummary">No open alerts</span>
+                    <button class="secondary-button vitals-alert-clear-history" id="vitalsClearAlertHistory" type="button" hidden>
+                      Clear history
+                    </button>
+                  </div>
                 </div>
                 <div class="vitals-alert-list" id="vitalsAlertList"></div>
               </aside>

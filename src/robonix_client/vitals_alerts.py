@@ -264,6 +264,15 @@ class VitalsAlertStore:
             ).fetchone()
         return self._alert(updated)
 
+    def clear_resolved_history(self) -> int:
+        """Delete resolved incidents only; leave active and recovered rows intact."""
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM vitals_alerts WHERE resolved_at_ms IS NOT NULL"
+            )
+            connection.commit()
+            return int(cursor.rowcount)
+
     def payload(self, notify_ids: Iterable[int] = ()) -> dict[str, Any]:
         alerts = self.list_alerts()
         active = sum(1 for alert in alerts if alert["conditionActive"])

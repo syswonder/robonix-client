@@ -66,6 +66,19 @@ async def resolve_vitals_alert(
     return {"resolved": resolved, **vitals_alert_store.payload()}
 
 
+@router.post("/api/vitals/alerts/history/clear")
+async def clear_vitals_alert_history(
+    request: ResolveAlertRequest,
+) -> dict:
+    """Remove resolved incident history from the persistent alert database."""
+    deleted = vitals_alert_store.clear_resolved_history()
+    return {
+        "deleted": deleted,
+        "operator": request.operator.strip() or "operator",
+        **vitals_alert_store.payload(),
+    }
+
+
 @router.websocket("/ws/vitals")
 async def vitals_ws(ws: WebSocket) -> None:
     await ws.accept()

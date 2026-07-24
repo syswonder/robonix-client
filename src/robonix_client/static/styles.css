@@ -3217,9 +3217,24 @@ select:focus {
 }
 
 .vitals-alert-panel-header span,
-.vitals-alert-toolbar > span {
+.vitals-alert-toolbar-actions > span {
   color: var(--muted);
   font-size: 10px;
+}
+
+.vitals-alert-toolbar-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.vitals-alert-clear-history {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
 }
 
 .vitals-alert-panel-header h3 {

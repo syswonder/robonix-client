@@ -17,6 +17,7 @@ from robonix_client.vitals_alerts import (
 )
 from robonix_client.vitals_api import (
     ResolveAlertRequest,
+    clear_vitals_alert_history,
     list_vitals_alerts,
     resolve_vitals_alert,
 )
@@ -70,6 +71,34 @@ class VitalsAlertStoreTest(unittest.TestCase):
             restarted_store.list_alerts(include_resolved=True)[0]["id"],
             alert_id,
         )
+
+    def test_clear_resolved_history_keeps_open_incidents(self) -> None:
+        first = self.store.reconcile(
+            "hardware:piper", [component_alert()], now_ms=100
+        )
+        resolved_id = first.notify_ids[0]
+        self.store.reconcile("hardware:piper", [], now_ms=200)
+        self.store.resolve(resolved_id)
+        open_id = self.store.reconcile(
+            "modules",
+            [
+                {
+                    "sourceType": "module",
+                    "sourceId": "pilot",
+                    "label": "Pilot",
+                    "severity": "stale",
+                    "detail": "heartbeat timed out",
+                }
+            ],
+            now_ms=300,
+        ).notify_ids[0]
+
+        deleted = self.store.clear_resolved_history()
+        remaining = self.store.list_alerts(include_resolved=True)
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual([alert["id"] for alert in remaining], [open_id])
+        self.assertEqual(remaining[0]["status"], "active")
 
     def test_reactivation_notifies_and_new_incident_follows_resolution(self) -> None:
         first = self.store.reconcile(
@@ -255,6 +284,38 @@ class VitalsAlertApiTest(unittest.TestCase):
 
         self.assertEqual(payload["summary"]["open"], 0)
         self.assertEqual(listed["alerts"][0]["resolvedBy"], "operator-a")
+
+    def test_api_clears_resolved_history_only(self) -> None:
+        alert_id = self.created.notify_ids[0]
+        self.store.reconcile("hardware:piper", [], now_ms=200)
+        self.store.resolve(alert_id, "operator-a")
+        active = self.store.reconcile(
+            "modules",
+            [
+                {
+                    "sourceType": "module",
+                    "sourceId": "pilot",
+                    "label": "Pilot",
+                    "severity": "stale",
+                    "detail": "heartbeat timed out",
+                }
+            ],
+            now_ms=300,
+        )
+
+        with patch("robonix_client.vitals_api.vitals_alert_store", self.store):
+            cleared = asyncio.run(
+                clear_vitals_alert_history(ResolveAlertRequest(operator="janitor"))
+            )
+            remaining = asyncio.run(list_vitals_alerts(include_resolved=True))
+
+        self.assertEqual(cleared["deleted"], 1)
+        self.assertEqual(cleared["operator"], "janitor")
+        self.assertEqual(cleared["summary"]["open"], 1)
+        self.assertEqual(
+            [alert["id"] for alert in remaining["alerts"]],
+            [active.notify_ids[0]],
+        )
 
 
 if __name__ == "__main__":
