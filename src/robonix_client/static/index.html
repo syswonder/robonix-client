@@ -174,6 +174,11 @@
               </div>
               <div class="vitals-overview-actions">
                 <div class="vitals-source-strip" id="vitalsSourceStrip" aria-label="Data source status"></div>
+                <button class="vitals-alert-button" id="vitalsAlertsOpen" type="button" aria-haspopup="dialog" aria-controls="vitalsAlertPanel">
+                  <span id="vitalsAlertsIcon" aria-hidden="true"></span>
+                  <span>Alerts</span>
+                  <strong id="vitalsAlertCount">0</strong>
+                </button>
                 <button class="icon-button vitals-refresh" id="vitalsReconnect" type="button" title="Reconnect health streams" aria-label="Reconnect health streams">
                   <span id="vitalsReconnectIcon" aria-hidden="true"></span>
                 </button>
@@ -196,6 +201,10 @@
                 <div class="vitals-stage-status">
                   <span class="vitals-live-dot"></span>
                   <span id="vitalsRenderMode">procedural model</span>
+                </div>
+                <div class="vitals-stage-selection">
+                  <span>Selected component</span>
+                  <strong id="vitalsStageSelection">Robot</strong>
                 </div>
                 <div class="vitals-stage-caption">
                   <strong id="vitalsStageName">Robot</strong>
@@ -225,6 +234,53 @@
               </header>
               <div class="vitals-software-list" id="vitalsSoftwareList"></div>
             </section>
+            <footer class="vitals-page-credit" id="vitalsCredit" aria-label="Vitals created by Zhenyu Zhang">
+              Made by Zhenyu Zhang
+            </footer>
+
+            <div class="vitals-alert-layer" id="vitalsAlertPanelLayer" hidden>
+              <button class="vitals-alert-scrim" id="vitalsAlertPanelScrim" type="button" aria-label="Close alert panel"></button>
+              <aside class="vitals-alert-panel" id="vitalsAlertPanel" role="dialog" aria-modal="true" aria-labelledby="vitalsAlertPanelTitle">
+                <header class="vitals-alert-panel-header">
+                  <div>
+                    <span>Persistent incidents</span>
+                    <h3 id="vitalsAlertPanelTitle">Alert center</h3>
+                  </div>
+                  <button class="icon-button" id="vitalsAlertsClose" type="button" title="Close alert panel" aria-label="Close alert panel">
+                    <span id="vitalsAlertsCloseIcon" aria-hidden="true"></span>
+                  </button>
+                </header>
+                <div class="vitals-alert-toolbar">
+                  <div class="segmented-control" role="tablist" aria-label="Alert view">
+                    <button class="active" id="vitalsOpenAlertsTab" type="button" role="tab" aria-selected="true">Open</button>
+                    <button id="vitalsAlertHistoryTab" type="button" role="tab" aria-selected="false">History</button>
+                  </div>
+                  <span id="vitalsAlertSummary">No open alerts</span>
+                </div>
+                <div class="vitals-alert-list" id="vitalsAlertList"></div>
+              </aside>
+            </div>
+
+            <div class="vitals-warning-layer" id="vitalsWarningLayer" hidden>
+              <section class="vitals-warning-dialog" role="alertdialog" aria-modal="true" aria-labelledby="vitalsWarningTitle" aria-describedby="vitalsWarningDetail">
+                <header>
+                  <span class="vitals-warning-icon" id="vitalsWarningIcon" aria-hidden="true"></span>
+                  <div>
+                    <span id="vitalsWarningSeverity">ERROR</span>
+                    <h3 id="vitalsWarningTitle">Robot alert</h3>
+                  </div>
+                </header>
+                <p id="vitalsWarningDetail">A health anomaly requires attention.</p>
+                <div class="vitals-warning-meta">
+                  <span id="vitalsWarningSource">component</span>
+                  <span id="vitalsWarningTime">now</span>
+                </div>
+                <footer>
+                  <button class="secondary-button" id="vitalsWarningDismiss" type="button">Dismiss</button>
+                  <button class="primary-button" id="vitalsWarningInspect" type="button">Inspect</button>
+                </footer>
+              </section>
+            </div>
           </div>
         </section>
 

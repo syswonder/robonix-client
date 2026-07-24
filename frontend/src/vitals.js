@@ -3,17 +3,21 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import URDFLoader from "urdf-loader";
 import {
+  AlertTriangle,
   AudioLines,
   Battery,
+  Bell,
   Bot,
   Box,
   Camera,
+  CheckCircle2,
   CircleGauge,
   Cpu,
   Disc3,
   Radio,
   RefreshCw,
   ScanLine,
+  X,
   createElement as createIconElement,
 } from "lucide";
 
@@ -87,6 +91,17 @@ function formatAge(timestampMs) {
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ago`;
+}
+
+function formatDateTime(timestampMs) {
+  if (!timestampMs) return "--";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(timestampMs));
 }
 
 function healthSummary(summary, noun) {
@@ -179,6 +194,14 @@ class RobotViewport {
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.container);
+    this.modelStats = {
+      source: "",
+      meshCount: 0,
+      linkCount: 0,
+      jointCount: 0,
+      mappedComponents: 0,
+      fallbackReason: "",
+    };
     this.resize();
   }
 
@@ -199,8 +222,10 @@ class RobotViewport {
     }
     this.controls.update();
     if (this.selectionHelper) {
-      const objects = this.componentObjects.get(this.selectedComponentId) || [];
-      if (objects.at(-1)) this.selectionHelper.box.setFromObject(objects.at(-1));
+      this.updateSelectionHelper();
+      const pulse = (Math.sin(performance.now() / 260) + 1) / 2;
+      this.selectionHelper.userData.fill.material.opacity = 0.06 + pulse * 0.07;
+      this.selectionHelper.userData.edges.material.opacity = 0.72 + pulse * 0.28;
     }
     this.renderer.render(this.scene, this.camera);
     this.frame = requestAnimationFrame(() => this.animate());
@@ -221,12 +246,7 @@ class RobotViewport {
   }
 
   clearRobot() {
-    if (this.selectionHelper) {
-      this.scene.remove(this.selectionHelper);
-      this.selectionHelper.geometry.dispose();
-      this.selectionHelper.material.dispose();
-      this.selectionHelper = null;
-    }
+    this.disposeSelectionHelper();
     while (this.robotRoot.children.length) {
       const child = this.robotRoot.children.at(-1);
       this.robotRoot.remove(child);
@@ -262,18 +282,64 @@ class RobotViewport {
       else if (child.material) child.material = child.material.clone();
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       materials.filter(Boolean).forEach((material) => {
+        material.userData.vitalsBaseColor = material.color?.clone?.() || new THREE.Color(0xffffff);
         material.userData.vitalsBaseEmissive = material.emissive?.clone?.() || new THREE.Color(0x000000);
         material.userData.vitalsBaseIntensity = Number(material.emissiveIntensity || 0);
       });
     });
   }
 
+
+  async loadUrdfXml(urdfXml, workingPath = "") {
+    const failedAssets = [];
+    let assetsStarted = false;
+    let resolveAssets;
+    const assetsReady = new Promise((resolve) => {
+      resolveAssets = resolve;
+    });
+    const manager = new THREE.LoadingManager();
+    manager.onStart = () => {
+      assetsStarted = true;
+    };
+    manager.onLoad = () => resolveAssets();
+    manager.onError = (url) => failedAssets.push(url);
+    const loader = new URDFLoader(manager);
+    const robot = loader.parse(urdfXml, workingPath);
+    if (assetsStarted) await assetsReady;
+    if (failedAssets.length) {
+      throw new Error(`failed to load ${failedAssets.length} URDF asset(s)`);
+    }
+    return robot;
+  }
+
+  async loadUrdfDescription(description) {
+    return this.loadUrdfXml(
+      String(description?.urdfXml || ""),
+      String(description?.urdfAssetBaseUrl || ""),
+    );
+  }
+
   async loadDescription(description) {
     const token = ++this.modelToken;
     this.clearRobot();
+    this.proceduralKind = "";
+    this.modelStats = {
+      source: "",
+      meshCount: 0,
+      linkCount: 0,
+      jointCount: 0,
+      mappedComponents: 0,
+      fallbackReason: "",
+    };
     let model = null;
     let mode = "procedural";
     const render = description?.render || {};
+    const fallbackReasons = [];
+    const recordFallback = (source, error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      fallbackReasons.push(`${source}: ${message}`);
+      console.warn(`Vitals model source "${source}" failed; using the next available renderer.`, error);
+    };
 
     if (render.modelUrl) {
       try {
@@ -282,31 +348,52 @@ class RobotViewport {
         model = gltf.scene;
         mode = "asset";
         this.registerComponent("body", model);
-      } catch (_) {
-        model = null;
+        this.modelStats = {
+          source: `asset:${render.modelUrl}`,
+          meshCount: model.getObjectsByProperty("isMesh", true).length,
+          linkCount: 0,
+          jointCount: 0,
+          mappedComponents: 1,
+          fallbackReason: "",
+        };
+      } catch (error) {
+        recordFallback("modelUrl", error);
       }
     }
 
-    if (!model && description?.urdfXml && render.mode === "urdf") {
+    const hasInlineUrdf = Boolean(description?.urdfXml && render.mode === "urdf");
+    if (!model && hasInlineUrdf) {
+      const source = "soma:urdf";
       try {
-        const loader = new URDFLoader();
-        loader.loadMeshCb = (_path, _manager, _material, onComplete) => {
-          onComplete(null, new Error("URDF mesh assets are not browser-addressable"));
-        };
-        const urdfRobot = loader.parse(description.urdfXml);
+        const urdfRobot = await this.loadUrdfDescription(description);
+        if (token !== this.modelToken) return "superseded";
         urdfRobot.rotation.x = -Math.PI / 2;
         urdfRobot.updateMatrixWorld(true);
         const meshCount = urdfRobot.getObjectsByProperty("isMesh", true).length;
-        if (meshCount > 0) {
-          model = urdfRobot;
-          mode = "urdf";
-          this.registerComponent("body", model);
-          (description.components || []).forEach((component) => {
-            const target = urdfRobot.links?.[component.urdfLink] || urdfRobot.joints?.[component.urdfJoint];
-            if (target) this.registerComponent(component.id, target);
-          });
-        }
-      } catch (_) {
+        if (!meshCount) throw new Error("URDF contains no renderable visual geometry");
+
+        model = urdfRobot;
+        mode = "urdf";
+        this.registerComponent("body", model);
+        let mappedComponents = 0;
+        (description.components || []).forEach((component) => {
+          const target = urdfRobot.links?.[component.urdfLink]
+            || urdfRobot.joints?.[component.urdfJoint];
+          if (target) {
+            this.registerComponent(component.id, target);
+            mappedComponents += 1;
+          }
+        });
+        this.modelStats = {
+          source,
+          meshCount,
+          linkCount: Object.keys(urdfRobot.links || {}).length,
+          jointCount: Object.keys(urdfRobot.joints || {}).length,
+          mappedComponents,
+          fallbackReason: fallbackReasons.join("; "),
+        };
+      } catch (error) {
+        recordFallback(source, error);
         model = null;
       }
     }
@@ -314,6 +401,14 @@ class RobotViewport {
     if (!model) {
       model = this.buildProcedural(description || {});
       mode = "procedural";
+      this.modelStats = {
+        source: "procedural",
+        meshCount: model.getObjectsByProperty("isMesh", true).length,
+        linkCount: 0,
+        jointCount: 0,
+        mappedComponents: this.componentObjects.size,
+        fallbackReason: fallbackReasons.join("; "),
+      };
     }
     if (token !== this.modelToken) return "superseded";
 
@@ -358,13 +453,25 @@ class RobotViewport {
     const components = description.components || [];
     const types = components.map((component) => String(component.type || "").toLowerCase());
     const family = String(description.family || "").toLowerCase();
-    if (family.includes("humanoid")) return this.buildHumanoid(description);
-    if (family.includes("arm") || family.includes("manipulator") || types.some((type) => type.includes("gripper") || type.includes("arm"))) {
+    const hasArm = family.includes("arm") || family.includes("manipulator") || types.some((type) => type.includes("gripper") || type.includes("arm"));
+    const hasMobileBase = family.includes("mobile") || types.some((type) => type.includes("wheel") || type.includes("mobile_base"));
+    if (family.includes("humanoid")) {
+      this.proceduralKind = "humanoid";
+      return this.buildHumanoid(description);
+    }
+    if (hasArm && hasMobileBase) {
+      this.proceduralKind = "mobile_manipulator";
+      return this.buildMobileManipulator(description);
+    }
+    if (hasArm) {
+      this.proceduralKind = "arm";
       return this.buildArm(description);
     }
-    if (family.includes("mobile") || types.some((type) => type.includes("wheel") || type.includes("mobile_base"))) {
+    if (hasMobileBase) {
+      this.proceduralKind = "mobile_robot";
       return this.buildMobileRobot(description);
     }
+    this.proceduralKind = "generic";
     return this.buildGenericRobot(description);
   }
 
@@ -472,6 +579,63 @@ class RobotViewport {
 
     this.registerComponent(rootId, body);
     this.registerComponent(baseId, base);
+    return body;
+  }
+
+  buildMobileManipulator(description) {
+    const dimensions = description.dimensions || {};
+    const width = clampDimension(dimensions.widthM, 0.68, 0.35, 2.2);
+    const length = clampDimension(dimensions.lengthM, 0.68, 0.35, 2.8);
+    const height = clampDimension(dimensions.heightM, 1.1, 0.6, 3.2);
+    const body = this.buildMobileRobot(description);
+    const components = description.components || [];
+    const armComponent = components.find((component) => String(component.type || "").toLowerCase() === "arm");
+    const armId = armComponent?.id || "body";
+    const jointIds = components
+      .filter((component) => component.parentId === armId && String(component.type || "").toLowerCase() === "joint")
+      .map((component) => component.id);
+    const gripperId = this.component(description, (component) => String(component.type || "").toLowerCase().includes("gripper"), armId);
+    const silver = createMaterial(0xbcc7c8, 0.58, 0.32);
+    const graphite = createMaterial(0x273238, 0.42, 0.43);
+    const accent = createMaterial(0x3e9da5, 0.32, 0.4);
+    const arm = new THREE.Group();
+    arm.position.set(-width * 0.3, height * 0.7, length * 0.01);
+
+    const mount = this.makeMesh(new THREE.BoxGeometry(width * 0.18, height * 0.12, length * 0.17), graphite, armId);
+    arm.add(mount);
+    const segmentLengths = [height * 0.19, height * 0.18, height * 0.13];
+    const segmentRotations = [0.18, -0.5, 0.62];
+    let parent = arm;
+    segmentLengths.forEach((segmentLength, index) => {
+      const joint = new THREE.Group();
+      const bearingId = jointIds[index * 2] || armId;
+      const linkId = jointIds[index * 2 + 1] || bearingId;
+      const bearing = this.makeMesh(new THREE.SphereGeometry(width * 0.075, 24, 16), accent.clone(), bearingId);
+      joint.add(bearing);
+      const link = this.makeMesh(new THREE.CapsuleGeometry(width * 0.055, segmentLength, 8, 16), silver.clone(), linkId);
+      link.position.y = -segmentLength * 0.55;
+      joint.add(link);
+      joint.position.y = index === 0 ? -height * 0.07 : -segmentLengths[index - 1];
+      joint.rotation.z = segmentRotations[index];
+      parent.add(joint);
+      parent = joint;
+    });
+
+    const wristId = jointIds[6] || jointIds.at(-1) || armId;
+    const wrist = this.makeMesh(new THREE.CylinderGeometry(width * 0.06, width * 0.06, width * 0.16, 24), graphite.clone(), wristId);
+    wrist.rotation.z = Math.PI / 2;
+    wrist.position.y = -segmentLengths.at(-1);
+    parent.add(wrist);
+    const palm = this.makeMesh(new THREE.BoxGeometry(width * 0.2, height * 0.055, length * 0.12), silver.clone(), gripperId);
+    palm.position.y = -segmentLengths.at(-1) - height * 0.07;
+    parent.add(palm);
+    [-1, 1].forEach((side) => {
+      const finger = this.makeMesh(new THREE.BoxGeometry(width * 0.035, height * 0.13, length * 0.05), graphite.clone(), gripperId);
+      finger.position.set(side * width * 0.07, -segmentLengths.at(-1) - height * 0.15, length * 0.015);
+      parent.add(finger);
+    });
+    this.registerComponent(armId, arm);
+    body.add(arm);
     return body;
   }
 
@@ -594,41 +758,90 @@ class RobotViewport {
         const materials = Array.isArray(child.material) ? child.material : [child.material];
         materials.filter(Boolean).forEach((material) => {
           if (!material.emissive) return;
+          material.color?.copy?.(material.userData.vitalsBaseColor || new THREE.Color(0xffffff));
           material.emissive.copy(material.userData.vitalsBaseEmissive || new THREE.Color(0x000000));
           material.emissiveIntensity = material.userData.vitalsBaseIntensity || 0;
-          if (normalized !== "unknown") {
-            material.emissive.lerp(HEALTH_COLORS[normalized], normalized === "ok" ? 0.42 : 0.82);
-            material.emissiveIntensity = normalized === "ok" ? 0.16 : normalized === "stale" ? 0.26 : 0.52;
+          if (["warn", "error", "stale"].includes(normalized)) {
+            const colorMix = normalized === "error" ? 0.72 : normalized === "warn" ? 0.46 : 0.32;
+            material.color?.lerp?.(HEALTH_COLORS[normalized], colorMix);
+            material.emissive.lerp(HEALTH_COLORS[normalized], normalized === "error" ? 0.94 : 0.76);
+            material.emissiveIntensity = normalized === "error" ? 0.9 : normalized === "warn" ? 0.58 : 0.34;
           }
         });
       }));
     });
     if (this.selectionHelper) {
       const selectedHealth = safeHealth(this.componentHealth.get(this.selectedComponentId));
-      this.selectionHelper.material.color.copy(
-        selectedHealth === "unknown" ? new THREE.Color(0x5fcdd8) : HEALTH_COLORS[selectedHealth],
-      );
+      const color = selectedHealth === "unknown" || selectedHealth === "ok"
+        ? new THREE.Color(0x5fcdd8)
+        : HEALTH_COLORS[selectedHealth];
+      this.selectionHelper.userData.fill.material.color.copy(color);
+      this.selectionHelper.userData.edges.material.color.copy(color);
     }
     this.renderOnce();
   }
 
-  selectComponent(componentId) {
-    this.selectedComponentId = componentId || "body";
-    if (this.selectionHelper) {
-      this.scene.remove(this.selectionHelper);
-      this.selectionHelper.geometry.dispose();
-      this.selectionHelper.material.dispose();
-      this.selectionHelper = null;
-    }
+  disposeSelectionHelper() {
+    if (!this.selectionHelper) return;
+    this.scene.remove(this.selectionHelper);
+    const { fill, edges } = this.selectionHelper.userData;
+    fill.geometry.dispose();
+    fill.material.dispose();
+    edges.geometry.dispose();
+    edges.material.dispose();
+    this.selectionHelper = null;
+  }
+
+  updateSelectionHelper() {
+    if (!this.selectionHelper) return;
     const object = (this.componentObjects.get(this.selectedComponentId) || []).at(-1);
     if (!object) return;
-    const box = new THREE.Box3().setFromObject(object);
+    const bounds = new THREE.Box3().setFromObject(object);
+    if (bounds.isEmpty()) return;
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const padding = Math.max(size.x, size.y, size.z, 0.1) * 0.055;
+    const paddedSize = size.addScalar(padding * 2);
+    this.selectionHelper.position.copy(center);
+    this.selectionHelper.userData.fill.scale.copy(paddedSize);
+    this.selectionHelper.userData.edges.scale.copy(paddedSize).multiplyScalar(1.012);
+  }
+
+  selectComponent(componentId) {
+    this.selectedComponentId = componentId || "body";
+    this.disposeSelectionHelper();
+    const object = (this.componentObjects.get(this.selectedComponentId) || []).at(-1);
+    if (!object) return;
     const health = safeHealth(this.componentHealth.get(this.selectedComponentId));
-    const color = health === "unknown" ? 0x5fcdd8 : HEALTH_COLORS[health];
-    this.selectionHelper = new THREE.Box3Helper(box, color);
-    this.selectionHelper.material.transparent = true;
-    this.selectionHelper.material.opacity = 0.72;
+    const color = health === "unknown" || health === "ok" ? 0x5fcdd8 : HEALTH_COLORS[health];
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const fill = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.1,
+        depthWrite: false,
+        side: THREE.BackSide,
+      }),
+    );
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geometry),
+      new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+      }),
+    );
+    fill.renderOrder = 18;
+    edges.renderOrder = 19;
+    this.selectionHelper = new THREE.Group();
+    this.selectionHelper.userData.fill = fill;
+    this.selectionHelper.userData.edges = edges;
+    this.selectionHelper.add(fill, edges);
     this.scene.add(this.selectionHelper);
+    this.updateSelectionHelper();
     this.renderOnce();
   }
 
@@ -665,6 +878,39 @@ class RobotViewport {
     }
     return { width, height, samples, foregroundSamples, distinctColors: colors.size };
   }
+
+  componentVisualStats(componentId) {
+    const materials = [];
+    (this.componentObjects.get(componentId) || []).forEach((object) => object.traverse((child) => {
+      if (!child.isMesh) return;
+      const childMaterials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.push(...childMaterials.filter(Boolean));
+    }));
+    return {
+      materialCount: materials.length,
+      maxRedDominance: materials.reduce(
+        (value, material) => Math.max(
+          value,
+          Number(material.color?.r || 0) - Math.max(Number(material.color?.g || 0), Number(material.color?.b || 0)),
+        ),
+        0,
+      ),
+      maxEmissiveIntensity: materials.reduce(
+        (value, material) => Math.max(value, Number(material.emissiveIntensity || 0)),
+        0,
+      ),
+    };
+  }
+
+  selectionStats() {
+    const fill = this.selectionHelper?.userData?.fill;
+    return {
+      componentId: this.selectedComponentId,
+      visible: Boolean(this.selectionHelper && fill),
+      opacity: Number(fill?.material?.opacity || 0),
+      volume: fill ? fill.scale.x * fill.scale.y * fill.scale.z : 0,
+    };
+  }
 }
 
 class VitalsDashboard {
@@ -674,6 +920,14 @@ class VitalsDashboard {
     this.hardware = null;
     this.modules = null;
     this.providers = null;
+    this.alerts = [];
+    this.alertHistory = [];
+    this.alertSummary = { open: 0, active: 0, recovered: 0 };
+    this.alertMode = "open";
+    this.alertsInitialized = false;
+    this.notifiedAlertIds = new Set();
+    this.alertQueue = [];
+    this.currentAlert = null;
     this.sources = new Map([
       ["soma", { state: "connecting", error: "" }],
       ["hardware", { state: "connecting", error: "" }],
@@ -691,6 +945,9 @@ class VitalsDashboard {
 
     const refreshIcon = byId("vitalsReconnectIcon");
     if (refreshIcon) refreshIcon.appendChild(icon(RefreshCw, 17));
+    byId("vitalsAlertsIcon")?.appendChild(icon(Bell, 15));
+    byId("vitalsAlertsCloseIcon")?.appendChild(icon(X, 17));
+    byId("vitalsWarningIcon")?.appendChild(icon(AlertTriangle, 24));
     try {
       this.viewport = new RobotViewport(byId("vitalsCanvas"), (componentId) => this.selectComponent(componentId));
     } catch (error) {
@@ -702,6 +959,13 @@ class VitalsDashboard {
     }
 
     byId("vitalsReconnect")?.addEventListener("click", () => this.connect(true));
+    byId("vitalsAlertsOpen")?.addEventListener("click", () => this.openAlertPanel());
+    byId("vitalsAlertsClose")?.addEventListener("click", () => this.closeAlertPanel());
+    byId("vitalsAlertPanelScrim")?.addEventListener("click", () => this.closeAlertPanel());
+    byId("vitalsOpenAlertsTab")?.addEventListener("click", () => this.setAlertMode("open"));
+    byId("vitalsAlertHistoryTab")?.addEventListener("click", () => this.setAlertMode("history"));
+    byId("vitalsWarningDismiss")?.addEventListener("click", () => this.closeWarning());
+    byId("vitalsWarningInspect")?.addEventListener("click", () => this.inspectCurrentAlert());
     byId("vitalsModulesTab")?.addEventListener("click", () => this.setSoftwareMode("modules"));
     byId("vitalsProvidersTab")?.addEventListener("click", () => this.setSoftwareMode("providers"));
     window.addEventListener("robonix:page", (event) => this.setActive(event.detail?.name === "vitals"));
@@ -710,6 +974,11 @@ class VitalsDashboard {
     });
     document.addEventListener("visibilitychange", () => {
       this.viewport?.setActive(this.active && !document.hidden);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!byId("vitalsWarningLayer")?.hidden) this.closeWarning();
+      else if (!byId("vitalsAlertPanelLayer")?.hidden) this.closeAlertPanel();
     });
     window.addEventListener("beforeunload", () => this.disconnect());
     this.ageTimer = window.setInterval(() => this.renderUpdatedAt(), 1000);
@@ -796,7 +1065,7 @@ class VitalsDashboard {
         if (mode && mode !== "superseded") {
           this.renderMode = mode;
           this.renderStage();
-          this.viewport?.setComponentHealth(this.componentHealthMap());
+          this.viewport?.setComponentHealth(this.componentVisualHealthMap());
           this.viewport?.selectComponent(this.selectedComponentId);
         }
       });
@@ -805,7 +1074,7 @@ class VitalsDashboard {
     }
     if (event.type === "hardware") {
       this.hardware = event.data;
-      this.viewport?.setComponentHealth(this.componentHealthMap());
+      this.viewport?.setComponentHealth(this.componentVisualHealthMap());
       this.renderHardware();
       return;
     }
@@ -819,6 +1088,10 @@ class VitalsDashboard {
       this.providers = event.data;
       this.renderOverview();
       this.renderSoftware();
+      return;
+    }
+    if (event.type === "alerts") {
+      this.handleAlerts(event.data || {});
       return;
     }
     if (event.type === "source") {
@@ -836,6 +1109,13 @@ class VitalsDashboard {
     return new Map((this.hardware?.componentHealth || []).map((row) => [row.componentId, safeHealth(row.health)]));
   }
 
+  componentVisualHealthMap() {
+    return new Map((this.hardware?.componentHealth || []).map((row) => [
+      row.componentId,
+      safeHealth(row.directHealth || row.health),
+    ]));
+  }
+
   selectedComponent() {
     return (this.description?.components || []).find((component) => component.id === this.selectedComponentId) || null;
   }
@@ -848,8 +1128,203 @@ class VitalsDashboard {
     if (!(this.description?.components || []).some((component) => component.id === componentId)) return;
     this.selectedComponentId = componentId;
     this.viewport?.selectComponent(componentId);
+    if (byId("vitalsStageSelection")) {
+      byId("vitalsStageSelection").textContent = this.selectedComponent()?.label || componentId;
+    }
     this.renderComponents();
     this.renderInspector();
+  }
+
+  handleAlerts(data) {
+    this.alerts = Array.isArray(data.alerts) ? data.alerts : [];
+    this.alertSummary = data.summary || {
+      open: this.alerts.length,
+      active: this.alerts.filter((alert) => alert.conditionActive).length,
+      recovered: this.alerts.filter((alert) => !alert.conditionActive).length,
+    };
+    const notifyIds = Array.isArray(data.notifyAlertIds) ? data.notifyAlertIds : [];
+    const candidates = this.alertsInitialized
+      ? notifyIds
+      : this.alerts.filter((alert) => alert.conditionActive).map((alert) => alert.id);
+    this.alertsInitialized = true;
+    candidates.forEach((alertId) => {
+      const id = Number(alertId);
+      if (!id || this.notifiedAlertIds.has(id)) return;
+      this.notifiedAlertIds.add(id);
+      this.alertQueue.push(id);
+    });
+    this.renderAlerts();
+    this.showNextWarning();
+  }
+
+  openAlertPanel() {
+    const layer = byId("vitalsAlertPanelLayer");
+    if (layer) layer.hidden = false;
+    this.renderAlerts();
+  }
+
+  closeAlertPanel() {
+    const layer = byId("vitalsAlertPanelLayer");
+    if (layer) layer.hidden = true;
+  }
+
+  async setAlertMode(mode) {
+    this.alertMode = mode === "history" ? "history" : "open";
+    const openTab = byId("vitalsOpenAlertsTab");
+    const historyTab = byId("vitalsAlertHistoryTab");
+    openTab?.classList.toggle("active", this.alertMode === "open");
+    historyTab?.classList.toggle("active", this.alertMode === "history");
+    openTab?.setAttribute("aria-selected", String(this.alertMode === "open"));
+    historyTab?.setAttribute("aria-selected", String(this.alertMode === "history"));
+    if (this.alertMode === "history") {
+      try {
+        const response = await fetch("/api/vitals/alerts?include_resolved=true");
+        if (!response.ok) throw new Error(`Alert history request failed (${response.status})`);
+        const data = await response.json();
+        this.alertHistory = (data.alerts || []).filter((alert) => alert.status === "resolved");
+      } catch (error) {
+        if (byId("vitalsAlertSummary")) byId("vitalsAlertSummary").textContent = String(error);
+      }
+    }
+    this.renderAlerts();
+  }
+
+  renderAlerts() {
+    const count = Number(this.alertSummary.open || this.alerts.length || 0);
+    if (byId("vitalsAlertCount")) byId("vitalsAlertCount").textContent = String(count);
+    byId("vitalsAlertsOpen")?.classList.toggle("has-alerts", count > 0);
+    const rows = this.alertMode === "history" ? this.alertHistory : this.alerts;
+    if (byId("vitalsAlertSummary")) {
+      byId("vitalsAlertSummary").textContent = this.alertMode === "history"
+        ? `${rows.length} resolved incidents`
+        : count
+          ? `${this.alertSummary.active || 0} active · ${this.alertSummary.recovered || 0} awaiting confirmation`
+          : "No open alerts";
+    }
+    const root = byId("vitalsAlertList");
+    clear(root);
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "vitals-empty vitals-alert-empty";
+      empty.textContent = this.alertMode === "history" ? "No resolved incidents" : "No open incidents";
+      root?.appendChild(empty);
+      return;
+    }
+    rows.forEach((alert) => root?.appendChild(this.alertRow(alert)));
+  }
+
+  alertRow(alert) {
+    const row = document.createElement("article");
+    row.className = `vitals-alert-row ${safeHealth(alert.severity)}`;
+    row.dataset.alertId = String(alert.id);
+    const marker = document.createElement("span");
+    marker.className = "vitals-alert-marker";
+    const copy = document.createElement("div");
+    copy.className = "vitals-alert-copy";
+    const heading = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = alert.label || alert.sourceId || "Health alert";
+    const source = document.createElement("span");
+    source.textContent = `${alert.sourceType || "source"} · ${alert.status || "active"}`;
+    heading.append(title, source);
+    const detail = document.createElement("p");
+    detail.textContent = alert.detail || "Health anomaly reported";
+    const meta = document.createElement("div");
+    meta.className = "vitals-alert-meta";
+    const firstSeen = document.createElement("span");
+    firstSeen.textContent = `Opened ${formatDateTime(alert.firstSeenAtMs)}`;
+    const lastSeen = document.createElement("span");
+    lastSeen.textContent = alert.conditionActive
+      ? `Last seen ${formatAge(alert.lastSeenAtMs)}`
+      : `Recovered ${formatDateTime(alert.recoveredAtMs)}`;
+    meta.append(firstSeen, lastSeen);
+    copy.append(heading, detail, meta);
+
+    let action;
+    if (alert.status === "resolved") {
+      action = document.createElement("span");
+      action.className = "health-label ok vitals-alert-action";
+      action.textContent = "Resolved";
+    } else {
+      action = document.createElement("button");
+      action.type = "button";
+      action.className = "secondary-button vitals-alert-action";
+      action.disabled = Boolean(alert.conditionActive);
+      action.appendChild(icon(alert.conditionActive ? AlertTriangle : CheckCircle2, 14));
+      const label = document.createElement("span");
+      label.textContent = alert.conditionActive ? "Still active" : "Confirm resolved";
+      action.appendChild(label);
+      action.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.resolveAlert(alert.id, action);
+      });
+    }
+    if (alert.sourceType === "component") {
+      row.classList.add("selectable");
+      row.addEventListener("click", () => {
+        this.selectComponent(alert.sourceId);
+        this.closeAlertPanel();
+      });
+    }
+    row.append(marker, copy, action);
+    return row;
+  }
+
+  async resolveAlert(alertId, button) {
+    button.disabled = true;
+    try {
+      const settings = this.settings();
+      const response = await fetch(`/api/vitals/alerts/${alertId}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operator: settings.userId || "operator" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Resolve failed (${response.status})`);
+      this.handleAlerts({ ...data, notifyAlertIds: [] });
+      if (this.alertMode === "history") await this.setAlertMode("history");
+    } catch (error) {
+      button.disabled = false;
+      if (byId("vitalsAlertSummary")) byId("vitalsAlertSummary").textContent = String(error);
+    }
+  }
+
+  showNextWarning() {
+    const layer = byId("vitalsWarningLayer");
+    if (!layer?.hidden || this.currentAlert) return;
+    while (this.alertQueue.length) {
+      const alertId = this.alertQueue.shift();
+      const alert = this.alerts.find((candidate) => Number(candidate.id) === Number(alertId));
+      if (!alert?.conditionActive) continue;
+      this.currentAlert = alert;
+      const dialog = layer.querySelector(".vitals-warning-dialog");
+      dialog?.setAttribute("data-severity", safeHealth(alert.severity));
+      if (byId("vitalsWarningSeverity")) byId("vitalsWarningSeverity").textContent = safeHealth(alert.severity).toUpperCase();
+      if (byId("vitalsWarningTitle")) byId("vitalsWarningTitle").textContent = alert.label || "Robot alert";
+      if (byId("vitalsWarningDetail")) byId("vitalsWarningDetail").textContent = alert.detail || "A health anomaly requires attention.";
+      if (byId("vitalsWarningSource")) byId("vitalsWarningSource").textContent = `${alert.sourceType}: ${alert.sourceId}`;
+      if (byId("vitalsWarningTime")) byId("vitalsWarningTime").textContent = formatDateTime(alert.firstSeenAtMs);
+      if (byId("vitalsWarningInspect")) {
+        byId("vitalsWarningInspect").textContent = alert.sourceType === "component" ? "Inspect component" : "Open alert center";
+      }
+      layer.hidden = false;
+      byId("vitalsWarningDismiss")?.focus();
+      return;
+    }
+  }
+
+  closeWarning() {
+    const layer = byId("vitalsWarningLayer");
+    if (layer) layer.hidden = true;
+    this.currentAlert = null;
+    window.setTimeout(() => this.showNextWarning(), 120);
+  }
+
+  inspectCurrentAlert() {
+    const alert = this.currentAlert;
+    if (alert?.sourceType === "component") this.selectComponent(alert.sourceId);
+    else this.openAlertPanel();
+    this.closeWarning();
   }
 
   setSoftwareMode(mode) {
@@ -868,6 +1343,7 @@ class VitalsDashboard {
     this.renderHardware();
     this.renderSoftware();
     this.renderSources();
+    this.renderAlerts();
   }
 
   renderDescription() {
@@ -877,6 +1353,9 @@ class VitalsDashboard {
       byId("vitalsRobotMeta").textContent = description ? `${description.id} · ${description.family || "generic"}` : "Waiting for Soma";
     }
     if (byId("vitalsStageName")) byId("vitalsStageName").textContent = description?.displayName || "Robot";
+    if (byId("vitalsStageSelection")) {
+      byId("vitalsStageSelection").textContent = this.selectedComponent()?.label || description?.displayName || "Robot";
+    }
     const dimensions = description?.dimensions;
     if (byId("vitalsStageDimensions")) {
       byId("vitalsStageDimensions").textContent = dimensions
@@ -1125,6 +1604,8 @@ if (root) {
   const dashboard = new VitalsDashboard(root);
   window.__robonixVitalsDebug = {
     canvasStats: () => dashboard.viewport?.canvasStats() || null,
+    componentVisualStats: (componentId) => dashboard.viewport?.componentVisualStats(componentId) || null,
+    selectionStats: () => dashboard.viewport?.selectionStats() || null,
     state: () => ({
       active: dashboard.active,
       robotId: dashboard.description?.id || "",
@@ -1132,7 +1613,11 @@ if (root) {
       hardwareSignals: dashboard.hardware?.signals?.length || 0,
       modules: dashboard.modules?.modules?.length || 0,
       providers: dashboard.providers?.providers?.length || 0,
+      alerts: dashboard.alerts?.length || 0,
+      selectedComponentId: dashboard.selectedComponentId,
       renderMode: dashboard.renderMode,
+      proceduralKind: dashboard.viewport?.proceduralKind || "",
+      modelStats: { ...(dashboard.viewport?.modelStats || {}) },
     }),
   };
 }

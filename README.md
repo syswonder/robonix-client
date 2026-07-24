@@ -251,8 +251,17 @@ discovers and combines these robot-local contracts through Atlas:
 
 The 3D view uses a model URL when the Soma description provides one, then a
 URDF with browser-renderable visual geometry, and finally a procedural renderer
-selected from robot family and component types. The procedural path keeps a
-new robot visible even when its URDF references simulator-local mesh files.
+selected from robot family and component types. URDF-local mesh and texture
+files attached to Soma's `get_urdf` response are cached behind a same-origin
+resource URL, so this path does not depend on a robot model name. The
+procedural renderer remains the final fallback.
+
+Vitals persists hardware, module, and provider incidents in
+`~/.local/share/robonix-client/vitals-alerts.sqlite3`. Set
+`ROBONIX_CLIENT_VITALS_DB` to use another database path. A reported anomaly is
+`active`; after the source becomes healthy it remains `recovered` in the alert
+center until an operator confirms it as resolved. Active incidents cannot be
+cleared manually, and resolved incidents remain available in alert history.
 
 The compiled browser bundle is committed under `src/robonix_client/static`, so
 Node.js is not required to run the Python package. To rebuild or test the
