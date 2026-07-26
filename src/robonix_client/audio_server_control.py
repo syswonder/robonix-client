@@ -178,16 +178,19 @@ def start(
 
 def stop() -> dict[str, Any]:
     global _process, _log_handle
-    if _process is None or _process.poll() is not None:
-        return {"ok": True, "running": False}
-    _process.terminate()
     try:
-        _process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        _process.kill()
-    if _log_handle is not None:
-        _log_handle.close()
-        _log_handle = None
+        if _process is not None and _process.poll() is None:
+            _process.terminate()
+            try:
+                _process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _process.kill()
+                _process.wait(timeout=5)
+    finally:
+        _process = None
+        if _log_handle is not None:
+            _log_handle.close()
+            _log_handle = None
     return {"ok": True, "running": False}
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from pathlib import Path
 
 from robonix_client import audio_server_control
@@ -133,3 +134,65 @@ def test_start_rejects_unsupported_local_audio_platform(monkeypatch) -> None:
     assert result["ok"] is False
     assert result["backend"] == "unsupported"
     assert "Linux, macOS, and Windows" in result["error"]
+
+
+def test_stop_terminates_then_kills_and_reaps_owned_process(monkeypatch) -> None:
+    _reset_audio_process()
+    events: list[object] = []
+
+    class FakeProcess:
+        def poll(self):
+            events.append("poll")
+            return None
+
+        def terminate(self) -> None:
+            events.append("terminate")
+
+        def wait(self, timeout: float) -> None:
+            events.append(("wait", timeout))
+            if events.count(("wait", timeout)) == 1:
+                raise subprocess.TimeoutExpired(cmd="audio-device-server", timeout=timeout)
+
+        def kill(self) -> None:
+            events.append("kill")
+
+    class FakeLogHandle:
+        def close(self) -> None:
+            events.append("close")
+
+    process = FakeProcess()
+    log_handle = FakeLogHandle()
+    monkeypatch.setattr(audio_server_control, "_process", process)
+    monkeypatch.setattr(audio_server_control, "_log_handle", log_handle)
+
+    result = audio_server_control.stop()
+
+    assert result == {"ok": True, "running": False}
+    assert events == [
+        "poll",
+        "terminate",
+        ("wait", 5),
+        "kill",
+        ("wait", 5),
+        "close",
+    ]
+    assert audio_server_control._process is None
+    assert audio_server_control._log_handle is None
+
+
+def test_stop_is_harmless_for_external_audio_server(monkeypatch) -> None:
+    _reset_audio_process()
+    monkeypatch.setattr(audio_server_control, "_port_open", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        audio_server_control,
+        "_blocking_health",
+        lambda *_args, **_kwargs: {"reachable": True},
+    )
+
+    result = audio_server_control.start(port=60100)
+
+    assert result["ok"] is True
+    assert result["external"] is True
+    assert audio_server_control._process is None
+    assert audio_server_control.stop() == {"ok": True, "running": False}
+    assert audio_server_control._process is None

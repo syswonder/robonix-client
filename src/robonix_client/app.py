@@ -151,9 +151,12 @@ async def start_client_audio() -> None:
 @app.on_event("shutdown")
 async def stop_client_audio() -> None:
     global _reverse_audio
-    if _reverse_audio is not None:
-        _reverse_audio.stop()
+    try:
+        if _reverse_audio is not None:
+            _reverse_audio.stop()
+    finally:
         _reverse_audio = None
+        audio_server_control.stop()
 
 
 @app.get("/")
