@@ -60,6 +60,30 @@ class FrontendStructureTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, frontend)
 
+    def test_voiceprint_profile_exposes_state_waveform_and_playback(self) -> None:
+        for identifier in (
+            "voiceprintSummary",
+            "voiceprintPreview",
+            "voiceprintWaveform",
+            "voiceprintPreviewMeta",
+            "playVoiceprintPreview",
+            "voiceprintPreviewAudio",
+        ):
+            with self.subTest(identifier=identifier):
+                self.assertIn(f'id="{identifier}"', self.html)
+
+        for behavior in (
+            "No voiceprint enrolled.",
+            "Voiceprint enrolled.",
+            "refreshVoiceprintPreview",
+            "drawVoiceprintWaveform",
+            "displayGain",
+            "playVoiceprintPreview",
+            "audio.play()",
+        ):
+            with self.subTest(behavior=behavior):
+                self.assertIn(behavior, self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()
