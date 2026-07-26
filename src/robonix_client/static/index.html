@@ -3,451 +3,652 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260715b" />
+    <script>
+      (() => {
+        const saved = localStorage.getItem("robonix.theme");
+        const preference = ["auto", "dark", "light"].includes(saved) ? saved : "auto";
+        const resolved = preference === "auto"
+          ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+          : preference;
+        document.documentElement.dataset.themePreference = preference;
+        document.documentElement.dataset.theme = resolved;
+        document.documentElement.style.colorScheme = resolved;
+      })();
+    </script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260726e" />
+    <link rel="stylesheet" href="/static/next-ui.css?v=20260726h" />
   </head>
   <body>
-    <main class="auth-shell" id="authShell">
-      <section class="auth-stage">
-        <div class="auth-brand">
-          <span class="auth-mark" aria-hidden="true">R</span>
-          <div>
-            <strong>Robonix</strong>
-            <span>Robot access console</span>
+    <main class="auth-layout" id="authShell">
+      <section class="auth-surface" aria-labelledby="authBrand">
+        <header class="auth-brand">
+          <h1 id="authBrand">Robonix</h1>
+          <p>Embodied AI Operating System</p>
+        </header>
+
+        <section class="auth-step" id="robotConnectionStep">
+          <div class="section-heading">
+            <h2>Connect to a robot</h2>
+            <p>Enter the address of the robot running Robonix.</p>
           </div>
-        </div>
-        <div class="identity-field" aria-hidden="true">
-          <span></span><span></span><span></span><span></span><span></span>
-        </div>
-        <div class="auth-copy">
-          <p class="eyebrow">IDENTITY / CONTROL</p>
-          <h1>Your account travels with every task.</h1>
-          <p>Sign in before sending text or voice to the robot. Voice verification follows your account policy.</p>
-        </div>
-      </section>
-      <section class="auth-card">
-        <div class="auth-tabs" role="tablist">
-          <button class="auth-tab active" type="button" data-auth-tab="login">Log in</button>
-          <button class="auth-tab" type="button" data-auth-tab="signup">Sign up</button>
-          <button class="auth-tab" type="button" data-auth-tab="admin">Admin</button>
-        </div>
-        <form class="auth-form active" id="loginForm" data-auth-panel="login">
-          <header><h2>Welcome back</h2><p>Use your Robonix account.</p></header>
-          <label><span>Username</span><input id="loginUsername" autocomplete="username" required /></label>
-          <label><span>Password</span><input id="loginPassword" type="password" autocomplete="current-password" required /></label>
-          <button class="auth-primary" type="submit">Log in</button>
-        </form>
-        <form class="auth-form" id="signupForm" data-auth-panel="signup">
-          <header><h2>Create account</h2><p>An administrator can change your role and voice policy later.</p></header>
-          <label><span>Username</span><input id="signupUsername" autocomplete="username" minlength="3" required /></label>
-          <label><span>Display name</span><input id="signupDisplayName" autocomplete="name" required /></label>
-          <label><span>Email</span><input id="signupEmail" type="email" autocomplete="email" /></label>
-          <label><span>Password</span><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required /></label>
-          <button class="auth-primary" type="submit">Create account</button>
-        </form>
-        <form class="auth-form" id="adminLoginForm" data-auth-panel="admin">
-          <header><h2>Administrator</h2><p>Admin accounts can manage users after signing in.</p></header>
-          <label><span>Username</span><input id="adminUsername" autocomplete="username" required /></label>
-          <label><span>Password</span><input id="adminPassword" type="password" autocomplete="current-password" required /></label>
-          <button class="auth-primary" type="submit">Open Admin Board</button>
-        </form>
-        <p class="auth-error" id="authError" role="alert"></p>
-        <details class="auth-connection">
-          <summary>Robot connection</summary>
-          <label><span>Robot host</span><input id="authRobotHost" placeholder="100.x.y.z" /></label>
-          <label><span>Atlas port</span><input id="authAtlasPort" inputmode="numeric" placeholder="50051" /></label>
-          <label><span>Liaison endpoint</span><input id="authLiaisonEndpoint" placeholder="Optional; defaults to robot:50081" /></label>
-        </details>
+          <input class="field"
+            id="authRobotHost"
+            label="Robot IP or hostname"
+            autocomplete="url"
+            placeholder="100.x.y.z"
+            required
+           aria-label="Robot IP or hostname" />
+          <button class="button primary-button" id="connectRobotAction" type="button">Connect</button>
+          <p class="inline-status" id="robotConnectionStatus" role="status"></p>
+        </section>
+
+        <section class="auth-step auth-hidden" id="accountAccessStep">
+          <div class="list connection-summary">
+            <div class="list-item">
+              <span class="connection-primary">
+                <i class="status-light online" aria-hidden="true"></i>
+                <span id="connectedRobotLabel">Robot connected</span>
+              </span>
+              <button class="ghost-button" id="changeRobotAction" type="button">Change</button>
+            </div>
+          </div>
+          <div class="tabs auth-tabs" aria-label="Account access">
+            <button class="tab active" data-auth-tab="login" aria-selected="true">Log in</button>
+            <button class="tab" data-auth-tab="signup" aria-selected="false" tabindex="-1">Sign up</button>
+          </div>
+          <form class="auth-form active" id="loginForm" data-auth-panel="login">
+            <div class="section-heading">
+              <h2>Log in</h2>
+              <p>Use an account stored on this robot.</p>
+            </div>
+            <input class="field" id="loginUsername" label="Username" autocomplete="username" required placeholder="Username" aria-label="Username" />
+            <input class="field" id="loginPassword" label="Password" type="password" autocomplete="current-password" required placeholder="Password" aria-label="Password" />
+            <button class="button primary-button" type="submit">Log in</button>
+            <button class="ghost-button" id="adminLoginAction" type="button">Log in to Admin Console</button>
+          </form>
+          <form class="auth-form" id="signupForm" data-auth-panel="signup">
+            <div class="section-heading">
+              <h2>Create account</h2>
+              <p>Create a user account on this robot.</p>
+            </div>
+            <input class="field" id="signupUsername" label="Username" autocomplete="username" minlength="3" required placeholder="Username" aria-label="Username" />
+            <input class="field" id="signupDisplayName" label="Display name" autocomplete="name" required placeholder="Display name" aria-label="Display name" />
+            <input class="field" id="signupEmail" label="Email" type="email" autocomplete="email" placeholder="Email" aria-label="Email" />
+            <input class="field" id="signupPassword" label="Password" type="password" autocomplete="new-password" minlength="8" required placeholder="Password" aria-label="Password" />
+            <button class="button primary-button" type="submit">Create account</button>
+          </form>
+        </section>
+        <p class="error-text" id="authError" role="alert"></p>
       </section>
     </main>
 
-    <div class="app-shell auth-hidden" id="appShell">
-      <aside class="nav-rail">
-        <div class="brand">Robonix Client</div>
-        <nav class="nav-list" aria-label="Workspace">
-          <button class="nav-item active" type="button" data-page="dashboard"><span>Chat</span></button>
-          <button class="nav-item" type="button" data-page="audio"><span>Audio</span></button>
-          <button class="nav-item" type="button" data-page="settings"><span>Settings</span></button>
-          <button class="nav-item" type="button" data-page="profile"><span>Profile</span></button>
-          <button class="nav-item admin-only" type="button" data-page="admin" hidden><span>Admin Board</span></button>
-        </nav>
-        <div class="account-dock">
-          <strong id="accountDockName">Account</strong>
-          <span id="accountDockRole">user</span>
-          <button type="button" id="logoutButton">Log out</button>
+    <div class="app-layout auth-hidden" id="appShell">
+      <aside class="app-navigation" aria-label="Primary navigation">
+        <a class="wordmark" href="/chat" aria-label="Robonix Client">Robonix</a>
+        <div class="list navigation-list">
+          <button type="button" data-page="dashboard" class="nav-item nav-destination active">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zm-9.18-6.95L7.4 14.46 10.94 18l5.66-5.66-1.41-1.41-4.24 4.24-2.13-2.12z"/></svg>
+            <span>Tasks</span>
+          </button>
+          <button type="button" data-page="executions" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3h7zM7 9H4V5h3v4zm10 6h3v4h-3v-4zm0-10h3v4h-3V5z"/></svg>
+            <span>Executions</span>
+          </button>
+          <button type="button" data-page="logs" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm1 5v2h12V8H6Zm0 4v2h8v-2H6Zm0 4v2h10v-2H6Z"/></svg>
+            <span>Logs</span>
+          </button>
+          <button type="button" data-page="vitals" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4c-1.1 0-2 .9-2 2v3h2V6h16v3h2V6c0-1.1-.9-2-2-2zm0 14H4v-3H2v3c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-3h-2v3z"/><path d="M14.89 7.55c-.34-.68-1.45-.68-1.79 0L10 13.76l-1.11-2.21A.988.988 0 0 0 8 11H2v2h5.38l1.72 3.45c.18.34.52.55.9.55s.72-.21.89-.55L14 10.24l1.11 2.21c.17.34.51.55.89.55h6v-2h-5.38l-1.73-3.45z"/></svg>
+            <span>Vitals</span>
+          </button>
+          <button type="button" data-page="audio" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+            <span>Audio</span>
+          </button>
+          <button type="button" data-page="settings" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.1 7.1 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46a.5.5 0 0 0 .61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1a.5.5 0 0 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+            <span>Settings</span>
+          </button>
+          <button type="button" data-page="profile" class="nav-item nav-destination">
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2m0 10c2.7 0 5.8 1.29 6 2H6c.23-.72 3.31-2 6-2m0-12C9.79 4 8 5.79 8 8s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm0 10c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <span>Profile</span>
+          </button>
+          <button type="button" data-page="admin" class="nav-item nav-destination admin-only" hidden>
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 11.09V6.27L10.5 3 3 6.27v4.91c0 4.54 3.2 8.79 7.5 9.82.55-.13 1.08-.32 1.6-.55A5.973 5.973 0 0 0 17 23c3.31 0 6-2.69 6-6 0-2.97-2.16-5.43-5-5.91zM11 17c0 .56.08 1.11.23 1.62-.24.11-.48.22-.73.3-3.17-1-5.5-4.24-5.5-7.74v-3.6l5.5-2.4 5.5 2.4v3.51c-2.84.48-5 2.94-5 5.91zm6 4c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/></svg>
+            <span>Admin</span>
+          </button>
+        </div>
+        <hr class="divider" />
+        <div class="account-summary">
+          <div>
+            <strong id="accountDockName">Account</strong>
+            <span id="accountDockRole">user</span>
+          </div>
+          <button class="ghost-button" id="logoutButton" type="button">Log out</button>
         </div>
       </aside>
 
-      <main class="workspace">
-        <header class="command-bar">
-          <div class="select-field wide">
-            <span>Session</span>
-            <button type="button" id="newSession">Morning Ops</button>
+      <main class="app-main">
+        <header class="top-app-bar">
+          <div class="page-identity">
+            <span class="page-kicker">Robonix Client</span>
+            <strong id="topPageTitle">Tasks</strong>
           </div>
-          <label class="select-field endpoint">
-            <span>Robot Host</span>
-            <input id="robotHost" autocomplete="off" placeholder="100.x.y.z" />
-          </label>
-          <label class="select-field">
-            <span>Atlas Port</span>
-            <input id="atlasPort" autocomplete="off" inputmode="numeric" placeholder="50051" />
-          </label>
-          <label class="select-field">
-            <span>Account</span>
-            <input id="userId" autocomplete="off" readonly />
-          </label>
-          <button class="status-chip" id="refreshSystem" type="button">
-            <span class="dot"></span>
-            <span id="connectionState">offline</span>
-          </button>
-          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech">
-            <span class="dot"></span>
-            <span id="handsfreeState">Hands-free off</span>
-          </button>
-          <button class="button connect-button" id="connectNow" type="button">Connect</button>
+          <div class="top-app-actions">
+            <button class="status-chip" id="refreshSystem">
+              <i class="status-light" aria-hidden="true"></i>
+              <span id="connectionState">Offline</span>
+            </button>
+            <button class="status-chip" id="handsfreeToggle" title="Robot-local wake phrase configured by Speech">
+              <i class="status-light" aria-hidden="true"></i>
+              <span id="handsfreeState">Hands-free off</span>
+            </button>
+          </div>
         </header>
 
-        <section class="page dashboard-page active" data-page-panel="dashboard">
-          <section class="dashboard-grid">
-            <section class="panel conversation-panel">
-            <div class="panel-header">
-              <div>
-                <h2>Conversation</h2>
-                <span id="promptTitle">What should Robonix do?</span>
-              </div>
-              <div class="panel-actions">
-                <button class="ghost-button" id="renameSession" type="button">Rename</button>
-                <button class="ghost-button" id="clearHistory" type="button">Clear</button>
-              </div>
-            </div>
-            <div class="chat-body">
-              <aside class="conversation-history" id="historyList"></aside>
-              <div class="messages" id="messages"></div>
-            </div>
-            <form class="composer" id="composer">
-              <div class="composer-row">
-                <textarea id="taskInput" rows="1" placeholder="Type a message..."></textarea>
-                <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice session">Voice</button>
-                <button class="danger-button stop-button" type="button" id="stopButton" title="Stop current task" hidden>Stop</button>
-                <button class="send-button" type="submit" id="sendButton" title="Send task">Send</button>
-              </div>
-            </form>
+        <section class="app-page active" data-page-panel="dashboard">
+          <div class="tasks-layout">
+            <aside class="conversation-drawer panel">
+              <header class="surface-header">
+                <div>
+                  <h2>Conversations</h2>
+                  <p>Saved in this browser</p>
+                </div>
+                <button class="icon-button" id="newSession" type="button" data-new-session aria-label="New conversation">
+                  <span aria-hidden="true">＋</span>
+                </button>
+              </header>
+              <hr class="divider" />
+              <div id="historyList" class="list conversation-list"></div>
+            </aside>
+
+            <section class="conversation-workspace panel">
+              <header class="surface-header">
+                <div>
+                  <h1 id="promptTitle">What should Robonix do?</h1>
+                  <p>Send a task or steer work already in progress.</p>
+                </div>
+                <div class="header-actions">
+                  <button class="ghost-button" id="renameSession" type="button">Rename</button>
+                  <button class="ghost-button" id="clearHistory" type="button">Clear</button>
+                </div>
+              </header>
+              <hr class="divider" />
+              <div class="messages" id="messages" aria-live="polite"></div>
+              <form class="message-composer" id="composer">
+                <textarea
+                  id="taskInput"
+                  class="field message-field"
+                  rows="1"
+                  label="Message"
+                  placeholder="Type a message"
+                 aria-label="Message"></textarea>
+                <div class="composer-actions">
+                  <button class="button" type="button" data-page-action="voice-start">Voice</button>
+                  <button class="button primary-button danger-action" id="stopButton" type="button" hidden>Stop</button>
+                  <button class="button primary-button" id="sendButton" type="submit">Send</button>
+                </div>
+              </form>
             </section>
 
-            <section class="dashboard-sidebar" id="dashboardSidebar">
-              <section class="panel current-goal-panel">
-                <div class="panel-header compact">
+            <aside class="activity-drawer">
+              <section class="panel activity-summary">
+                <header class="surface-header">
                   <div>
-                    <h2>Current Goal</h2>
-                    <span>Current task and selected goal context.</span>
+                    <h2>Current activity</h2>
+                    <p id="goalLine">Waiting for a task</p>
                   </div>
-                </div>
-                <div class="goal-line" id="goalLine">Goal: waiting for a task.</div>
+                </header>
                 <div class="goal-preview" data-goal-preview></div>
               </section>
 
-              <section class="panel rtdl-panel execution-panel">
-                <div class="panel-header">
+              <section class="panel">
+                <header class="surface-header">
                   <div>
-                    <h2>RTDL Forest</h2>
-                    <span data-plan-summary>waiting for real plan</span>
+                    <h2>Active plans</h2>
+                    <p id="activeRtdlSummary">Executor state unavailable</p>
                   </div>
-                </div>
-                <button class="rtdl-history-launch active-rtdl-launch" id="openActiveRtdl" type="button">
-                  <span>
-                    <strong>Active RTDL</strong>
-                    <small id="activeRtdlSummary">Open live Executor plans</small>
-                  </span>
-                  <span class="rtdl-history-count" id="activeRtdlCount">unavailable</span>
-                </button>
-                <div class="execution-table">
-                  <div class="table-head">
-                    <span>Node</span>
-                    <span>Type</span>
-                    <span>Status</span>
-                    <span>Provider / ID</span>
-                    <span>Duration</span>
-                    <span>Started</span>
-                  </div>
-                  <div class="plan-tree" data-plan-tree="full"></div>
-                </div>
-                <button class="rtdl-history-launch" id="openRtdlHistory" type="button">
-                  <span>
-                    <strong>Execution history</strong>
-                    <small>Open completed RTDL plans in a full workspace</small>
-                  </span>
-                  <span class="rtdl-history-count" id="rtdlHistoryCount">0</span>
-                </button>
-                <div class="execution-detail" id="executionDetail">
-                  <div class="detail-title" id="executionDetailTitle">Node detail</div>
-                  <div class="detail-grid">
-                    <div><span>Provider / ID</span><strong id="activeProvider">-</strong></div>
-                    <div><span>Started</span><strong id="activeStarted">-</strong></div>
-                    <div><span>Duration</span><strong id="activeDuration">-</strong></div>
-                  </div>
-                  <pre class="args" id="activeArgs">{}</pre>
+                  <button class="status-chip" id="activeRtdlCount">0</button>
+                </header>
+                <div class="list">
+                  <button class="list-item list-action" id="openActiveRtdl" type="button">
+                    <span>Open executions</span>
+                    <span>Inspect RTDL plans and nodes</span>
+                  </button>
                 </div>
               </section>
 
-              <section class="panel trace-panel thought-panel">
-                <div class="panel-header">
+              <section class="panel">
+                <header class="surface-header">
                   <div>
-                    <h2>Event Log</h2>
-                    <span><span data-event-summary>0</span> event(s)</span>
+                    <h2>Recent events</h2>
+                    <p><span data-event-summary>0</span> events</p>
                   </div>
-                  <span data-current-task-label>Current Task: idle</span>
-                </div>
-                <div class="event-list" data-event-list></div>
+                </header>
+                <div class="list event-list compact" data-event-list></div>
+                <button class="ghost-button" id="openRtdlHistory" type="button">View execution history</button>
               </section>
+            </aside>
+          </div>
+        </section>
+
+        <section class="app-page" data-page-panel="executions">
+          <div class="page-heading">
+            <div>
+              <h1>Executions</h1>
+              <p>Inspect active and completed RTDL plans.</p>
+            </div>
+            <input class="field" id="executionSearch" type="search" label="Search executions" placeholder="Search executions" aria-label="Search executions" />
+          </div>
+          <div class="tabs" id="executionTabs" aria-label="Execution view">
+            <button class="tab active" data-execution-tab="active" aria-selected="true">Active</button>
+            <button class="tab" data-execution-tab="history" aria-selected="false" tabindex="-1">History</button>
+          </div>
+          <section class="execution-workspace active" data-execution-panel="active">
+            <aside class="execution-list panel">
+              <header class="surface-header">
+                <div>
+                  <h2>Active plans</h2>
+                  <p id="activeRtdlModalSummary">Live plans reported by Executor</p>
+                </div>
+              </header>
+              <input class="field" id="activeRtdlSearch" type="search" label="Filter plans" placeholder="Filter plans" aria-label="Filter plans" />
+              <div id="activeRtdlList" class="active-rtdl-list" aria-live="polite"></div>
+            </aside>
+            <section class="execution-graph panel">
+              <header class="surface-header">
+                <div>
+                  <h2>RTDL graph</h2>
+                  <p data-plan-summary>No RTDL tree is currently executing</p>
+                </div>
+              </header>
+              <div class="plan-tree" data-plan-tree="full"></div>
             </section>
+            <aside class="node-inspector panel">
+              <header class="surface-header">
+                <div>
+                  <h2 id="executionDetailTitle">Node detail</h2>
+                  <p>Select a node in the graph.</p>
+                </div>
+              </header>
+              <dl class="detail-list">
+                <div><dt>Provider / ID</dt><dd id="activeProvider">-</dd></div>
+                <div><dt>Started</dt><dd id="activeStarted">-</dd></div>
+                <div><dt>Duration</dt><dd id="activeDuration">-</dd></div>
+              </dl>
+              <pre class="structured-data" id="activeArgs">Select an RTDL node to inspect its arguments and result.</pre>
+            </aside>
+          </section>
+
+          <section class="execution-workspace" data-execution-panel="history">
+            <aside class="execution-list panel">
+              <header class="surface-header">
+                <div>
+                  <h2>History</h2>
+                  <p><span id="rtdlHistoryCount">0</span> completed plans</p>
+                </div>
+              </header>
+              <input class="field" id="rtdlHistorySearch" type="search" label="Filter history" placeholder="Filter history" aria-label="Filter history" />
+              <div id="rtdlHistoryTrees" class="history-plan-tree"></div>
+            </aside>
+            <section class="execution-graph panel history-graph">
+              <header class="surface-header">
+                <div>
+                  <h2>RTDL graph</h2>
+                  <p id="historyGraphSummary">No completed executions</p>
+                </div>
+              </header>
+              <div class="plan-tree" id="historyGraphTree"></div>
+            </section>
+            <aside class="node-inspector panel">
+              <header class="surface-header">
+                <div>
+                  <h2 id="historyExecutionDetailTitle">Node detail</h2>
+                  <p id="historyExecutionDetailSummary">No completed plan is available.</p>
+                </div>
+              </header>
+              <dl class="detail-list">
+                <div><dt>Provider / ID</dt><dd id="historyActiveProvider">-</dd></div>
+                <div><dt>Started</dt><dd id="historyActiveStarted">-</dd></div>
+                <div><dt>Duration</dt><dd id="historyActiveDuration">-</dd></div>
+              </dl>
+              <h3>Arguments</h3>
+              <pre class="structured-data" id="historyActiveArgs">No node arguments are available.</pre>
+              <h3>Result</h3>
+              <pre class="structured-data" id="historyActiveResult">No node result is available.</pre>
+              <h3>Execution record</h3>
+              <pre class="structured-data" id="historyActiveRecord">No execution record is available.</pre>
+            </aside>
           </section>
         </section>
 
-        <section class="page work-page audio-page" data-page-panel="audio">
-          <section class="audio-layout">
-            <section class="audio-column audio-config-column">
-            <section class="panel audio-panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Audio Device Server</h2>
-                  <span id="audioServerSummary">Client-machine audio device server is not checked yet.</span>
-                </div>
-                <span id="audioServerState">offline</span>
+        <section class="app-page" data-page-panel="vitals">
+          <div class="page-heading">
+            <div>
+              <h1>Vitals</h1>
+              <p>Robot health and alerts.</p>
+            </div>
+          </div>
+          <section class="panel placeholder-page">
+            <span class="spinner" aria-label="Vitals integration pending"></span>
+            <h2>Vitals integration is pending</h2>
+            <p>The existing Vitals implementation will be migrated here after its service and Client changes land.</p>
+          </section>
+        </section>
+
+        <section class="app-page" data-page-panel="logs">
+          <div class="page-heading">
+            <div>
+              <h1>Logs</h1>
+              <p>Search task, voice, and execution events from this Client session.</p>
+            </div>
+            <div class="log-toolbar">
+              <input class="field" id="eventLogFilter" type="search" aria-label="Filter events" placeholder="Filter events" autocomplete="off" />
+              <button class="ghost-button" id="clearEventLogFilter" type="button">Clear</button>
+            </div>
+          </div>
+          <section class="panel log-workspace">
+            <header class="surface-header">
+              <div>
+                <h2>Event stream</h2>
+                <p><span data-event-summary>0</span> events in the current conversation</p>
               </div>
-              <div class="audio-actions">
-                <button class="button" id="startAudioServer" type="button">Start Audio</button>
+            </header>
+            <div class="event-list log-page-list" data-event-list></div>
+          </section>
+        </section>
+
+        <section class="app-page" data-page-panel="audio">
+          <div class="page-heading">
+            <div>
+              <h1>Audio</h1>
+              <p>Choose the devices used for voice interaction.</p>
+            </div>
+            <button class="status-chip" id="audioServerState">Offline</button>
+          </div>
+          <div class="settings-grid">
+            <section class="panel settings-section">
+              <header class="surface-header">
+                <div>
+                  <h2>Audio device server</h2>
+                  <p id="audioServerSummary">Not checked yet.</p>
+                </div>
+              </header>
+              <div class="button-row">
+                <button class="button primary-button" id="startAudioServer" type="button">Start audio</button>
                 <button class="button" id="checkAudioServer" type="button">Check</button>
-                <button class="button" id="refreshAudioDevices" type="button">Refresh Devices</button>
+                <button class="button" id="refreshAudioDevices" type="button">Refresh devices</button>
               </div>
-              <div class="audio-status-grid" id="audioServerStatus"></div>
+              <div class="list" id="audioServerStatus"></div>
             </section>
 
-            <section class="panel audio-panel">
-              <div class="panel-header">
+            <section class="panel settings-section">
+              <header class="surface-header">
                 <div>
-                  <h2>Robonix Audio Route</h2>
-                  <span>Select the primitive and device used by F2 and hands-free interaction.</span>
+                  <h2>Audio route</h2>
+                  <p>Select the input and output used by F2 and hands-free interaction.</p>
                 </div>
+              </header>
+              <div class="field-grid">
+                <select class="field select-field" id="micNodeId" label="Input primitive"></select>
+                <select class="field select-field" id="micDeviceId" label="Input device"></select>
+                <select class="field select-field" id="speakerNodeId" label="Output primitive"></select>
+                <select class="field select-field" id="speakerDeviceId" label="Output device"></select>
               </div>
-              <div class="audio-device-grid">
-                <label class="field">
-                  <span>Input Primitive</span>
-                  <select id="micNodeId"></select>
-                </label>
-                <label class="field">
-                  <span>Input Device</span>
-                  <select id="micDeviceId"></select>
-                </label>
-                <label class="field">
-                  <span>Output Primitive</span>
-                  <select id="speakerNodeId"></select>
-                </label>
-                <label class="field">
-                  <span>Output Device</span>
-                  <select id="speakerDeviceId"></select>
-                </label>
+              <div class="button-row">
+                <button class="button" id="refreshAudioRoute" type="button">Refresh route</button>
+                <button class="button primary-button" id="applyAudioRoute" type="button">Apply route</button>
               </div>
-              <div class="audio-device-actions">
-                <button class="button" id="refreshAudioRoute" type="button">Refresh Route</button>
-                <button class="button" id="applyAudioRoute" type="button">Apply Route</button>
-              </div>
-              <span class="audio-route-status" id="audioRouteStatus">No Robonix audio route loaded.</span>
+              <p class="inline-status" id="audioRouteStatus">No route loaded.</p>
             </section>
 
-            <section class="panel audio-panel">
-              <div class="panel-header">
+            <section class="panel settings-section">
+              <header class="surface-header">
                 <div>
-                  <h2>Client Bridge Diagnostics</h2>
-                  <span>Current local devices used when Audio Route selects the client bridge.</span>
+                  <h2>Device test</h2>
+                  <p>Verify the selected input and output.</p>
                 </div>
-              </div>
-              <div class="audio-device-grid audio-device-readout">
-                <div class="field">
+              </header>
+              <div class="list">
+                <div class="list-item">
                   <span>Microphone</span>
-                  <strong id="bridgeInputDevice">Not selected</strong>
+                  <span id="bridgeInputDevice">Not selected</span>
                 </div>
-                <div class="field">
+                <div class="list-item">
                   <span>Speaker</span>
-                  <strong id="bridgeOutputDevice">Not selected</strong>
+                  <span id="bridgeOutputDevice">Not selected</span>
                 </div>
               </div>
-              <div class="audio-device-actions">
-                <button class="button" id="testMicrophone" type="button">Test Microphone</button>
-                <button class="button" id="testSpeaker" type="button">Test Speaker</button>
+              <div class="button-row">
+                <button class="button" id="testMicrophone" type="button">Test microphone</button>
+                <button class="button" id="testSpeaker" type="button">Test speaker</button>
               </div>
-              <span class="audio-test-status" id="audioTestStatus" role="status">
-                Run a microphone or speaker test to verify the selected route.
-              </span>
+              <p class="inline-status" id="audioTestStatus">Run a test to verify the route.</p>
             </section>
 
-            <section class="panel audio-panel audio-meter-panel">
-              <div class="panel-header">
+            <section class="panel settings-section">
+              <header class="surface-header">
                 <div>
-                  <h2>Input Level</h2>
-                  <span id="audioLevelText">0%</span>
+                  <h2>Input level</h2>
+                  <p><span id="audioLevelText">0%</span> · <span id="audioLevelState">Idle</span></p>
                 </div>
-                <span id="audioLevelState">idle</span>
-              </div>
-              <div class="audio-meter">
-                <span id="audioLevelBar"></span>
-              </div>
+              </header>
+              <progress id="audioLevelBar" value="0" aria-label="Input level"></progress>
               <div class="audio-bars" id="audioBars" aria-hidden="true"></div>
             </section>
 
-            <section class="panel enroll-panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Voiceprint profile</h2>
-                  <span>Voice identity is managed from your Profile page.</span>
-                </div>
-              </div>
-              <button class="button" type="button" data-page-link="profile">Open Profile</button>
-            </section>
-            </section>
-
-            <section class="audio-column audio-log-column">
-            <section class="panel audio-log-panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Audio Log</h2>
-                  <span id="audioLogSummary">Audio device log.</span>
-                </div>
-              </div>
-              <pre class="audio-log" id="audioLog"></pre>
-            </section>
-            </section>
-          </section>
+            <details class="panel diagnostics-section">
+              <summary>Diagnostics</summary>
+              <p id="audioLogSummary">Audio device log</p>
+              <pre class="structured-data audio-log" id="audioLog"></pre>
+            </details>
+          </div>
         </section>
 
-        <section class="page work-page" data-page-panel="settings">
-          <section class="settings-page-grid">
-            <section class="panel">
-              <div class="panel-header">
+        <section class="app-page" data-page-panel="settings">
+          <div class="page-heading">
+            <div>
+              <h1>Settings</h1>
+              <p>Preferences for this Client and browser.</p>
+            </div>
+          </div>
+          <div class="settings-grid narrow">
+            <section class="panel settings-section">
+              <header class="surface-header">
+                <div>
+                  <h2>Appearance</h2>
+                  <p>Choose how Robonix Client follows this device.</p>
+                </div>
+              </header>
+              <label class="form-field" for="themePreference">
+                <span>Theme</span>
+                <select class="field select-field" id="themePreference">
+                  <option value="auto">Auto</option>
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+                <small>Auto follows the operating system appearance.</small>
+              </label>
+            </section>
+
+            <section class="panel settings-section">
+              <header class="surface-header">
                 <div>
                   <h2>Connection</h2>
-                  <span>Saved only in this client browser.</span>
+                  <p>Advanced connection values saved in this Client.</p>
                 </div>
+              </header>
+              <div class="field-grid">
+                <label class="form-field" for="robotHostSettings">
+                  <span>Robot host</span>
+                  <input class="field" id="robotHostSettings" placeholder="100.x.y.z" />
+                  <small>IP address or hostname of the robot running Robonix.</small>
+                </label>
+                <label class="form-field" for="atlasPortSettings">
+                  <span>Atlas port</span>
+                  <input class="field" id="atlasPortSettings" inputmode="numeric" placeholder="50051" />
+                  <small>Atlas discovery endpoint; the default is 50051.</small>
+                </label>
+                <label class="form-field" for="liaisonEndpoint">
+                  <span>Liaison endpoint</span>
+                  <input class="field" id="liaisonEndpoint" placeholder="Auto-discover from Atlas" />
+                  <small>Leave empty to discover Liaison through Atlas.</small>
+                </label>
+                <label class="form-field" for="settingsRecordSeconds">
+                  <span>Voice recording limit</span>
+                  <input class="field" id="settingsRecordSeconds" type="number" min="2" max="60" placeholder="30" />
+                  <small>Maximum recording duration in seconds.</small>
+                </label>
               </div>
-              <div class="form-grid">
-                <label class="field">
-                  <span>Robot Host</span>
-                  <input id="robotHostSettings" autocomplete="off" placeholder="100.x.y.z" />
-                </label>
-                <label class="field">
-                  <span>Atlas Port</span>
-                  <input id="atlasPortSettings" autocomplete="off" inputmode="numeric" placeholder="50051" />
-                </label>
-                <label class="field">
-                  <span>Liaison Endpoint</span>
-                  <input id="liaisonEndpoint" autocomplete="off" placeholder="Auto-discover from Atlas" />
-                </label>
-                <label class="field">
-                  <span>User ID</span>
-                  <input id="settingsUserId" autocomplete="off" readonly aria-readonly="true" />
-                </label>
-                <label class="field">
-                  <span>Voice Record Limit (s)</span>
-                  <input id="settingsRecordSeconds" type="number" min="2" max="60" step="1" />
-                </label>
+              <label class="form-field" for="settingsUserId">
+                <span>Authenticated user ID</span>
+                <input class="field" id="settingsUserId" readonly placeholder="Available after login" />
+                <small>Assigned by Keystone and not editable in this Client.</small>
+              </label>
+              <div class="button-row">
+                <button class="button primary-button" id="saveClientSettings" type="button">Save settings</button>
               </div>
-              <div class="audio-device-actions">
-                <button class="button" id="saveClientSettings" type="button">Save Settings</button>
-              </div>
-              <span class="audio-route-status" id="settingsStatus">Changes are saved locally.</span>
+              <p class="inline-status" id="settingsStatus">Changes are stored locally.</p>
             </section>
-          </section>
+          </div>
         </section>
 
-        <section class="page work-page" data-page-panel="profile">
-          <section class="profile-grid">
-            <section class="panel profile-identity">
-              <p class="eyebrow">YOUR ACCOUNT</p>
+        <section class="app-page" data-page-panel="profile">
+          <div class="page-heading">
+            <div>
+              <h1>Profile</h1>
+              <p>Manage your identity and voiceprint on this robot.</p>
+            </div>
+          </div>
+          <div class="profile-layout">
+            <section class="panel profile-summary">
               <div class="profile-avatar" id="profileAvatar">R</div>
               <h2 id="profileHeading">Profile</h2>
               <p id="profileUsername">@username</p>
-              <div class="profile-badges" id="profileBadges"></div>
+              <div class="chip-set" id="profileBadges"></div>
             </section>
-            <section class="panel profile-editor">
-              <div class="panel-header"><div><h2>Personal information</h2><span>Changes apply to future robot interactions.</span></div></div>
-              <form class="profile-form" id="profileForm">
-                <label class="field"><span>Display name</span><input id="profileDisplayName" required /></label>
-                <label class="field"><span>Email</span><input id="profileEmail" type="email" /></label>
-                <button class="button" type="submit">Save profile</button>
-                <span class="form-status" id="profileStatus"></span>
-              </form>
-              <div class="profile-section">
-                <h3>Change password</h3>
-                <form class="profile-form compact-profile-form" id="passwordForm">
-                  <label class="field"><span>Current password</span><input id="currentPassword" type="password" autocomplete="current-password" required /></label>
-                  <label class="field"><span>New password</span><input id="newPassword" type="password" minlength="8" autocomplete="new-password" required /></label>
-                  <button class="button" type="submit">Change password</button>
-                  <span class="form-status" id="passwordStatus"></span>
+            <div class="profile-sections">
+              <section class="panel settings-section">
+                <header class="surface-header">
+                  <div>
+                    <h2>Personal information</h2>
+                    <p>Changes apply to future robot interactions.</p>
+                  </div>
+                </header>
+                <form class="form-stack" id="profileForm">
+                  <input class="field" id="profileDisplayName" label="Display name" required placeholder="Display name" aria-label="Display name" />
+                  <input class="field" id="profileEmail" label="Email" type="email" placeholder="Email" aria-label="Email" />
+                  <button class="button primary-button" type="submit">Save profile</button>
+                  <p class="inline-status" id="profileStatus"></p>
                 </form>
-              </div>
-              <div class="profile-section voice-profile-section">
-                <div><h3>Voiceprint</h3><p id="voiceprintSummary">No voiceprint enrolled.</p></div>
-                <label class="field short-field"><span>Recording length</span><input id="profileVoiceSeconds" type="number" min="2" max="30" value="6" /></label>
-                <div class="profile-actions">
-                  <button class="button" type="button" id="replaceVoiceprint">Record / replace</button>
-                  <button class="ghost-button danger-text" type="button" id="removeVoiceprint">Remove</button>
+              </section>
+              <section class="panel settings-section">
+                <header class="surface-header">
+                  <div>
+                    <h2>Change password</h2>
+                    <p>Other sessions will be signed out.</p>
+                  </div>
+                </header>
+                <form class="form-stack" id="passwordForm">
+                  <input id="passwordUsername" type="text" autocomplete="username" tabindex="-1" aria-hidden="true" hidden />
+                  <input class="field" id="currentPassword" label="Current password" type="password" autocomplete="current-password" required placeholder="Current password" aria-label="Current password" />
+                  <input class="field" id="newPassword" label="New password" type="password" autocomplete="new-password" minlength="8" required placeholder="New password" aria-label="New password" />
+                  <button class="button primary-button" type="submit">Change password</button>
+                  <p class="inline-status" id="passwordStatus"></p>
+                </form>
+              </section>
+              <section class="panel settings-section">
+                <header class="surface-header">
+                  <div>
+                    <h2>Voiceprint</h2>
+                    <p id="voiceprintSummary">No voiceprint enrolled.</p>
+                  </div>
+                </header>
+                <input class="field" id="profileVoiceSeconds" label="Recording length (seconds)" type="number" min="2" max="30" value="6" placeholder="Recording length (seconds)" aria-label="Recording length (seconds)" />
+                <div class="button-row">
+                  <button class="button tonal-button" id="replaceVoiceprint" type="button">Record / replace</button>
+                  <button class="ghost-button danger-action" id="removeVoiceprint" type="button">Remove</button>
                 </div>
-                <span class="form-status" id="voiceprintStatus"></span>
-              </div>
-            </section>
+                <section class="voiceprint-preview" id="voiceprintPreview" hidden>
+                  <canvas id="voiceprintWaveform" aria-label="Saved voiceprint waveform"></canvas>
+                  <div class="button-row">
+                    <button class="button" id="playVoiceprintPreview" type="button">Play recording</button>
+                    <span id="voiceprintPreviewMeta"></span>
+                  </div>
+                  <audio id="voiceprintPreviewAudio" preload="metadata"></audio>
+                </section>
+                <p class="inline-status" id="voiceprintStatus"></p>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="app-page" data-page-panel="admin">
+          <div class="page-heading">
+            <div>
+              <h1>Admin Console</h1>
+              <p>Manage user access and voice verification.</p>
+            </div>
+            <button class="button" id="refreshAdminUsers" type="button">Refresh users</button>
+          </div>
+          <section class="panel settings-section">
+            <p id="adminSummary"></p>
+            <div id="adminUserList" class="admin-user-list"></div>
+            <p class="inline-status" id="adminStatus"></p>
           </section>
         </section>
 
-        <section class="page work-page" data-page-panel="admin">
-          <section class="admin-board">
-            <header class="admin-board-header">
-              <div><p class="eyebrow">ADMINISTRATION</p><h1>User accounts</h1><p>Manage access, administrator roles, and per-user voice verification.</p></div>
-              <button class="button" type="button" id="refreshAdminUsers">Refresh users</button>
-            </header>
-            <div class="admin-summary" id="adminSummary"></div>
-            <section class="admin-user-list" id="adminUserList"></section>
-            <span class="form-status" id="adminStatus"></span>
-          </section>
-        </section>
+        <div class="compatibility-fields" hidden aria-hidden="true">
+          <input class="field" id="robotHost" />
+          <input class="field" id="atlasPort" />
+          <input class="field" id="userId" />
+          <input class="field" id="recordSeconds" />
+          <input class="field" id="language" />
+          <input class="field" id="enrollUserId" />
+          <input class="field" id="enrollUserName" />
+          <span id="metricState"></span>
+          <span id="metricActive"></span>
+          <span id="metricErrors"></span>
+          <div id="contractList"></div>
+          <div id="providerList"></div>
+          <div id="attachmentStrip"></div>
+          <span id="voiceState"></span>
+          <span id="enrollState"></span>
+        </div>
       </main>
     </div>
 
-    <div class="modal-backdrop" id="activeRtdlModal" role="dialog" aria-modal="true" aria-labelledby="activeRtdlTitle" hidden>
-      <section class="active-rtdl-modal">
-        <header class="rtdl-history-modal-header">
-          <div>
-            <h2 id="activeRtdlTitle">Active RTDL</h2>
-            <span id="activeRtdlModalSummary">Live plans reported by Executor</span>
-          </div>
-          <button class="icon-button modal-close" id="closeActiveRtdl" type="button" aria-label="Close active RTDL">×</button>
-        </header>
-        <div class="active-rtdl-modal-body" id="activeRtdlList" aria-live="polite"></div>
-      </section>
-    </div>
+    <dialog class="dialog" id="renameConversationDialog">
+      <div>Rename conversation</div>
+      <div>
+        <input class="field" id="renameConversationInput" label="Conversation name" placeholder="Conversation name" aria-label="Conversation name" />
+      </div>
+      <div>
+        <button class="ghost-button" id="cancelRenameConversation" type="button">Cancel</button>
+        <button class="button primary-button" id="confirmRenameConversation" type="button">Rename</button>
+      </div>
+    </dialog>
 
-    <div class="modal-backdrop" id="rtdlHistoryModal" role="dialog" aria-modal="true" aria-labelledby="rtdlHistoryTitle" hidden>
-      <section class="rtdl-history-modal">
-        <header class="rtdl-history-modal-header">
-          <div>
-            <h2 id="rtdlHistoryTitle">Execution history</h2>
-            <span>Completed RTDL plans for this client session</span>
-          </div>
-          <button class="icon-button modal-close" id="closeRtdlHistory" type="button" aria-label="Close execution history">×</button>
-        </header>
-        <div class="rtdl-history-modal-body">
-          <div class="history-plan-tree" id="rtdlHistoryTrees"></div>
-          <aside class="history-execution-detail">
-            <div class="detail-title" id="historyExecutionDetailTitle">Node detail</div>
-            <div class="detail-grid history-detail-grid">
-              <div><span>Provider / ID</span><strong id="historyActiveProvider">-</strong></div>
-              <div><span>Started</span><strong id="historyActiveStarted">-</strong></div>
-              <div><span>Duration</span><strong id="historyActiveDuration">-</strong></div>
-            </div>
-            <pre class="args history-args" id="historyActiveArgs">Select an RTDL node to inspect its arguments and result.</pre>
-          </aside>
-        </div>
-      </section>
-    </div>
+    <dialog class="dialog" id="deleteConversationDialog">
+      <div>Delete conversation?</div>
+      <div id="deleteConversationMessage">This conversation will be removed from this browser.</div>
+      <div>
+        <button class="ghost-button" id="cancelDeleteConversation" type="button">Cancel</button>
+        <button class="button primary-button danger-action" id="confirmDeleteConversation" type="button">Delete</button>
+      </div>
+    </dialog>
 
-    <script src="/static/app.js?v=20260715b"></script>
+    <dialog class="dialog" id="confirmActionDialog">
+      <div id="confirmActionTitle">Confirm action</div>
+      <div id="confirmActionMessage"></div>
+      <div>
+        <button class="ghost-button" id="cancelConfirmAction" type="button">Cancel</button>
+        <button class="button primary-button" id="acceptConfirmAction" type="button">Confirm</button>
+      </div>
+    </dialog>
+    <script src="/static/app.js?v=20260726i"></script>
   </body>
 </html>

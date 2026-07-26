@@ -35,6 +35,7 @@ robonix_client = [
   "static/*.html",
   "static/*.css",
   "static/*.js",
+  "static/fonts/*",
   "proto/*.py",
   "audio_device_server/*.py",
   "audio_device_server/requirements.txt",
