@@ -40,6 +40,8 @@ from .transport import (
     account_admin_reset_voiceprint,
     account_admin_update,
     account_change_password,
+    account_connection_status,
+    account_get_voiceprint_preview,
     account_list_users,
     account_login,
     account_logout,
@@ -216,6 +218,14 @@ async def stop_client_audio() -> None:
 
 
 @app.get("/")
+@app.get("/chat")
+@app.get("/executions")
+@app.get("/logs")
+@app.get("/vitals")
+@app.get("/audio")
+@app.get("/settings")
+@app.get("/profile")
+@app.get("/admin")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
@@ -304,6 +314,22 @@ async def auth_signup(req: SignupRequest) -> dict[str, Any]:
         return {"ok": False, "error": _rpc_error(exc)}
 
 
+@app.post("/api/auth/connect")
+async def auth_connect(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        result = await account_connection_status(
+            ClientSettings.from_payload(req.settings)
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        detail = _rpc_error(exc)
+        if "no provider found" in detail.lower():
+            error = "Keystone is not available on this robot."
+        else:
+            error = "Robot unavailable. Check the address and make sure Robonix is running."
+        return {"ok": False, "error": error}
+
+
 @app.post("/api/auth/login")
 async def auth_login(req: LoginRequest) -> dict[str, Any]:
     try:
@@ -364,6 +390,17 @@ async def account_voiceprint_replace(req: VoiceprintReplaceRequest) -> dict[str,
             ClientSettings.from_payload(req.settings), req.seconds
         )
         return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/account/voiceprint-preview")
+async def account_voiceprint_preview(req: AccountRequest) -> dict[str, Any]:
+    try:
+        preview = await account_get_voiceprint_preview(
+            ClientSettings.from_payload(req.settings)
+        )
+        return {"ok": True, **preview}
     except Exception as exc:
         return {"ok": False, "error": _rpc_error(exc)}
 
