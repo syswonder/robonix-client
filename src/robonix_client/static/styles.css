@@ -1165,6 +1165,26 @@ select:focus {
   font: 600 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/*
+ * The live-plan list is intentionally narrow even on a wide desktop. Keep its
+ * operation summary within that column instead of applying the three-column
+ * layout used by the full RTDL modal.
+ */
+.execution-list .active-rtdl-op {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+}
+
+.execution-list .active-rtdl-op-target {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
 .rtdl-history-modal-header {
   min-height: 58px;
   display: flex;
