@@ -2625,6 +2625,7 @@ function renderActivePlans(error = "") {
         target.textContent = op.provider_id || op.contract_id
           ? `${op.provider_id || "?"} · ${op.contract_id || "operator"}`
           : "operator node";
+        target.title = target.textContent;
         const opState = document.createElement("span");
         const stateName = String(op.state || "pending").toLowerCase();
         opState.className = `status ${stateName}`;
