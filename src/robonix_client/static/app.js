@@ -1310,6 +1310,9 @@ async function configureReverseAudio(providerId) {
   const result = await state.audio.reverseConnectPromise;
   state.audio.reverseConnectPromise = null;
   appendAudioLog(result.ok ? `reverse audio target ${result.target}` : `reverse audio error: ${result.error || "unknown"}`);
+  if (result.errorCode === "audio_client_conflict") {
+    addMessage("error", result.error, "Audio");
+  }
   return result;
 }
 

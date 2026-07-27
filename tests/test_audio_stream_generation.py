@@ -1,9 +1,11 @@
 import asyncio
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from robonix_client.audio_reverse_bridge import AudioReverseBridge
+from robonix_client.audio_reverse_bridge import AudioBridgeInUseError, AudioReverseBridge
 
 
 class _Robot:
@@ -73,6 +75,49 @@ class AudioStreamGenerationTest(unittest.IsolatedAsyncioTestCase):
             if isinstance(payload, str) and json.loads(payload).get("type") == "mic_end"
         ]
         self.assertEqual(end_ids, ["old", "new"])
+
+
+class AudioBridgeLeaseTest(unittest.TestCase):
+    def test_second_local_client_cannot_take_same_robot_audio_bridge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lease_dir = Path(directory)
+            first = AudioReverseBridge(
+                "ws://robot:60002/client",
+                lease_dir=lease_dir,
+            )
+            second = AudioReverseBridge(
+                "ws://robot:60002/client",
+                lease_dir=lease_dir,
+            )
+
+            first._acquire_lease()
+            self.addCleanup(first._release_lease)
+            with self.assertRaisesRegex(
+                AudioBridgeInUseError,
+                "Another local Robonix Client",
+            ):
+                second._acquire_lease()
+
+            first._release_lease()
+            second._acquire_lease()
+            second._release_lease()
+
+    def test_different_robot_audio_bridges_have_independent_leases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lease_dir = Path(directory)
+            first = AudioReverseBridge(
+                "ws://robot-a:60002/client",
+                lease_dir=lease_dir,
+            )
+            second = AudioReverseBridge(
+                "ws://robot-b:60002/client",
+                lease_dir=lease_dir,
+            )
+
+            first._acquire_lease()
+            second._acquire_lease()
+            first._release_lease()
+            second._release_lease()
 
 
 if __name__ == "__main__":
