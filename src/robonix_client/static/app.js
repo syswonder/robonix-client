@@ -17,6 +17,8 @@ const state = {
   executorPlansReady: false,
   executorPlanIds: new Set(),
   executorMissingPolls: new Map(),
+  selectedActivePlanKey: "",
+  selectedHistoryPlanKey: "",
   activeAgentId: null,
   history: loadConversations(),
   busy: false,
@@ -27,6 +29,12 @@ const state = {
   activePilotSessionId: "",
   stopInFlight: false,
   voiceActive: false,
+  voiceprintCaptureActive: false,
+  account: loadAccountSession(),
+  robotConnected: false,
+  workspacePollersStarted: false,
+  conversationDialogId: "",
+  confirmAction: null,
   activeVoiceSocket: null,
   activeVoiceMode: "voice",
   ttsPlaying: false,
@@ -43,16 +51,77 @@ const state = {
     logSocket: null,
     logLines: [],
     levelHistory: Array(28).fill(0),
+    testBusy: "",
     outputLevelTarget: 0,
     auraLevel: 0,
     auraFrame: 0,
+    reverseConnectProvider: "",
+    reverseConnectPromise: null,
     route: { micProviders: [], speakerProviders: [], micDevices: [], speakerDevices: [] },
   },
+  voiceprintPreviewUrl: "",
+  voiceprintPreviewRequestFor: "",
 };
 
 const DEFAULT_ATLAS_PORT = 50051;
 const AUDIO_LOG_MAX_LINES = 120;
 const AUDIO_LOG_MAX_CHARS = 260;
+const PAGE_ROUTES = {
+  dashboard: "/chat",
+  executions: "/executions",
+  logs: "/logs",
+  vitals: "/vitals",
+  audio: "/audio",
+  settings: "/settings",
+  profile: "/profile",
+  admin: "/admin",
+};
+const PAGE_TITLES = {
+  dashboard: "Tasks",
+  executions: "Executions",
+  logs: "Logs",
+  vitals: "Vitals",
+  audio: "Audio",
+  settings: "Settings",
+  profile: "Profile",
+  admin: "Admin Console",
+};
+const ROUTE_PAGES = Object.fromEntries(
+  Object.entries(PAGE_ROUTES).map(([page, route]) => [route, page]),
+);
+const THEME_STORAGE_KEY = "robonix.theme";
+const ACTIVE_CONVERSATION_STORAGE_KEY = "robonix.activeConversationId";
+const THEME_PREFERENCES = new Set(["auto", "dark", "light"]);
+const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+function currentThemePreference() {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  return THEME_PREFERENCES.has(saved) ? saved : "auto";
+}
+
+function resolveTheme(preference) {
+  return preference === "auto" ? (systemTheme.matches ? "dark" : "light") : preference;
+}
+
+function applyTheme(preference, persist = false) {
+  const next = THEME_PREFERENCES.has(preference) ? preference : "auto";
+  const resolved = resolveTheme(next);
+  document.documentElement.dataset.themePreference = next;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.style.colorScheme = resolved;
+  if (persist) localStorage.setItem(THEME_STORAGE_KEY, next);
+  if (maybe("themePreference")) $("themePreference").value = next;
+}
+
+function bindThemeControls() {
+  applyTheme(currentThemePreference());
+  maybe("themePreference")?.addEventListener("change", (event) => {
+    applyTheme(event.currentTarget.value, true);
+  });
+  systemTheme.addEventListener("change", () => {
+    if (currentThemePreference() === "auto") applyTheme("auto");
+  });
+}
 
 function getSessionId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -70,7 +139,52 @@ function audioServerWsUrl(path) {
 }
 
 function saveSettings() {
-  localStorage.setItem("robonix.settings", JSON.stringify(collectSettings()));
+  const { authToken, ...settings } = collectSettings();
+  localStorage.setItem("robonix.settings", JSON.stringify(settings));
+}
+
+function loadAccountSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem("robonix.account") || "null");
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveAccountSession(account) {
+  if (account) sessionStorage.setItem("robonix.account", JSON.stringify(account));
+  else sessionStorage.removeItem("robonix.account");
+}
+
+function resetAccountTransientUi() {
+  [
+    "profileStatus",
+    "passwordStatus",
+    "voiceprintStatus",
+    "adminStatus",
+  ].forEach((id) => setText(id, ""));
+  if (state.voiceprintPreviewUrl) URL.revokeObjectURL(state.voiceprintPreviewUrl);
+  state.voiceprintPreviewUrl = "";
+  state.voiceprintPreviewRequestFor = "";
+  const preview = maybe("voiceprintPreview");
+  const audio = maybe("voiceprintPreviewAudio");
+  const canvas = maybe("voiceprintWaveform");
+  if (preview) preview.hidden = true;
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+  setText("voiceprintPreviewMeta", "");
+  setText("playVoiceprintPreview", "Play recording");
+}
+
+function clearSecretFields() {
+  ["loginPassword", "signupPassword", "currentPassword", "newPassword"]
+    .forEach((id) => {
+      if (maybe(id)) $(id).value = "";
+    });
 }
 
 async function persistSettings() {
@@ -151,7 +265,27 @@ function saveConversations() {
   localStorage.setItem("robonix.conversations", JSON.stringify(state.history.slice(0, 30)));
 }
 
+function saveActiveConversationId() {
+  localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, state.sessionId);
+}
+
+function restoreActiveConversation() {
+  const activeId = localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY);
+  const conversation = state.history.find((item) => item.id === activeId);
+  if (!conversation) return false;
+  state.sessionId = conversation.id;
+  state.sessionTitle = conversation.title || "";
+  state.messages = (conversation.messages || []).map((item) => ({ ...item }));
+  state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
+  state.plan = conversation.plan || null;
+  state.planRecords = conversation.planRecords || [];
+  state.batches = conversation.batches || [];
+  state.nodeStates = conversation.nodeStates || {};
+  return true;
+}
+
 async function init() {
+  bindThemeControls();
   const [defaults, persistedResult] = await Promise.all([
     fetch("/api/defaults").then((r) => r.json()).catch(() => ({})),
     fetch("/api/settings").then((r) => r.json()).catch(() => ({ settings: {} })),
@@ -175,15 +309,17 @@ async function init() {
     enrollUserId: "",
     enrollUserName: "",
     ...defaults,
-    ...stored,
     ...persisted,
+    ...stored,
   };
   // CLI/environment values are launch defaults, not immutable policy. Stored
   // browser settings must win so changing robot host or audio routing survives
   // a refresh even when the client was initially launched with --robot-host.
   if (defaults.sessionId) state.sessionId = defaults.sessionId;
   if (defaults.sessionTitle) state.sessionTitle = defaults.sessionTitle;
+  if (!restoreActiveConversation()) saveActiveConversationId();
   bindSettings();
+  bindAuthEvents();
   bindEvents();
   renderAudioBars();
   renderHistory();
@@ -191,23 +327,32 @@ async function init() {
   renderTimeline();
   renderPlan();
   renderSceneAssets();
+  showConnectionStep();
+  if (state.account?.sessionToken && state.settings.robotHost) {
+    const connected = await connectRobot(true);
+    if (connected) {
+      const authenticated = await restoreAccount();
+      if (authenticated) startWorkspaceMonitoring();
+    }
+  }
+}
+
+function startWorkspaceMonitoring() {
+  if (state.workspacePollersStarted) return;
+  state.workspacePollersStarted = true;
   refreshSystem();
   refreshActivePlans();
   refreshAudioRoute();
   // The speaking aura is visible on every page, so its physical output-level
   // stream must be connected at startup rather than only after opening Audio.
   checkAudioServer();
-  setInterval(refreshSystem, 7000);
-  setInterval(refreshActivePlans, 2000);
-  setInterval(refreshHandsfree, 2500);
+  setInterval(() => state.account && refreshSystem(), 7000);
+  setInterval(() => state.account && refreshActivePlans(), 2000);
+  setInterval(() => state.account && refreshHandsfree(), 2500);
 }
 
 function bindSettings() {
-  if (maybe("robotHost")) $("robotHost").value = state.settings.robotHost || "";
-  if (maybe("robotHostSettings")) $("robotHostSettings").value = state.settings.robotHost || "";
-  if (maybe("atlasPort")) $("atlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
-  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
-  if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
+  renderConnectionSettings();
   if (maybe("userId")) $("userId").value = state.settings.userId || "";
   if (maybe("settingsUserId")) $("settingsUserId").value = state.settings.userId || "";
   if (maybe("recordSeconds")) $("recordSeconds").value = state.settings.recordSeconds || 30;
@@ -220,6 +365,7 @@ function bindSettings() {
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
   if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
+  if (maybe("authRobotHost")) $("authRobotHost").value = state.settings.robotHost || "";
 
   [
     "robotHost",
@@ -243,6 +389,15 @@ function bindSettings() {
     maybe(id)?.addEventListener("change", () => syncConnectionSettings(true));
   });
   maybe("saveClientSettings")?.addEventListener("click", () => syncConnectionSettings(true, true));
+}
+
+function renderConnectionSettings() {
+  if (maybe("robotHost")) $("robotHost").value = state.settings.robotHost || "";
+  if (maybe("robotHostSettings")) $("robotHostSettings").value = state.settings.robotHost || "";
+  if (maybe("atlasPort")) $("atlasPort").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("atlasPortSettings")) $("atlasPortSettings").value = state.settings.atlasPort || DEFAULT_ATLAS_PORT;
+  if (maybe("liaisonEndpoint")) $("liaisonEndpoint").value = state.settings.liaisonEndpoint || "";
+  if (maybe("authRobotHost")) $("authRobotHost").value = state.settings.robotHost || "";
 }
 
 async function syncConnectionSettings(fromSettings = false, persist = false) {
@@ -295,7 +450,743 @@ function collectSettings() {
     ttsNodeId: state.settings.ttsNodeId || "",
     enrollUserId: maybe("enrollUserId")?.value.trim() || state.settings.enrollUserId || "",
     enrollUserName: maybe("enrollUserName")?.value.trim() || state.settings.enrollUserName || "",
+    authToken: state.account?.sessionToken || "",
   };
+}
+
+function authConnectionSettings() {
+  const host = normalizeRobotHost(maybe("authRobotHost")?.value || state.settings.robotHost || "");
+  const port = DEFAULT_ATLAS_PORT;
+  return {
+    ...collectSettings(),
+    robotHost: host,
+    atlasPort: port,
+    atlasEndpoint: buildAtlasEndpoint(host, port),
+    liaisonEndpoint: "",
+    authToken: state.account?.sessionToken || "",
+  };
+}
+
+function bindAuthEvents() {
+  maybe("connectRobotAction")?.addEventListener("click", () => connectRobot(false));
+  maybe("authRobotHost")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      connectRobot(false);
+    }
+  });
+  maybe("changeRobotAction")?.addEventListener("click", () => {
+    resetAccountTransientUi();
+    state.account = null;
+    state.robotConnected = false;
+    saveAccountSession(null);
+    clearSecretFields();
+    showConnectionStep();
+  });
+  document.querySelectorAll("[data-auth-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-auth-tab]").forEach((item) => {
+        const active = item === button;
+        item.classList.toggle("active", active);
+        item.setAttribute("aria-selected", active ? "true" : "false");
+        item.setAttribute("tabindex", active ? "0" : "-1");
+      });
+      document.querySelectorAll("[data-auth-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.authPanel === button.dataset.authTab));
+      setText("authError", "");
+    });
+  });
+  maybe("loginForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    loginAccount();
+  });
+  maybe("adminLoginAction")?.addEventListener("click", () => loginAccount("admin", true));
+  maybe("signupForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    signupAccount();
+  });
+  maybe("logoutButton")?.addEventListener("click", logoutAccount);
+  maybe("profileForm")?.addEventListener("submit", updateOwnProfile);
+  maybe("passwordForm")?.addEventListener("submit", changeOwnPassword);
+  maybe("replaceVoiceprint")?.addEventListener("click", replaceOwnVoiceprint);
+  maybe("removeVoiceprint")?.addEventListener("click", removeOwnVoiceprint);
+  maybe("playVoiceprintPreview")?.addEventListener("click", playVoiceprintPreview);
+  maybe("refreshAdminUsers")?.addEventListener("click", loadAdminUsers);
+}
+
+async function accountFetch(path, payload, method = "POST") {
+  const response = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json();
+  if (!result.ok) throw new Error(result.error || "Account request failed");
+  return result;
+}
+
+async function restoreAccount() {
+  if (!state.robotConnected) {
+    showConnectionStep();
+    return false;
+  }
+  if (!state.account?.sessionToken) {
+    showAccountStep();
+    return false;
+  }
+  try {
+    const result = await accountFetch("/api/account/profile", {
+      settings: { ...authConnectionSettings(), authToken: state.account.sessionToken },
+    });
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    enterAccount();
+    return true;
+  } catch (_) {
+    resetAccountTransientUi();
+    state.account = null;
+    saveAccountSession(null);
+    showAccountStep();
+    return false;
+  }
+}
+
+function showAuth() {
+  maybe("authShell")?.classList.remove("auth-hidden");
+  maybe("appShell")?.classList.add("auth-hidden");
+  if (state.robotConnected) showAccountStep();
+  else showConnectionStep();
+}
+
+function showConnectionStep() {
+  maybe("authShell")?.classList.remove("auth-hidden");
+  maybe("appShell")?.classList.add("auth-hidden");
+  maybe("robotConnectionStep")?.classList.remove("auth-hidden");
+  maybe("accountAccessStep")?.classList.add("auth-hidden");
+  setText("authError", "");
+  setText("robotConnectionStatus", "");
+}
+
+function showAccountStep() {
+  maybe("authShell")?.classList.remove("auth-hidden");
+  maybe("appShell")?.classList.add("auth-hidden");
+  maybe("robotConnectionStep")?.classList.add("auth-hidden");
+  maybe("accountAccessStep")?.classList.remove("auth-hidden");
+  setText("connectedRobotLabel", `Connected to ${state.settings.robotHost}`);
+  setText("authError", "");
+}
+
+async function connectRobot(silent = false) {
+  const host = normalizeRobotHost(maybe("authRobotHost")?.value || state.settings.robotHost || "");
+  if (!host) {
+    setText("robotConnectionStatus", "Enter the robot IP address or hostname.");
+    return false;
+  }
+  const button = maybe("connectRobotAction");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Connecting...";
+  }
+  if (!silent) setText("robotConnectionStatus", `Connecting to ${host}...`);
+  setText("authError", "");
+  try {
+    const settings = authConnectionSettings();
+    const result = await accountFetch("/api/auth/connect", { settings });
+    state.settings = {
+      ...state.settings,
+      robotHost: host,
+      atlasPort: DEFAULT_ATLAS_PORT,
+      atlasEndpoint: buildAtlasEndpoint(host, DEFAULT_ATLAS_PORT),
+    };
+    state.robotConnected = true;
+    renderConnectionSettings();
+    saveSettings();
+    setText("robotConnectionStatus", `Connected to ${result.robotHost || host}.`);
+    showAccountStep();
+    return true;
+  } catch (error) {
+    state.robotConnected = false;
+    setText("robotConnectionStatus", `Connection failed: ${String(error.message || error)}`);
+    return false;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Connect";
+    }
+  }
+}
+
+function enterAccount(preferredPage = "") {
+  const user = state.account?.user;
+  if (!user) return showAuth();
+  state.settings = {
+    ...state.settings,
+    ...authConnectionSettings(),
+    authToken: state.account.sessionToken,
+    userId: user.userId,
+  };
+  renderConnectionSettings();
+  saveSettings();
+  if (maybe("userId")) $("userId").value = user.displayName || user.username;
+  if (maybe("settingsUserId")) $("settingsUserId").value = user.userId;
+  setText("accountDockName", user.displayName || user.username);
+  setText("accountDockRole", user.roles.includes("admin") ? "administrator" : "user");
+  document.querySelectorAll(".admin-only").forEach((element) => {
+    element.hidden = !user.roles.includes("admin");
+  });
+  maybe("authShell")?.classList.add("auth-hidden");
+  maybe("appShell")?.classList.remove("auth-hidden");
+  renderOwnProfile();
+  const page = preferredPage || pageFromLocation();
+  activatePage(page, { historyMode: "replace" });
+  if (page === "admin") loadAdminUsers();
+  startWorkspaceMonitoring();
+}
+
+async function loginAccount(preferredPage = "", requireAdmin = false) {
+  if (!state.robotConnected) {
+    showConnectionStep();
+    return;
+  }
+  const usernameId = "loginUsername";
+  const passwordId = "loginPassword";
+  setText("authError", "");
+  try {
+    const result = await accountFetch("/api/auth/login", {
+      settings: authConnectionSettings(),
+      username: $(usernameId).value.trim(),
+      password: $(passwordId).value,
+    });
+    if (requireAdmin && !result.user.roles.includes("admin")) {
+      throw new Error("This account does not have administrator access.");
+    }
+    resetAccountTransientUi();
+    state.account = {
+      sessionToken: result.sessionToken,
+      expiresAtMs: result.expiresAtMs,
+      user: result.user,
+    };
+    clearSecretFields();
+    saveAccountSession(state.account);
+    enterAccount(preferredPage);
+  } catch (error) {
+    setText("authError", String(error.message || error));
+  }
+}
+
+async function signupAccount() {
+  if (!state.robotConnected) {
+    showConnectionStep();
+    return;
+  }
+  setText("authError", "");
+  try {
+    const result = await accountFetch("/api/auth/signup", {
+      settings: authConnectionSettings(),
+      username: $("signupUsername").value.trim(),
+      displayName: $("signupDisplayName").value.trim(),
+      email: $("signupEmail").value.trim(),
+      password: $("signupPassword").value,
+    });
+    resetAccountTransientUi();
+    state.account = {
+      sessionToken: result.sessionToken,
+      expiresAtMs: result.expiresAtMs,
+      user: result.user,
+    };
+    clearSecretFields();
+    maybe("signupForm")?.reset();
+    saveAccountSession(state.account);
+    enterAccount("profile");
+  } catch (error) {
+    setText("authError", String(error.message || error));
+  }
+}
+
+async function logoutAccount() {
+  if (state.account?.sessionToken) {
+    await accountFetch("/api/auth/logout", {
+      settings: { ...collectSettings(), authToken: state.account.sessionToken },
+    }).catch(() => null);
+  }
+  resetAccountTransientUi();
+  state.account = null;
+  state.robotConnected = true;
+  clearSecretFields();
+  saveAccountSession(null);
+  showAccountStep();
+}
+
+function renderOwnProfile() {
+  const user = state.account?.user;
+  if (!user) return;
+  setText("profileHeading", user.displayName || user.username);
+  setText("profileUsername", `@${user.username}`);
+  setText("profileAvatar", (user.displayName || user.username || "R").slice(0, 1).toUpperCase());
+  if (maybe("profileDisplayName")) $("profileDisplayName").value = user.displayName || "";
+  if (maybe("profileEmail")) $("profileEmail").value = user.email || "";
+  if (maybe("passwordUsername")) $("passwordUsername").value = user.username || "";
+  if (maybe("profileBadges")) {
+    $("profileBadges").replaceChildren(...[
+      ...user.roles.map((role) => badge(role)),
+      badge(user.enabled ? "active" : "disabled"),
+      badge(user.voiceGuardEnabled ? "voice guard on" : "voice guard off"),
+    ]);
+  }
+  setText(
+    "voiceprintSummary",
+    user.voiceprintEnrolled
+      ? `Voiceprint enrolled. ${user.voiceGuardEnabled ? "Every voice turn must match it." : "Voice guard is currently off."}`
+      : `No voiceprint enrolled. ${user.voiceGuardEnabled ? "Voice turns will be rejected until you enroll one." : ""}`,
+  );
+  if (maybe("removeVoiceprint")) $("removeVoiceprint").disabled = !user.voiceprintEnrolled;
+  renderVoiceprintPreview(user.voiceprintEnrolled);
+  if (user.voiceprintEnrolled) void refreshVoiceprintPreview(user);
+}
+
+function badge(text) {
+  const element = document.createElement("span");
+  element.className = "profile-badge";
+  element.textContent = text;
+  return element;
+}
+
+async function updateOwnProfile(event) {
+  event.preventDefault();
+  setText("profileStatus", "Saving...");
+  try {
+    const result = await accountFetch("/api/account/profile", {
+      settings: collectSettings(),
+      displayName: $("profileDisplayName").value.trim(),
+      email: $("profileEmail").value.trim(),
+    }, "PUT");
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    saveVoiceprintPreview(result);
+    renderOwnProfile();
+    setText("profileStatus", "Profile saved.");
+  } catch (error) {
+    setText("profileStatus", String(error.message || error));
+  }
+}
+
+async function changeOwnPassword(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  setText("passwordStatus", "Changing password...");
+  try {
+    await accountFetch("/api/account/password", {
+      settings: collectSettings(),
+      currentPassword: $("currentPassword").value,
+      newPassword: $("newPassword").value,
+    }, "PUT");
+    form.reset();
+    setText("passwordStatus", "Password changed. Other sessions were signed out.");
+  } catch (error) {
+    setText("passwordStatus", String(error.message || error));
+  }
+}
+
+async function replaceOwnVoiceprint() {
+  if (state.voiceprintCaptureActive) return;
+  if (state.voiceActive || handsfreeOwnsMicrophone()) {
+    setText("voiceprintStatus", "Stop the active voice session before recording a voiceprint.");
+    return;
+  }
+  const seconds = Math.min(30, Math.max(2, Number(maybe("profileVoiceSeconds")?.value || 6)));
+  const recordButton = maybe("replaceVoiceprint");
+  const removeButton = maybe("removeVoiceprint");
+  const originalLabel = recordButton?.textContent || "Record / replace";
+  state.voiceprintCaptureActive = true;
+  if (recordButton) {
+    recordButton.disabled = true;
+    recordButton.textContent = "Recording...";
+  }
+  if (removeButton) removeButton.disabled = true;
+  const startedAt = Date.now();
+  const updateProgress = () => {
+    const remaining = Math.max(0, Math.ceil(seconds - (Date.now() - startedAt) / 1000));
+    setText("voiceprintStatus", remaining > 0
+      ? `Recording voice sample · ${remaining}s remaining`
+      : "Saving voiceprint...");
+  };
+  updateProgress();
+  const progressTimer = window.setInterval(updateProgress, 250);
+  try {
+    const result = await accountFetch("/api/account/voiceprint", {
+      settings: collectSettings(),
+      seconds,
+    });
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    saveVoiceprintPreview(result);
+    renderOwnProfile();
+    setText("voiceprintStatus", `Voiceprint saved from ${result.bytes} bytes of audio.`);
+  } catch (error) {
+    setText("voiceprintStatus", String(error.message || error));
+  } finally {
+    window.clearInterval(progressTimer);
+    state.voiceprintCaptureActive = false;
+    if (recordButton) {
+      recordButton.disabled = false;
+      recordButton.textContent = originalLabel;
+    }
+    if (removeButton) removeButton.disabled = !state.account?.user?.voiceprintEnrolled;
+  }
+}
+
+function voiceprintPreviewKey() {
+  const userId = state.account?.user?.userId || "";
+  return userId ? `robonix.voiceprint-preview.${userId}` : "";
+}
+
+function saveVoiceprintPreview(result) {
+  const key = voiceprintPreviewKey();
+  if (!key || !result.audioPcmBase64) return;
+  localStorage.setItem(key, JSON.stringify({
+    audioPcmBase64: result.audioPcmBase64,
+    sampleRateHz: Number(result.sampleRateHz || 16000),
+    seconds: Number(result.seconds || 0),
+    bytes: Number(result.bytes || 0),
+    savedAt: Number(result.updatedAtMs || result.savedAt || Date.now()),
+    peak: Number(result.peak || 0),
+    rms: Number(result.rms || 0),
+    nonzeroRatio: Number(result.nonzeroRatio || 0),
+  }));
+}
+
+async function refreshVoiceprintPreview(user) {
+  const requestFor = `${user.userId || ""}:${user.updatedAtMs || 0}`;
+  if (!user.userId || state.voiceprintPreviewRequestFor === requestFor) return;
+  state.voiceprintPreviewRequestFor = requestFor;
+  try {
+    const result = await accountFetch("/api/account/voiceprint-preview", {
+      settings: collectSettings(),
+    });
+    if (state.account?.user?.userId !== user.userId) return;
+    if (result.available && result.audioPcmBase64) {
+      saveVoiceprintPreview(result);
+      renderVoiceprintPreview(true);
+    }
+  } catch (_) {
+    // Older Keystone deployments may not expose preview audio. Keep the
+    // browser-local sample when one exists instead of breaking Profile.
+  }
+}
+
+function loadVoiceprintPreview() {
+  const key = voiceprintPreviewKey();
+  if (!key) return null;
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearVoiceprintPreview() {
+  const key = voiceprintPreviewKey();
+  if (key) localStorage.removeItem(key);
+  if (state.voiceprintPreviewUrl) URL.revokeObjectURL(state.voiceprintPreviewUrl);
+  state.voiceprintPreviewUrl = "";
+  state.voiceprintPreviewRequestFor = "";
+}
+
+function decodePcm16(base64) {
+  const binary = atob(base64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Int16Array(bytes.buffer);
+}
+
+function pcm16WavBlob(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.byteLength);
+  const view = new DataView(buffer);
+  const write = (offset, text) => {
+    for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index));
+  };
+  write(0, "RIFF");
+  view.setUint32(4, 36 + samples.byteLength, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, samples.byteLength, true);
+  new Uint8Array(buffer, 44).set(new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength));
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function renderVoiceprintPreview(enrolled) {
+  const root = maybe("voiceprintPreview");
+  const canvas = maybe("voiceprintWaveform");
+  const audio = maybe("voiceprintPreviewAudio");
+  if (!root || !canvas || !audio) return;
+  const preview = enrolled ? loadVoiceprintPreview() : null;
+  root.hidden = !preview?.audioPcmBase64;
+  if (!preview?.audioPcmBase64) return;
+  const samples = decodePcm16(preview.audioPcmBase64);
+  const sampleRate = Number(preview.sampleRateHz || 16000);
+  if (state.voiceprintPreviewUrl) URL.revokeObjectURL(state.voiceprintPreviewUrl);
+  state.voiceprintPreviewUrl = URL.createObjectURL(pcm16WavBlob(samples, sampleRate));
+  audio.src = state.voiceprintPreviewUrl;
+  setText(
+    "voiceprintPreviewMeta",
+    [
+      `${Number(preview.seconds || samples.length / sampleRate).toFixed(1)} s`,
+      `peak ${(Number(preview.peak || 0) / 32768 * 100).toFixed(1)}%`,
+      `saved ${new Date(preview.savedAt).toLocaleString()}`,
+    ].join(" · "),
+  );
+  requestAnimationFrame(() => drawVoiceprintWaveform(canvas, samples));
+}
+
+function drawVoiceprintWaveform(canvas, samples) {
+  const width = Math.max(320, Math.floor(canvas.clientWidth || 640));
+  const height = Math.max(72, Math.floor(canvas.clientHeight || 88));
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(width * ratio);
+  canvas.height = Math.floor(height * ratio);
+  const context = canvas.getContext("2d");
+  context.scale(ratio, ratio);
+  context.clearRect(0, 0, width, height);
+  context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--cyan").trim();
+  context.lineWidth = 1.5;
+  context.beginPath();
+  const columns = Math.max(1, width);
+  const stride = Math.max(1, Math.floor(samples.length / columns));
+  const peaks = new Float32Array(columns);
+  let recordingPeak = 0;
+  for (let x = 0; x < columns; x += 1) {
+    let peak = 0;
+    const start = x * stride;
+    const end = Math.min(samples.length, start + stride);
+    for (let index = start; index < end; index += 1) peak = Math.max(peak, Math.abs(samples[index]) / 32768);
+    peaks[x] = peak;
+    recordingPeak = Math.max(recordingPeak, peak);
+  }
+  const displayGain = recordingPeak > 0 ? 0.86 / recordingPeak : 1;
+  for (let x = 0; x < columns; x += 1) {
+    const extent = Math.max(1, peaks[x] * displayGain * (height / 2 - 3));
+    context.moveTo(x + 0.5, height / 2 - extent);
+    context.lineTo(x + 0.5, height / 2 + extent);
+  }
+  context.stroke();
+}
+
+async function playVoiceprintPreview() {
+  const audio = maybe("voiceprintPreviewAudio");
+  if (!audio?.src) return;
+  if (!audio.paused) {
+    audio.pause();
+    audio.currentTime = 0;
+    setText("playVoiceprintPreview", "Play recording");
+    return;
+  }
+  await audio.play();
+  setText("playVoiceprintPreview", "Stop");
+  audio.onended = () => setText("playVoiceprintPreview", "Play recording");
+}
+
+async function removeOwnVoiceprint() {
+  openConfirmAction({
+    title: "Remove voiceprint?",
+    message: "Your saved voice identity will be removed from this robot.",
+    confirmLabel: "Remove voiceprint",
+    danger: true,
+    onConfirm: performRemoveOwnVoiceprint,
+  });
+}
+
+async function performRemoveOwnVoiceprint() {
+  setText("voiceprintStatus", "Removing voiceprint...");
+  try {
+    const result = await accountFetch("/api/account/voiceprint", {
+      settings: collectSettings(),
+    }, "DELETE");
+    state.account.user = result.user;
+    saveAccountSession(state.account);
+    renderOwnProfile();
+    setText("voiceprintStatus", "Voiceprint removed.");
+  } catch (error) {
+    setText("voiceprintStatus", String(error.message || error));
+  }
+}
+
+async function loadAdminUsers() {
+  if (!state.account?.user?.roles.includes("admin")) return;
+  setText("adminStatus", "Loading users...");
+  try {
+    const result = await accountFetch("/api/admin/users", { settings: collectSettings() });
+    renderAdminUsers(result.users);
+    setText("adminStatus", "");
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
+}
+
+function renderAdminUsers(users) {
+  setText("adminSummary", `${users.length} account${users.length === 1 ? "" : "s"} · ${users.filter((user) => user.enabled).length} enabled · ${users.filter((user) => user.roles.includes("admin")).length} administrators`);
+  const list = maybe("adminUserList");
+  if (!list) return;
+  list.replaceChildren(...users.map((user) => adminUserCard(user)));
+}
+
+function adminUserCard(user) {
+  const card = document.createElement("article");
+  card.className = "admin-user-card";
+  const identity = document.createElement("div");
+  identity.className = "admin-user-identity";
+  const avatar = document.createElement("span");
+  avatar.textContent = (user.displayName || user.username).slice(0, 1).toUpperCase();
+  const copy = document.createElement("div");
+  const name = document.createElement("strong");
+  name.textContent = user.displayName || user.username;
+  const meta = document.createElement("small");
+  meta.textContent = `@${user.username}${user.email ? ` · ${user.email}` : ""}`;
+  copy.append(name, meta);
+  identity.append(avatar, copy);
+
+  const controls = document.createElement("div");
+  controls.className = "admin-user-controls";
+  const enabled = adminToggle("Enabled", user.enabled);
+  const admin = adminToggle("Administrator", user.roles.includes("admin"));
+  const voiceGuard = adminToggle("Voice guard", user.voiceGuardEnabled);
+  const save = button("Save", "button");
+  save.addEventListener("click", async () => {
+    setText("adminStatus", `Saving ${user.username}...`);
+    try {
+      await accountFetch("/api/admin/users", {
+        settings: collectSettings(),
+        targetUserId: user.userId,
+        enabled: enabled.input.checked,
+        roles: admin.input.checked ? ["user", "admin"] : ["user"],
+        voiceGuardEnabled: voiceGuard.input.checked,
+      }, "PUT");
+      await loadAdminUsers();
+    } catch (error) {
+      setText("adminStatus", String(error.message || error));
+    }
+  });
+  const resetVoice = button("Reset voiceprint", "ghost-button");
+  resetVoice.disabled = !user.voiceprintEnrolled;
+  resetVoice.addEventListener("click", () => adminResetVoiceprint(user));
+  const remove = button("Delete", "ghost-button danger-text");
+  remove.disabled = user.userId === state.account.user.userId;
+  remove.addEventListener("click", () => adminDeleteUser(user));
+  controls.append(enabled.label, admin.label, voiceGuard.label, save, resetVoice, remove);
+  card.append(identity, controls);
+  return card;
+}
+
+function adminToggle(labelText, checked) {
+  const label = document.createElement("label");
+  label.className = "admin-toggle";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = Boolean(checked);
+  input.setAttribute("aria-label", labelText);
+  const text = document.createElement("span");
+  text.textContent = labelText;
+  label.append(input, text);
+  return { label, input };
+}
+
+function button(label, className) {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = className;
+  element.textContent = label;
+  return element;
+}
+
+function openConfirmAction({
+  title,
+  message,
+  confirmLabel = "Confirm",
+  danger = false,
+  onConfirm,
+}) {
+  const dialog = maybe("confirmActionDialog");
+  const accept = maybe("acceptConfirmAction");
+  if (!dialog || !accept) return;
+  state.confirmAction = typeof onConfirm === "function" ? onConfirm : null;
+  setText("confirmActionTitle", title || "Confirm action");
+  setText("confirmActionMessage", message || "");
+  accept.textContent = confirmLabel;
+  accept.classList.toggle("danger-action", Boolean(danger));
+  accept.disabled = false;
+  dialog.showModal();
+  requestAnimationFrame(() => accept.focus());
+}
+
+function closeConfirmAction() {
+  const dialog = maybe("confirmActionDialog");
+  state.confirmAction = null;
+  if (dialog?.open) dialog.close();
+}
+
+async function acceptConfirmAction() {
+  const action = state.confirmAction;
+  const dialog = maybe("confirmActionDialog");
+  const accept = maybe("acceptConfirmAction");
+  if (!action || !dialog || !accept) return closeConfirmAction();
+  state.confirmAction = null;
+  accept.disabled = true;
+  try {
+    await action();
+    dialog.close();
+  } finally {
+    accept.disabled = false;
+  }
+}
+
+async function adminResetVoiceprint(user) {
+  openConfirmAction({
+    title: "Reset voiceprint?",
+    message: `${user.displayName || user.username}'s saved voice identity will be removed.`,
+    confirmLabel: "Reset voiceprint",
+    danger: true,
+    onConfirm: () => performAdminResetVoiceprint(user),
+  });
+}
+
+async function performAdminResetVoiceprint(user) {
+  try {
+    await accountFetch("/api/admin/users/reset-voiceprint", {
+      settings: collectSettings(),
+      targetUserId: user.userId,
+    });
+    await loadAdminUsers();
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
+}
+
+async function adminDeleteUser(user) {
+  openConfirmAction({
+    title: "Delete account?",
+    message: `@${user.username} and its saved credentials will be permanently removed.`,
+    confirmLabel: "Delete account",
+    danger: true,
+    onConfirm: () => performAdminDeleteUser(user),
+  });
+}
+
+async function performAdminDeleteUser(user) {
+  try {
+    await accountFetch("/api/admin/users/delete", {
+      settings: collectSettings(),
+      targetUserId: user.userId,
+    });
+    await loadAdminUsers();
+  } catch (error) {
+    setText("adminStatus", String(error.message || error));
+  }
 }
 
 function interactionSettings(useActiveTurn = false) {
@@ -323,17 +1214,36 @@ function bindEvents() {
     startVoice();
   });
   $("stopButton").addEventListener("click", stopCurrentTask);
-  maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
-  $("newSession").addEventListener("click", newSession);
+  document.querySelectorAll("[data-new-session]").forEach((button) => {
+    button.addEventListener("click", newSession);
+  });
   $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
+  maybe("cancelRenameConversation")?.addEventListener("click", () => maybe("renameConversationDialog")?.close());
+  maybe("confirmRenameConversation")?.addEventListener("click", confirmConversationRename);
+  maybe("cancelDeleteConversation")?.addEventListener("click", () => maybe("deleteConversationDialog")?.close());
+  maybe("confirmDeleteConversation")?.addEventListener("click", confirmConversationDelete);
+  maybe("cancelConfirmAction")?.addEventListener("click", closeConfirmAction);
+  maybe("acceptConfirmAction")?.addEventListener("click", acceptConfirmAction);
   $("clearHistory").addEventListener("click", clearHistory);
-  maybe("connectNow")?.addEventListener("click", async () => {
-    state.settings = collectSettings();
-    await persistSettings().catch((error) => addTimeline("error", `settings save failed: ${error}`));
-    addTimeline("system", `connecting to ${state.settings.robotHost}:${state.settings.atlasPort}`);
-    refreshSystem();
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".history-menu, .history-menu-trigger")) return;
+    document.querySelectorAll(".history-menu.open").forEach((menu) => menu.classList.remove("open"));
+    document.querySelectorAll(".history-menu-trigger[aria-expanded='true']").forEach((trigger) => {
+      trigger.setAttribute("aria-expanded", "false");
+    });
+  });
+  maybe("eventLogFilter")?.addEventListener("input", renderTimeline);
+  maybe("clearEventLogFilter")?.addEventListener("click", () => {
+    if (maybe("eventLogFilter")) $("eventLogFilter").value = "";
+    renderTimeline();
+    maybe("eventLogFilter")?.focus();
+  });
+  maybe("rtdlHistorySearch")?.addEventListener("input", filterExecutionWorkspaces);
+  maybe("activeRtdlSearch")?.addEventListener("input", filterExecutionWorkspaces);
+  document.querySelectorAll("[data-execution-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => activateExecutionPanel(tab.dataset.executionTab));
   });
   maybe("startAudioServer")?.addEventListener("click", startAudioServer);
   maybe("checkAudioServer")?.addEventListener("click", checkAudioServer);
@@ -342,7 +1252,6 @@ function bindEvents() {
   maybe("applyAudioRoute")?.addEventListener("click", applyAudioRoute);
   maybe("micNodeId")?.addEventListener("change", () => loadAudioRouteDevices("mic"));
   maybe("speakerNodeId")?.addEventListener("change", () => loadAudioRouteDevices("speaker"));
-  maybe("enrollVoice")?.addEventListener("click", enrollVoice);
   maybe("testMicrophone")?.addEventListener("click", testMicrophone);
   maybe("testSpeaker")?.addEventListener("click", testSpeaker);
   document.querySelectorAll("[data-page]").forEach((button) => {
@@ -355,58 +1264,57 @@ function bindEvents() {
     button.addEventListener("click", startVoice);
   });
   maybe("openRtdlHistory")?.addEventListener("click", openRtdlHistory);
-  maybe("closeRtdlHistory")?.addEventListener("click", closeRtdlHistory);
   maybe("openActiveRtdl")?.addEventListener("click", openActiveRtdl);
-  maybe("closeActiveRtdl")?.addEventListener("click", closeActiveRtdl);
-  maybe("activeRtdlModal")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) closeActiveRtdl();
-  });
-  maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) closeRtdlHistory();
-  });
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
-    if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
+  window.addEventListener("popstate", () => {
+    if (state.account) activatePage(pageFromLocation(), { historyMode: "none" });
   });
 }
 
 function openActiveRtdl() {
-  const modal = maybe("activeRtdlModal");
-  if (!modal) return;
-  modal.hidden = false;
+  activatePage("executions");
+  activateExecutionPanel("active");
   refreshActivePlans();
-  maybe("closeActiveRtdl")?.focus();
-}
-
-function closeActiveRtdl() {
-  const modal = maybe("activeRtdlModal");
-  if (!modal || modal.hidden) return;
-  modal.hidden = true;
-  maybe("openActiveRtdl")?.focus();
 }
 
 function openRtdlHistory() {
-  const modal = maybe("rtdlHistoryModal");
-  if (!modal) return;
-  modal.hidden = false;
-  maybe("closeRtdlHistory")?.focus();
+  activatePage("executions");
+  activateExecutionPanel("history");
 }
 
-function closeRtdlHistory() {
-  const modal = maybe("rtdlHistoryModal");
-  if (!modal || modal.hidden) return;
-  modal.hidden = true;
-  maybe("openRtdlHistory")?.focus();
+function activateExecutionPanel(requestedName) {
+  const name = requestedName === "history" ? "history" : "active";
+  document.querySelectorAll("[data-execution-tab]").forEach((tab) => {
+    const active = tab.dataset.executionTab === name;
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+    tab.setAttribute("tabindex", active ? "0" : "-1");
+    tab.classList.toggle("active", active);
+  });
+  document.querySelectorAll("[data-execution-panel]").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.executionPanel === name);
+  });
 }
 
 async function configureReverseAudio(providerId) {
   if (!providerId) return { ok: false, skipped: true };
-  const result = await fetch("/api/audio-reverse/connect", {
+  if (
+    state.audio.reverseConnectPromise
+    && state.audio.reverseConnectProvider === providerId
+  ) {
+    return state.audio.reverseConnectPromise;
+  }
+  state.audio.reverseConnectProvider = providerId;
+  state.audio.reverseConnectPromise = fetch("/api/audio-reverse/connect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ settings: collectSettings(), providerId }),
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  const result = await state.audio.reverseConnectPromise;
+  state.audio.reverseConnectPromise = null;
   appendAudioLog(result.ok ? `reverse audio target ${result.target}` : `reverse audio error: ${result.error || "unknown"}`);
+  if (result.errorCode === "audio_client_conflict") {
+    addMessage("error", result.error, "Audio");
+  }
+  return result;
 }
 
 async function refreshHandsfree() {
@@ -485,24 +1393,39 @@ function syncVoiceControls() {
       : state.voiceActive
         ? "Voice recording is already active"
         : "Start voice session";
-  maybe("voiceButton")?.toggleAttribute("disabled", disabled);
-  if (maybe("voiceButton")) $("voiceButton").title = title;
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
     button.toggleAttribute("disabled", disabled);
     button.title = title;
   });
-  const micTest = maybe("testMicrophone");
-  if (micTest) {
-    const micBlocked = handsfreeOwnsMicrophone() || state.voiceActive;
-    micTest.toggleAttribute("disabled", micBlocked);
-    micTest.title = state.voiceActive
-      ? "An F2 voice session owns this microphone. Stop it before testing the route."
-      : handsfreeOwnsMicrophone()
-        ? "Hands-free owns this microphone. Turn it off before running an exclusive microphone test."
-        : "Capture one second through the selected Robonix microphone route.";
-  }
+  syncAudioTestControls();
   const handsfree = maybe("handsfreeToggle");
   if (handsfree) handsfree.toggleAttribute("disabled", state.voiceActive || state.handsfree.busy);
+}
+
+function syncAudioTestControls() {
+  const micTest = maybe("testMicrophone");
+  const speakerTest = maybe("testSpeaker");
+  if (!micTest || !speakerTest) return;
+  const busy = Boolean(state.audio.testBusy);
+  const micInUse = handsfreeOwnsMicrophone() || state.voiceActive;
+  micTest.toggleAttribute("disabled", busy);
+  speakerTest.toggleAttribute("disabled", busy);
+  micTest.textContent = state.audio.testBusy === "microphone"
+    ? "Testing..."
+    : micInUse
+      ? "Check live input"
+      : "Test microphone";
+  speakerTest.textContent = state.audio.testBusy === "speaker"
+    ? "Playing..."
+    : "Test speaker";
+  micTest.title = busy
+    ? "Wait for the current audio test to finish."
+    : micInUse
+      ? "The microphone is already live. Check its current input level without interrupting voice interaction."
+      : "Capture one second through the selected Robonix microphone route.";
+  speakerTest.title = busy
+    ? "Wait for the current audio test to finish."
+    : "Play a test phrase through the selected Robonix speaker route.";
 }
 
 function stopHandsfreeEventStream() {
@@ -549,9 +1472,8 @@ function syncHandsfreeEventStream() {
 }
 
 function autoGrowInput() {
-  const input = $("taskInput");
-  input.style.height = "auto";
-  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  // The composer reserves a stable row and lets the field scroll internally
+  // instead of resizing the whole page and pushing actions below the viewport.
 }
 
 async function handleFiles(event) {
@@ -599,11 +1521,45 @@ function renderAttachments() {
   });
 }
 
-function activatePage(name) {
-  document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
+function pageFromLocation() {
+  const path = location.pathname.length > 1
+    ? location.pathname.replace(/\/+$/, "")
+    : location.pathname;
+  return ROUTE_PAGES[path] || "dashboard";
+}
+
+function activatePage(requestedName, { historyMode = "push" } = {}) {
+  const isAdmin = Boolean(state.account?.user?.roles?.includes("admin"));
+  const name = PAGE_ROUTES[requestedName] && (requestedName !== "admin" || isAdmin)
+    ? requestedName
+    : "dashboard";
+  let activePageButton = null;
+  document.querySelectorAll("[data-page]").forEach((button) => {
+    const isActive = button.dataset.page === name;
+    button.classList.toggle("active", isActive);
+    if (isActive) activePageButton = button;
+  });
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
+  setText("topPageTitle", PAGE_TITLES[name] || "Robonix Client");
+  if (activePageButton && matchMedia("(max-width: 980px)").matches) {
+    requestAnimationFrame(() => activePageButton.scrollIntoView({ block: "nearest", inline: "nearest" }));
+  }
+  const route = PAGE_ROUTES[name];
+  if (historyMode !== "none" && location.pathname !== route) {
+    const method = historyMode === "replace" ? "replaceState" : "pushState";
+    history[method]({ page: name }, "", route);
+  }
   if (name === "audio") {
     checkAudioServer();
+  } else if (name === "executions") {
+    activateExecutionPanel(
+      document.querySelector("[data-execution-tab].active")?.dataset.executionTab || "active",
+    );
+    refreshActivePlans();
+  } else if (name === "profile") {
+    renderOwnProfile();
+  } else if (name === "admin") {
+    loadAdminUsers();
   }
 }
 
@@ -621,14 +1577,18 @@ function newSession() {
   state.timeline = [];
   state.plan = null;
   state.planRecords = [];
+  state.selectedActivePlanKey = "";
+  state.selectedHistoryPlanKey = "";
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
+  state.sessionTitle = "Untitled chat";
   $("promptTitle").textContent = "What should Robonix do?";
   renderMessages();
   renderTimeline();
   renderPlan();
   renderSceneAssets();
+  persistCurrentConversation("Untitled chat", true);
   renderHistory();
 }
 
@@ -731,7 +1691,6 @@ function startVoice() {
   }
   const wasBusy = hasActiveTurn();
   state.voiceActive = true;
-  maybe("voiceButton")?.classList.add("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.add("active"));
   if (maybe("voiceState")) $("voiceState").textContent = "recording";
   addStatusLine(wasBusy ? "Listening for voice steer input." : "Listening for voice input.");
@@ -896,13 +1855,21 @@ function handleVoiceEvent(event, sourceSocket = null) {
     addTimeline(skipped ? "error" : "voice", label || "TTS playback done");
   } else if (event.kind === "error") {
     addMessage("error", event.error || "voice error");
+    if (sourceSocket && state.activeVoiceSocket === sourceSocket) {
+      state.activeVoiceSocket = null;
+      state.voiceActive = false;
+      finishVoiceCaptureUi();
+      syncVoiceControls();
+      if (sourceSocket.readyState === WebSocket.OPEN) {
+        sourceSocket.close(1000, "voice request failed");
+      }
+    }
   } else {
     addTimeline("voice", label);
   }
 }
 
 function finishVoiceCaptureUi() {
-  maybe("voiceButton")?.classList.remove("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.remove("active"));
   if (maybe("voiceState")) $("voiceState").textContent = "ready";
 }
@@ -1012,7 +1979,7 @@ function renderMessages() {
     if (message.planRound) {
       const action = document.createElement("button");
       action.type = "button";
-      action.className = "message-link";
+      action.className = "ghost-button message-link";
       action.textContent = "Show RTDL";
       action.addEventListener("click", () => {
         openRtdlHistory();
@@ -1045,13 +2012,20 @@ function addTimeline(kind, text) {
 function renderTimeline() {
   setTextAll("[data-event-summary]", String(state.timeline.length));
   setTextAll("[data-current-task-label]", `Current Task: ${currentTaskLabel()}`);
-  const rows = state.timeline;
+  const query = String(maybe("eventLogFilter")?.value || "").trim().toLocaleLowerCase();
+  const rows = query
+    ? state.timeline.filter((item) => (
+      `${item.kind || ""} ${item.text || ""} ${item.at || ""}`
+        .toLocaleLowerCase()
+        .includes(query)
+    ))
+    : state.timeline;
   document.querySelectorAll("[data-event-list]").forEach((root) => {
     clear(root);
     if (!rows.length) {
       const empty = document.createElement("div");
       empty.className = "event-empty";
-      empty.textContent = "No task events yet.";
+      empty.textContent = query ? "No events match this filter." : "No task events yet.";
       root.appendChild(empty);
       return;
     }
@@ -1069,7 +2043,11 @@ function renderPlan() {
   roots.forEach((root) => clear(root));
   const records = normalizedPlanRecords();
   const activeRecords = records.filter((record) => recordIsActive(record));
-  const latestRecord = activeRecords[0] || null;
+  const selectedActiveRecord = activeRecords.find(
+    (record) => record.key === state.selectedActivePlanKey,
+  );
+  const latestRecord = selectedActiveRecord || activeRecords[0] || null;
+  state.selectedActivePlanKey = latestRecord?.key || "";
   const historyRecords = records.filter((record) => !activeRecords.includes(record));
   const latestCalls = planCalls(latestRecord?.plan).length;
   setTextAll("[data-plan-summary]", latestRecord
@@ -1123,13 +2101,90 @@ function renderPlanHistory(records) {
   const root = maybe("rtdlHistoryTrees");
   if (!root) return;
   clear(root);
-  records.forEach((record) => renderPlanRecord(root, record, renderHistoryExecutionDetail));
+  const selected = records.find((record) => record.key === state.selectedHistoryPlanKey)
+    || records[0]
+    || null;
+  state.selectedHistoryPlanKey = selected?.key || "";
+  records.forEach((record) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = `history-plan-option${record.key === state.selectedHistoryPlanKey ? " active" : ""}`;
+    const title = document.createElement("strong");
+    title.textContent = record.plan.description || `Plan ${record.plan.planId || "-"}`;
+    const meta = document.createElement("span");
+    const callCount = planCalls(record.plan).length;
+    meta.textContent = `round ${record.plan.round || 0} · ${callCount} call${callCount === 1 ? "" : "s"}`;
+    option.append(title, meta);
+    option.addEventListener("click", () => {
+      state.selectedHistoryPlanKey = record.key;
+      renderPlanHistory(records);
+    });
+    root.appendChild(option);
+  });
   if (!records.length) {
     const empty = document.createElement("div");
     empty.className = "plan-empty";
     empty.textContent = "No completed RTDL trees yet.";
     root.appendChild(empty);
   }
+  renderSelectedHistoryPlan(selected);
+  filterExecutionWorkspaces();
+}
+
+function renderSelectedHistoryPlan(record) {
+  const root = maybe("historyGraphTree");
+  if (!root) return;
+  const workspace = root.closest(".execution-workspace");
+  workspace?.classList.toggle("history-empty", !record);
+  clear(root);
+  if (!record) {
+    setText("historyGraphSummary", "No execution history yet");
+    const empty = document.createElement("div");
+    empty.className = "history-empty-state";
+    const heading = document.createElement("h2");
+    heading.textContent = "No execution history yet";
+    const copy = document.createElement("p");
+    copy.textContent = "Completed RTDL plans will appear here automatically.";
+    empty.append(heading, copy);
+    root.appendChild(empty);
+    renderHistoryExecutionDetail(null, "PENDING");
+    return;
+  }
+  const callCount = planCalls(record.plan).length;
+  setText(
+    "historyGraphSummary",
+    `Plan ${record.plan.planId || "-"} · round ${record.plan.round || 0} · ${callCount} call${callCount === 1 ? "" : "s"}`,
+  );
+  renderPlanRecord(root, record, renderHistoryExecutionDetail);
+  const maps = buildResultMaps(record);
+  const firstNode = record.plan.nodes.find((node) => node.call) || record.plan.nodes[0] || null;
+  if (firstNode) {
+    renderHistoryExecutionDetail(
+      firstNode,
+      aggregateNodeStatus(firstNode, record.plan, maps, null),
+      resultForNode(firstNode, maps),
+    );
+  } else {
+    renderHistoryExecutionDetail(null, "PENDING");
+  }
+}
+
+function filterExecutionWorkspaces() {
+  const historyQuery = String(maybe("rtdlHistorySearch")?.value || "")
+    .trim()
+    .toLocaleLowerCase();
+  document.querySelectorAll("#rtdlHistoryTrees .history-plan-option").forEach((record) => {
+    record.hidden = Boolean(historyQuery)
+      && !record.textContent.toLocaleLowerCase().includes(historyQuery);
+  });
+
+  const activeQuery = String(maybe("activeRtdlSearch")?.value || "")
+    .trim()
+    .toLocaleLowerCase();
+  document.querySelectorAll("#activeRtdlList .active-rtdl-card").forEach((record) => {
+    record.hidden = Boolean(activeQuery)
+      && !record.textContent.toLocaleLowerCase().includes(activeQuery);
+  });
 }
 
 function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
@@ -1524,9 +2579,34 @@ function renderActivePlans(error = "") {
     root.appendChild(row);
     return;
   }
+  const activeRecords = normalizedPlanRecords().filter((record) => recordIsActive(record));
+  if (!activeRecords.some((record) => record.key === state.selectedActivePlanKey)) {
+    state.selectedActivePlanKey = activeRecords[0]?.key || "";
+  }
   state.executorPlans.forEach((plan) => {
     const card = document.createElement("article");
     card.className = `active-rtdl-card${plan.cancelled ? " canceling" : ""}`;
+    const matchingRecord = normalizedPlanRecords().find(
+      (record) => String(record.plan?.planId || "") === String(plan.planId || ""),
+    );
+    if (matchingRecord) {
+      card.classList.add("selectable");
+      card.classList.toggle("selected", matchingRecord.key === state.selectedActivePlanKey);
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      const selectPlan = () => {
+        state.selectedActivePlanKey = matchingRecord.key;
+        renderActivePlans();
+        renderPlan();
+      };
+      card.addEventListener("click", selectPlan);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectPlan();
+        }
+      });
+    }
     const header = document.createElement("header");
     header.className = "active-rtdl-card-header";
     const body = document.createElement("div");
@@ -1566,6 +2646,7 @@ function renderActivePlans(error = "") {
         target.textContent = op.provider_id || op.contract_id
           ? `${op.provider_id || "?"} · ${op.contract_id || "operator"}`
           : "operator node";
+        target.title = target.textContent;
         const opState = document.createElement("span");
         const stateName = String(op.state || "pending").toLowerCase();
         opState.className = `status ${stateName}`;
@@ -1577,6 +2658,7 @@ function renderActivePlans(error = "") {
     card.appendChild(ops);
     root.appendChild(card);
   });
+  filterExecutionWorkspaces();
 }
 
 function displayStatus(status) {
@@ -1605,16 +2687,40 @@ function renderHistoryExecutionDetail(node, status, nodeState = null) {
     $("historyExecutionDetailTitle").textContent = node ? nodeLabel(node) : "Node detail";
   }
   if (!node) {
+    if (maybe("historyExecutionDetailTitle")) {
+      $("historyExecutionDetailTitle").textContent = "No execution details";
+    }
+    setText("historyExecutionDetailSummary", "No completed plan is available.");
     $("historyActiveProvider").textContent = "-";
     $("historyActiveStarted").textContent = "-";
     $("historyActiveDuration").textContent = "-";
-    $("historyActiveArgs").textContent = "Select an RTDL node to inspect its arguments and result.";
+    $("historyActiveArgs").textContent = "No node arguments are available.";
+    setText("historyActiveResult", "No node result is available.");
+    setText("historyActiveRecord", "No execution record is available.");
     return;
   }
+  setText("historyExecutionDetailSummary", "Selected node from the completed execution");
   $("historyActiveProvider").textContent = detailProvider(node);
   $("historyActiveStarted").textContent = startedForNode(node, status);
   $("historyActiveDuration").textContent = durationForNode(node, status);
-  $("historyActiveArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
+  $("historyActiveArgs").textContent = formatArgs(node.call?.args || {});
+  setText(
+    "historyActiveResult",
+    formatArgs(nodeState?.leafResult ?? nodeState?.result ?? null),
+  );
+  setText(
+    "historyActiveRecord",
+    formatArgs({
+      nodeIndex: node.index,
+      opId: node.opId || "",
+      kind: node.kind || (node.call ? "call" : "operator"),
+      status: displayStatus(status),
+      callId: node.call?.callId || "",
+      providerId: node.call?.providerId || "",
+      contractId: node.call?.contractId || "",
+      state: nodeState?.state || displayStatus(status),
+    }),
+  );
 }
 
 function buildResultMaps(record = null) {
@@ -1822,11 +2928,6 @@ function renderSystem(data) {
   $("connectionState").textContent = stateLabel;
   $("refreshSystem").classList.toggle("offline", !online);
   $("refreshSystem").classList.toggle("online", online);
-  if (maybe("connectNow")) {
-    $("connectNow").textContent = online ? "Connected" : "Connect";
-    $("connectNow").classList.toggle("connected", online);
-    $("connectNow").title = online ? "Atlas is reachable" : "Check Atlas connection";
-  }
   if (maybe("metricState")) $("metricState").textContent = stateLabel;
   if (maybe("metricActive")) $("metricActive").textContent = String(summary.active || 0);
   if (maybe("metricErrors")) $("metricErrors").textContent = String(summary.errors || 0);
@@ -2006,6 +3107,7 @@ function persistCurrentConversation(titleHint = "", force = false) {
     nodeStates: state.nodeStates,
   };
   state.history = [conversation, ...state.history.filter((item) => item.id !== state.sessionId)].slice(0, 30);
+  saveActiveConversationId();
   saveConversations();
   renderHistory();
 }
@@ -2013,6 +3115,7 @@ function persistCurrentConversation(titleHint = "", force = false) {
 function renderHistory() {
   const root = $("historyList");
   if (!root) return;
+  document.querySelectorAll("body > .history-menu").forEach((menu) => menu.remove());
   clear(root);
   if (!state.history.length) {
     const empty = document.createElement("div");
@@ -2034,27 +3137,59 @@ function renderHistory() {
     meta.textContent = formatConversationTime(item.updatedAt);
     open.append(title, meta);
     open.addEventListener("click", () => openConversation(item.id));
+
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "history-menu-trigger";
+    trigger.title = "Conversation actions";
+    trigger.setAttribute("aria-label", `Actions for ${item.title || "conversation"}`);
+    trigger.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="5" r="1.6"></circle>
+        <circle cx="12" cy="12" r="1.6"></circle>
+        <circle cx="12" cy="19" r="1.6"></circle>
+      </svg>
+    `;
+    const menu = document.createElement("div");
+    menu.className = "history-menu";
     const rename = document.createElement("button");
     rename.type = "button";
-    rename.className = "history-rename";
-    rename.title = "Rename conversation";
-    rename.setAttribute("aria-label", `Rename ${item.title || "conversation"}`);
     rename.textContent = "Rename";
-    rename.addEventListener("click", (event) => {
-      event.stopPropagation();
-      renameConversation(item.id);
-    });
+    rename.addEventListener("click", () => renameConversation(item.id));
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "history-delete";
-    remove.title = "Delete conversation";
-    remove.setAttribute("aria-label", `Delete ${item.title || "conversation"}`);
     remove.textContent = "Delete";
-    remove.addEventListener("click", (event) => {
+    remove.className = "history-menu-delete";
+    remove.addEventListener("click", () => requestConversationDelete(item.id));
+    menu.append(rename, remove);
+    trigger.addEventListener("click", (event) => {
       event.stopPropagation();
-      deleteConversation(item.id);
+      const opening = !menu.classList.contains("open");
+      document.querySelectorAll(".history-menu.open").forEach((other) => {
+        if (other !== menu) other.classList.remove("open");
+      });
+      document.querySelectorAll(".history-menu-trigger[aria-expanded='true']").forEach((other) => {
+        if (other !== trigger) other.setAttribute("aria-expanded", "false");
+      });
+      menu.classList.toggle("open", opening);
+      trigger.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (opening) {
+        const rect = trigger.getBoundingClientRect();
+        const menuWidth = Math.max(112, menu.offsetWidth || 112);
+        const left = Math.min(window.innerWidth - menuWidth - 8, Math.max(8, rect.right - menuWidth));
+        menu.style.left = `${left}px`;
+        menu.style.top = `${Math.min(window.innerHeight - 82, rect.bottom + 4)}px`;
+      }
     });
-    row.append(open, rename, remove);
+    menu.addEventListener("click", () => {
+      menu.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+    });
+    actions.append(trigger);
+    document.body.appendChild(menu);
+    row.append(open, actions);
     root.appendChild(row);
   });
 }
@@ -2064,9 +3199,16 @@ function renameConversation(sessionId) {
   if (sessionId === state.sessionId) persistCurrentConversation("", true);
   const conversation = state.history.find((item) => item.id === sessionId);
   const currentTitle = conversation?.title || state.sessionTitle || firstUserMessage() || "Untitled chat";
-  const nextTitle = window.prompt("Rename session", currentTitle);
-  if (nextTitle === null) return;
-  const title = nextTitle.trim();
+  state.conversationDialogId = sessionId;
+  $("renameConversationInput").value = currentTitle;
+  $("renameConversationDialog").showModal();
+  requestAnimationFrame(() => $("renameConversationInput").focus());
+}
+
+function confirmConversationRename() {
+  const sessionId = state.conversationDialogId;
+  const title = String($("renameConversationInput").value || "").trim();
+  const conversation = state.history.find((item) => item.id === sessionId);
   if (!title) return;
   if (sessionId === state.sessionId) {
     state.sessionTitle = title;
@@ -2081,6 +3223,26 @@ function renameConversation(sessionId) {
   }
   saveConversations();
   renderHistory();
+  $("renameConversationDialog").close();
+  state.conversationDialogId = "";
+}
+
+function requestConversationDelete(sessionId) {
+  const conversation = state.history.find((item) => item.id === sessionId);
+  state.conversationDialogId = sessionId;
+  setText(
+    "deleteConversationMessage",
+    `“${conversation?.title || "Untitled chat"}” will be removed from this browser.`,
+  );
+  $("deleteConversationDialog").showModal();
+}
+
+function confirmConversationDelete() {
+  const sessionId = state.conversationDialogId;
+  if (!sessionId) return;
+  deleteConversation(sessionId);
+  $("deleteConversationDialog").close();
+  state.conversationDialogId = "";
 }
 
 function deleteConversation(sessionId) {
@@ -2088,11 +3250,14 @@ function deleteConversation(sessionId) {
   saveConversations();
   if (sessionId === state.sessionId) {
     state.sessionId = getSessionId();
+    saveActiveConversationId();
     state.sessionTitle = "";
     state.messages = [];
     state.timeline = [];
     state.plan = null;
     state.planRecords = [];
+    state.selectedActivePlanKey = "";
+    state.selectedHistoryPlanKey = "";
     state.batches = [];
     state.nodeStates = {};
     state.activeAgentId = null;
@@ -2109,11 +3274,14 @@ function clearHistory() {
   state.history = [];
   saveConversations();
   state.sessionId = getSessionId();
+  saveActiveConversationId();
   state.sessionTitle = "";
   state.messages = [];
   state.timeline = [];
   state.plan = null;
   state.planRecords = [];
+  state.selectedActivePlanKey = "";
+  state.selectedHistoryPlanKey = "";
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
@@ -2131,11 +3299,14 @@ function openConversation(sessionId) {
   const conversation = state.history.find((item) => item.id === sessionId);
   if (!conversation) return;
   state.sessionId = conversation.id;
+  saveActiveConversationId();
   state.sessionTitle = conversation.title || "";
   state.messages = (conversation.messages || []).map((item) => ({ ...item }));
   state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
   state.plan = conversation.plan || null;
   state.planRecords = conversation.planRecords || [];
+  state.selectedActivePlanKey = "";
+  state.selectedHistoryPlanKey = "";
   state.batches = conversation.batches || [];
   state.nodeStates = conversation.nodeStates || {};
   state.activeAgentId = null;
@@ -2173,6 +3344,12 @@ function renderAudioRouteProviders(route) {
   if (!mic || !speaker) return;
   const savedMic = state.settings.micNodeId || "";
   const savedSpeaker = state.settings.speakerNodeId || "";
+  const defaultMic = (route.micProviders || []).find((provider) => provider.id === "audio_client_bridge")?.id
+    || (route.micProviders || [])[0]?.id
+    || "";
+  const defaultSpeaker = (route.speakerProviders || []).find((provider) => provider.id === "audio_client_bridge")?.id
+    || (route.speakerProviders || [])[0]?.id
+    || "";
   clear(mic);
   clear(speaker);
   routeOption(mic, "", "Select input primitive");
@@ -2187,8 +3364,10 @@ function renderAudioRouteProviders(route) {
   const speakerAvailable = (route.speakerProviders || []).some((provider) => provider.id === savedSpeaker);
   if (savedMic && !micAvailable) routeOption(mic, savedMic, `${savedMic} (unavailable)`);
   if (savedSpeaker && !speakerAvailable) routeOption(speaker, savedSpeaker, `${savedSpeaker} (unavailable)`);
-  mic.value = savedMic || "";
-  speaker.value = savedSpeaker || "";
+  mic.value = savedMic || defaultMic;
+  speaker.value = savedSpeaker || defaultSpeaker;
+  state.settings.micNodeId = mic.value;
+  state.settings.speakerNodeId = speaker.value;
 }
 
 function renderAudioRouteDevices(side, result) {
@@ -2197,21 +3376,24 @@ function renderAudioRouteDevices(side, result) {
   const saved = side === "mic" ? state.settings.micDeviceId || "" : state.settings.speakerDeviceId || "";
   const current = side === "mic" ? result.currentInputId : result.currentOutputId;
   const wantedKind = side === "mic" ? "input" : "output";
+  const compatibleDevices = (result.devices || [])
+    .filter((device) => device.kind === wantedKind || device.kind === "duplex");
   clear(select);
   routeOption(select, "", "OS default");
-  (result.devices || [])
-    .filter((device) => device.kind === wantedKind || device.kind === "duplex")
-    .forEach((device) => {
-      const suffix = [device.channels ? `${device.channels} ch` : "", device.note || ""].filter(Boolean).join(", ");
-      routeOption(select, device.id, suffix ? `${device.name} (${suffix})` : device.name || device.id);
-    });
-  const devices = result.devices || [];
-  const target = devices.some((device) => device.id === saved) ? saved : (current || "");
+  compatibleDevices.forEach((device) => {
+    const suffix = [device.channels ? `${device.channels} ch` : "", device.note || ""].filter(Boolean).join(", ");
+    routeOption(select, device.id, suffix ? `${device.name} (${suffix})` : device.name || device.id);
+  });
+  const target = compatibleDevices.some((device) => device.id === saved)
+    ? saved
+    : compatibleDevices.some((device) => device.id === current)
+      ? current
+      : "";
   select.value = target;
-  renderBridgeDeviceReadout(side, result, target);
+  renderBridgeDeviceReadout(side, compatibleDevices, target);
 }
 
-function renderBridgeDeviceReadout(side, result, selectedId) {
+function renderBridgeDeviceReadout(side, compatibleDevices, selectedId) {
   const provider = maybe(side === "mic" ? "micNodeId" : "speakerNodeId")?.value || "";
   const target = maybe(side === "mic" ? "bridgeInputDevice" : "bridgeOutputDevice");
   if (!target) return;
@@ -2219,7 +3401,7 @@ function renderBridgeDeviceReadout(side, result, selectedId) {
     target.textContent = "Not using client bridge";
     return;
   }
-  const device = (result.devices || []).find((entry) => entry.id === selectedId);
+  const device = compatibleDevices.find((entry) => entry.id === selectedId);
   target.textContent = device
     ? `${device.name}${device.channels ? ` (${device.channels} ch)` : ""}`
     : "OS default";
@@ -2259,11 +3441,16 @@ async function loadAudioRouteDevices(side) {
   const isReverseBridge = (state.audio.route.bridgeProviders || [])
     .some((candidate) => candidate.id === provider);
   if (isReverseBridge) await configureReverseAudio(provider);
-  const result = await fetch("/api/audio-route/devices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings: collectSettings(), providerId: provider }),
-  }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
+  let result = {};
+  for (let attempt = 0; attempt < (isReverseBridge ? 4 : 1); attempt += 1) {
+    result = await fetch("/api/audio-route/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings(), providerId: provider }),
+    }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
+    if (!result.error || !String(result.error).toLowerCase().includes("session disconnected")) break;
+    await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+  }
   if (result.error) {
     if (select) {
       clear(select);
@@ -2379,45 +3566,7 @@ async function loadAudioDevices() {
   state.audio.devices = Array.isArray(result.devices) ? result.devices : [];
   state.audio.inputCurrent = result.input_current ?? result.input_default ?? null;
   state.audio.outputCurrent = result.output_current ?? result.output_default ?? null;
-  renderAudioDevices(result);
   appendAudioLog(`loaded ${state.audio.devices.length} audio devices`);
-}
-
-function renderAudioDevices(result = {}) {
-  const input = maybe("audioInputDevice");
-  const output = maybe("audioOutputDevice");
-  if (!input || !output) return;
-  clear(input);
-  clear(output);
-  const inputCurrent = result.input_current ?? result.input_default ?? state.audio.inputCurrent;
-  const outputCurrent = result.output_current ?? result.output_default ?? state.audio.outputCurrent;
-  const makeOption = (device, kind) => {
-    const opt = document.createElement("option");
-    opt.value = String(device.id);
-    const channels = kind === "input" ? device.max_input_channels : device.max_output_channels;
-    opt.textContent = `#${device.id} ${device.name} (${channels} ch)`;
-    return opt;
-  };
-  state.audio.devices
-    .filter((device) => Number(device.max_input_channels || 0) > 0)
-    .forEach((device) => input.appendChild(makeOption(device, "input")));
-  state.audio.devices
-    .filter((device) => Number(device.max_output_channels || 0) > 0)
-    .forEach((device) => output.appendChild(makeOption(device, "output")));
-  input.value = inputCurrent !== null && inputCurrent !== undefined ? String(inputCurrent) : "";
-  output.value = outputCurrent !== null && outputCurrent !== undefined ? String(outputCurrent) : "";
-}
-
-async function applyAudioDevices() {
-  const input = maybe("audioInputDevice")?.value;
-  const output = maybe("audioOutputDevice")?.value;
-  const body = {};
-  if (input !== undefined && input !== "") body.input = Number(input);
-  if (output !== undefined && output !== "") body.output = Number(output);
-  appendAudioLog(`applying devices ${JSON.stringify(body)}`);
-  const result = await audioServerOnce("/set_device", body);
-  appendAudioLog(result.ok ? "device selection applied" : `device selection failed: ${result.error || "unknown error"}`);
-  await loadAudioDevices();
 }
 
 function startAudioServerStreams() {
@@ -2479,7 +3628,7 @@ function renderAudioLevel(level, outputLevel = 0) {
   }
   state.audio.levelHistory.push(display);
   state.audio.levelHistory = state.audio.levelHistory.slice(-28);
-  if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
+  if (maybe("audioLevelBar")) $("audioLevelBar").value = display;
   const label = `${Math.round(display * 100)}%`;
   setText("audioLevelText", label);
   if (maybe("audioLevelText")) $("audioLevelText").title = `raw RMS ${raw.toFixed(4)}`;
@@ -2575,43 +3724,27 @@ function normalizeAudioLogLine(line) {
   return `${text.slice(0, AUDIO_LOG_MAX_CHARS)} ... [${text.length} chars]`;
 }
 
-async function enrollVoice() {
-  const userId = $("enrollUserId").value.trim() || $("userId").value.trim();
-  const userName = $("enrollUserName").value.trim() || userId;
-  const seconds = Number($("recordSeconds").value || 6);
-  if (!userId) {
-    renderEnroll({ ok: false, error: "Voice ID is required" });
-    return;
-  }
-  $("enrollState").textContent = `recording ${seconds}s`;
-  $("enrollVoice").classList.add("busy");
-  addTimeline("voiceprint", `recording ${seconds}s for ${userId}`);
-  const result = await fetch("/api/voiceprint/enroll", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      settings: collectSettings(),
-      userId,
-      userName,
-      seconds,
-    }),
-  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
-  $("enrollVoice").classList.remove("busy");
-  renderEnroll(result);
-}
-
 async function testSpeaker() {
+  if (state.audio.testBusy) return;
+  state.audio.testBusy = "speaker";
+  syncAudioTestControls();
   $("testSpeaker").classList.add("busy");
   addTimeline("audio", "speaker test requested");
-  const result = await fetch("/api/audio/play-test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      settings: collectSettings(),
-      text: "Robonix speaker test. 如果你听到这句话，语音播放链路正常。",
-    }),
-  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
-  $("testSpeaker").classList.remove("busy");
+  let result;
+  try {
+    result = await fetch("/api/audio/play-test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        settings: collectSettings(),
+        text: "Robonix speaker test. 如果你听到这句话，语音播放链路正常。",
+      }),
+    }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  } finally {
+    $("testSpeaker").classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+  }
   const text = result.ok
     ? `speaker ok: played ${result.bytes} bytes via ${result.speakerEndpoint}`
     : `speaker failed: ${result.error}`;
@@ -2630,14 +3763,44 @@ async function testSpeaker() {
 
 async function testMicrophone() {
   const button = $("testMicrophone");
+  if (state.audio.testBusy) return;
+  state.audio.testBusy = "microphone";
+  syncAudioTestControls();
   button.classList.add("busy");
+  if (handsfreeOwnsMicrophone() || state.voiceActive) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    const live = Boolean(
+      state.audio.vuSocket
+      && state.audio.vuSocket.readyState === WebSocket.OPEN
+    );
+    const peak = Math.max(0, ...state.audio.levelHistory);
+    const owner = state.voiceActive ? "the active voice turn" : "Hands-free";
+    const text = live
+      ? `Microphone is live and currently used by ${owner}. Input level ${Math.round(peak * 100)}%.`
+      : `Microphone is currently used by ${owner}, but the live input meter is unavailable.`;
+    const status = $("audioTestStatus");
+    status.textContent = text;
+    status.classList.toggle("is-error", !live);
+    status.classList.toggle("is-success", live);
+    addTimeline(live ? "audio" : "error", text);
+    button.classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+    return;
+  }
   addTimeline("audio", "microphone test requested");
-  const result = await fetch("/api/audio/mic-test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
-  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
-  button.classList.remove("busy");
+  let result;
+  try {
+    result = await fetch("/api/audio/mic-test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
+    }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  } finally {
+    button.classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+  }
   const text = result.ok
     ? `microphone ok: ${result.bytes} bytes in ${result.captureMs} ms, RMS ${result.rms}`
     : `microphone failed: ${result.error}`;
@@ -2726,7 +3889,6 @@ function setBusy(value) {
   $("stopButton").hidden = !value;
   $("newSession").disabled = value;
   if (!value) resetStopState();
-  maybe("voiceButton")?.classList.toggle("busy", value);
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => {
     button.classList.toggle("busy", value);
     button.textContent = value ? "Voice steer" : "Voice";

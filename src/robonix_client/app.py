@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import audio_server_control
-from .audio_reverse_bridge import AudioReverseBridge
+from .audio_reverse_bridge import AudioBridgeInUseError, AudioReverseBridge
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
@@ -36,6 +36,20 @@ from .transport import (
     submit_text,
     watch_handsfree_events,
     system_snapshot,
+    account_admin_delete,
+    account_admin_reset_voiceprint,
+    account_admin_update,
+    account_change_password,
+    account_connection_status,
+    account_get_voiceprint_preview,
+    account_list_users,
+    account_login,
+    account_logout,
+    account_profile,
+    account_register,
+    account_replace_voiceprint,
+    account_unbind_voiceprint,
+    account_update_profile,
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -110,12 +124,59 @@ class AudioRouteApplyRequest(BaseModel):
     settings: dict[str, Any] = {}
 
 
+class LoginRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    username: str
+    password: str
+
+
+class SignupRequest(LoginRequest):
+    displayName: str
+    email: str = ""
+
+
+class AccountRequest(BaseModel):
+    settings: dict[str, Any] = {}
+
+
+class ProfileUpdateRequest(AccountRequest):
+    displayName: str
+    email: str = ""
+
+
+class PasswordChangeRequest(AccountRequest):
+    currentPassword: str
+    newPassword: str
+
+
+class VoiceprintReplaceRequest(AccountRequest):
+    seconds: float = 6.0
+
+
+class AdminUpdateUserRequest(AccountRequest):
+    targetUserId: str
+    enabled: bool
+    roles: list[str]
+    voiceGuardEnabled: bool
+
+
+class AdminTargetRequest(AccountRequest):
+    targetUserId: str
+
+
 def _payload_steer(payload: dict[str, Any]) -> bool:
     return bool(payload.get("steer") or payload.get("interactionMode") == "steer")
 
 
 def _payload_expected_turn_id(payload: dict[str, Any]) -> str:
     return str(payload.get("expectedTurnId") or "").strip()
+
+
+def _rpc_error(exc: Exception) -> str:
+    if isinstance(exc, grpc.aio.AioRpcError):
+        detail = exc.details() or exc.code().name
+        return f"{exc.code().name.lower()}: {detail}"
+    return str(exc)
 
 
 def _load_persisted_settings() -> dict[str, Any]:
@@ -157,6 +218,14 @@ async def stop_client_audio() -> None:
 
 
 @app.get("/")
+@app.get("/chat")
+@app.get("/executions")
+@app.get("/logs")
+@app.get("/vitals")
+@app.get("/audio")
+@app.get("/settings")
+@app.get("/profile")
+@app.get("/admin")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
@@ -228,6 +297,167 @@ async def put_settings(req: ClientSettingsRequest) -> dict[str, Any]:
         return {"ok": True, "settings": settings, "path": str(SETTINGS_PATH)}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "path": str(SETTINGS_PATH)}
+
+
+@app.post("/api/auth/signup")
+async def auth_signup(req: SignupRequest) -> dict[str, Any]:
+    try:
+        result = await account_register(
+            ClientSettings.from_payload(req.settings),
+            req.username,
+            req.displayName,
+            req.email,
+            req.password,
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/auth/connect")
+async def auth_connect(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        result = await account_connection_status(
+            ClientSettings.from_payload(req.settings)
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        detail = _rpc_error(exc)
+        if "no provider found" in detail.lower():
+            error = "Keystone is not available on this robot."
+        else:
+            error = "Robot unavailable. Check the address and make sure Robonix is running."
+        return {"ok": False, "error": error}
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest) -> dict[str, Any]:
+    try:
+        result = await account_login(
+            ClientSettings.from_payload(req.settings), req.username, req.password
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(req: AccountRequest) -> dict[str, Any]:
+    try:
+        await account_logout(ClientSettings.from_payload(req.settings))
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/account/profile")
+async def account_get_profile(req: AccountRequest) -> dict[str, Any]:
+    try:
+        user = await account_profile(ClientSettings.from_payload(req.settings))
+        return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.put("/api/account/profile")
+async def account_put_profile(req: ProfileUpdateRequest) -> dict[str, Any]:
+    try:
+        user = await account_update_profile(
+            ClientSettings.from_payload(req.settings), req.displayName, req.email
+        )
+        return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.put("/api/account/password")
+async def account_put_password(req: PasswordChangeRequest) -> dict[str, Any]:
+    try:
+        await account_change_password(
+            ClientSettings.from_payload(req.settings),
+            req.currentPassword,
+            req.newPassword,
+        )
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/account/voiceprint")
+async def account_voiceprint_replace(req: VoiceprintReplaceRequest) -> dict[str, Any]:
+    try:
+        result = await account_replace_voiceprint(
+            ClientSettings.from_payload(req.settings), req.seconds
+        )
+        return {"ok": True, **result}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/account/voiceprint-preview")
+async def account_voiceprint_preview(req: AccountRequest) -> dict[str, Any]:
+    try:
+        preview = await account_get_voiceprint_preview(
+            ClientSettings.from_payload(req.settings)
+        )
+        return {"ok": True, **preview}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.delete("/api/account/voiceprint")
+async def account_voiceprint_delete(req: AccountRequest) -> dict[str, Any]:
+    try:
+        user = await account_unbind_voiceprint(ClientSettings.from_payload(req.settings))
+        return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/admin/users")
+async def admin_users(req: AccountRequest) -> dict[str, Any]:
+    try:
+        users = await account_list_users(ClientSettings.from_payload(req.settings))
+        return {"ok": True, "users": users}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.put("/api/admin/users")
+async def admin_update_user(req: AdminUpdateUserRequest) -> dict[str, Any]:
+    try:
+        user = await account_admin_update(
+            ClientSettings.from_payload(req.settings),
+            req.targetUserId,
+            req.enabled,
+            req.roles,
+            req.voiceGuardEnabled,
+        )
+        return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/admin/users/delete")
+async def admin_delete_user(req: AdminTargetRequest) -> dict[str, Any]:
+    try:
+        await account_admin_delete(
+            ClientSettings.from_payload(req.settings), req.targetUserId
+        )
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/admin/users/reset-voiceprint")
+async def admin_reset_voiceprint(req: AdminTargetRequest) -> dict[str, Any]:
+    try:
+        user = await account_admin_reset_voiceprint(
+            ClientSettings.from_payload(req.settings), req.targetUserId
+        )
+        return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
 
 
 @app.get("/api/system")
@@ -340,6 +570,8 @@ async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, An
             ClientSettings.from_payload(req.settings), req.providerId
         )
         return {"ok": True, **bridge}
+    except AudioBridgeInUseError as exc:
+        return {"ok": False, "errorCode": "audio_client_conflict", "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
