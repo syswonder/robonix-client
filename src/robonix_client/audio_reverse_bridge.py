@@ -7,20 +7,37 @@ deployment manifest.
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import hashlib
 import json
 import logging
+import os
+import tempfile
 import threading
 from contextlib import suppress
+from pathlib import Path
 
 import websockets
 
 log = logging.getLogger(__name__)
 
 
+class AudioBridgeInUseError(RuntimeError):
+    """Another local Client already owns this robot's reverse-audio route."""
+
+
 class AudioReverseBridge:
-    def __init__(self, endpoint: str, local_port: int = 60000) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        local_port: int = 60000,
+        *,
+        lease_dir: Path | None = None,
+    ) -> None:
         self.endpoint = self._normalize_endpoint(endpoint)
         self.local_port = local_port
+        self._lease_dir = lease_dir or Path(tempfile.gettempdir()) / "robonix-client"
+        self._lease_file = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -32,9 +49,18 @@ class AudioReverseBridge:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._acquire_lease()
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="robonix-client-audio", daemon=True)
-        self._thread.start()
+        try:
+            self._thread = threading.Thread(
+                target=self._run,
+                name="robonix-client-audio",
+                daemon=True,
+            )
+            self._thread.start()
+        except Exception:
+            self._release_lease()
+            raise
 
     def stop(self) -> None:
         self._stop.set()
@@ -45,6 +71,42 @@ class AudioReverseBridge:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
         self._thread = None
+        self._release_lease()
+
+    def _lease_path(self) -> Path:
+        digest = hashlib.sha256(self.endpoint.encode("utf-8")).hexdigest()[:20]
+        return self._lease_dir / f"reverse-audio-{digest}.lock"
+
+    def _acquire_lease(self) -> None:
+        if self._lease_file is not None:
+            return
+        self._lease_dir.mkdir(parents=True, exist_ok=True)
+        lease = self._lease_path().open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            lease.seek(0)
+            owner = lease.read().strip()
+            lease.close()
+            detail = f" ({owner})" if owner else ""
+            raise AudioBridgeInUseError(
+                "Another local Robonix Client is already connected to this "
+                f"robot's audio bridge{detail}. Close the duplicate Client and retry."
+            ) from exc
+        lease.seek(0)
+        lease.truncate()
+        lease.write(f"pid={os.getpid()} endpoint={self.endpoint}")
+        lease.flush()
+        self._lease_file = lease
+
+    def _release_lease(self) -> None:
+        lease = self._lease_file
+        self._lease_file = None
+        if lease is None:
+            return
+        with suppress(OSError):
+            fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
+        lease.close()
 
     @staticmethod
     def _normalize_endpoint(endpoint: str) -> str:

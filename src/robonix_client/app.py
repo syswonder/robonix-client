@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import audio_server_control
-from .audio_reverse_bridge import AudioReverseBridge
+from .audio_reverse_bridge import AudioBridgeInUseError, AudioReverseBridge
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
@@ -570,6 +570,8 @@ async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, An
             ClientSettings.from_payload(req.settings), req.providerId
         )
         return {"ok": True, **bridge}
+    except AudioBridgeInUseError as exc:
+        return {"ok": False, "errorCode": "audio_client_conflict", "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
