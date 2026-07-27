@@ -51,6 +51,7 @@ const state = {
     logSocket: null,
     logLines: [],
     levelHistory: Array(28).fill(0),
+    testBusy: "",
     outputLevelTarget: 0,
     auraLevel: 0,
     auraFrame: 0,
@@ -1396,18 +1397,35 @@ function syncVoiceControls() {
     button.toggleAttribute("disabled", disabled);
     button.title = title;
   });
-  const micTest = maybe("testMicrophone");
-  if (micTest) {
-    const micBlocked = handsfreeOwnsMicrophone() || state.voiceActive;
-    micTest.toggleAttribute("disabled", micBlocked);
-    micTest.title = state.voiceActive
-      ? "An F2 voice session owns this microphone. Stop it before testing the route."
-      : handsfreeOwnsMicrophone()
-        ? "Hands-free owns this microphone. Turn it off before running an exclusive microphone test."
-        : "Capture one second through the selected Robonix microphone route.";
-  }
+  syncAudioTestControls();
   const handsfree = maybe("handsfreeToggle");
   if (handsfree) handsfree.toggleAttribute("disabled", state.voiceActive || state.handsfree.busy);
+}
+
+function syncAudioTestControls() {
+  const micTest = maybe("testMicrophone");
+  const speakerTest = maybe("testSpeaker");
+  if (!micTest || !speakerTest) return;
+  const busy = Boolean(state.audio.testBusy);
+  const micInUse = handsfreeOwnsMicrophone() || state.voiceActive;
+  micTest.toggleAttribute("disabled", busy);
+  speakerTest.toggleAttribute("disabled", busy);
+  micTest.textContent = state.audio.testBusy === "microphone"
+    ? "Testing..."
+    : micInUse
+      ? "Check live input"
+      : "Test microphone";
+  speakerTest.textContent = state.audio.testBusy === "speaker"
+    ? "Playing..."
+    : "Test speaker";
+  micTest.title = busy
+    ? "Wait for the current audio test to finish."
+    : micInUse
+      ? "The microphone is already live. Check its current input level without interrupting voice interaction."
+      : "Capture one second through the selected Robonix microphone route.";
+  speakerTest.title = busy
+    ? "Wait for the current audio test to finish."
+    : "Play a test phrase through the selected Robonix speaker route.";
 }
 
 function stopHandsfreeEventStream() {
@@ -3707,17 +3725,26 @@ function normalizeAudioLogLine(line) {
 }
 
 async function testSpeaker() {
+  if (state.audio.testBusy) return;
+  state.audio.testBusy = "speaker";
+  syncAudioTestControls();
   $("testSpeaker").classList.add("busy");
   addTimeline("audio", "speaker test requested");
-  const result = await fetch("/api/audio/play-test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      settings: collectSettings(),
-      text: "Robonix speaker test. 如果你听到这句话，语音播放链路正常。",
-    }),
-  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
-  $("testSpeaker").classList.remove("busy");
+  let result;
+  try {
+    result = await fetch("/api/audio/play-test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        settings: collectSettings(),
+        text: "Robonix speaker test. 如果你听到这句话，语音播放链路正常。",
+      }),
+    }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  } finally {
+    $("testSpeaker").classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+  }
   const text = result.ok
     ? `speaker ok: played ${result.bytes} bytes via ${result.speakerEndpoint}`
     : `speaker failed: ${result.error}`;
@@ -3736,14 +3763,44 @@ async function testSpeaker() {
 
 async function testMicrophone() {
   const button = $("testMicrophone");
+  if (state.audio.testBusy) return;
+  state.audio.testBusy = "microphone";
+  syncAudioTestControls();
   button.classList.add("busy");
+  if (handsfreeOwnsMicrophone() || state.voiceActive) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    const live = Boolean(
+      state.audio.vuSocket
+      && state.audio.vuSocket.readyState === WebSocket.OPEN
+    );
+    const peak = Math.max(0, ...state.audio.levelHistory);
+    const owner = state.voiceActive ? "the active voice turn" : "Hands-free";
+    const text = live
+      ? `Microphone is live and currently used by ${owner}. Input level ${Math.round(peak * 100)}%.`
+      : `Microphone is currently used by ${owner}, but the live input meter is unavailable.`;
+    const status = $("audioTestStatus");
+    status.textContent = text;
+    status.classList.toggle("is-error", !live);
+    status.classList.toggle("is-success", live);
+    addTimeline(live ? "audio" : "error", text);
+    button.classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+    return;
+  }
   addTimeline("audio", "microphone test requested");
-  const result = await fetch("/api/audio/mic-test", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
-  }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
-  button.classList.remove("busy");
+  let result;
+  try {
+    result = await fetch("/api/audio/mic-test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
+    }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  } finally {
+    button.classList.remove("busy");
+    state.audio.testBusy = "";
+    syncAudioTestControls();
+  }
   const text = result.ok
     ? `microphone ok: ${result.bytes} bytes in ${result.captureMs} ms, RMS ${result.rms}`
     : `microphone failed: ${result.error}`;

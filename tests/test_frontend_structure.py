@@ -84,6 +84,17 @@ class FrontendStructureTests(unittest.TestCase):
             with self.subTest(behavior=behavior):
                 self.assertIn(behavior, self.javascript)
 
+    def test_audio_route_tests_are_mutually_blocking(self) -> None:
+        for behavior in (
+            'state.audio.testBusy = "microphone"',
+            'state.audio.testBusy = "speaker"',
+            'micTest.toggleAttribute("disabled", busy)',
+            'speakerTest.toggleAttribute("disabled", busy)',
+            'state.audio.testBusy = ""',
+        ):
+            with self.subTest(behavior=behavior):
+                self.assertIn(behavior, self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()
