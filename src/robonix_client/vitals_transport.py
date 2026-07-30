@@ -36,6 +36,14 @@ HEALTH_SEVERITY = {
     "warn": 3,
     "error": 4,
 }
+VISUAL_STATE_SEVERITY = {
+    "unknown": 0,
+    "ok": 1,
+    "idle": 2,
+    "stale": 3,
+    "warn": 4,
+    "error": 5,
+}
 SIGNAL_HEALTH_NAMES = {0: "ok", 1: "warn", 2: "error", 3: "stale"}
 BODY_HEALTH_NAMES = {0: "ok", 1: "error", 2: "error"}
 MODULE_HEALTH_NAMES = {0: "ok", 1: "warn", 2: "error"}
@@ -264,6 +272,29 @@ def _highest_health(values: list[str]) -> str:
     return max(values or ["unknown"], key=lambda value: HEALTH_SEVERITY.get(value, 0))
 
 
+def _signal_visual_state(signal: dict[str, Any]) -> str:
+    health = str(signal.get("health") or "unknown")
+    if health != "ok":
+        return health
+    if signal.get("visualState") == "idle":
+        return "idle"
+    try:
+        observed_value = float(signal.get("observedValue"))
+    except (TypeError, ValueError):
+        return health
+    key = str(signal.get("key") or "")
+    if key.endswith("/torque_enabled") and observed_value < 0.5:
+        return "idle"
+    return health
+
+
+def _highest_visual_state(values: list[str]) -> str:
+    return max(
+        values or ["unknown"],
+        key=lambda value: VISUAL_STATE_SEVERITY.get(value, 0),
+    )
+
+
 def _health_summary(values: list[str]) -> dict[str, Any]:
     counts = {name: values.count(name) for name in HEALTH_SEVERITY}
     return {
@@ -320,9 +351,14 @@ def aggregate_component_health(
         component_id = str(component["id"])
         component_signals = direct_signals.get(component_id, [])
         direct_values = [str(signal.get("health") or "unknown") for signal in component_signals]
+        direct_visual_values = [
+            _signal_visual_state(signal) for signal in component_signals
+        ]
         if component_id in body_health:
             direct_values.append(body_health[component_id])
+            direct_visual_values.append(body_health[component_id])
         direct_health = _highest_health(direct_values)
+        direct_visual_state = _highest_visual_state(direct_visual_values)
         worst_signal = max(
             component_signals,
             key=lambda signal: HEALTH_SEVERITY.get(str(signal.get("health")), 0),
@@ -332,6 +368,8 @@ def aggregate_component_health(
             "componentId": component_id,
             "health": direct_health,
             "directHealth": direct_health,
+            "visualState": direct_visual_state,
+            "directVisualState": direct_visual_state,
             "signalCount": len(component_signals),
             "detail": str(worst_signal.get("detail") or ""),
             "sourceComponentId": component_id if direct_values else "",
@@ -350,6 +388,11 @@ def aggregate_component_health(
             parent["sourceComponentId"] = child["sourceComponentId"] or component_id
             if child["detail"]:
                 parent["detail"] = child["detail"]
+        if (
+            VISUAL_STATE_SEVERITY[child["visualState"]]
+            > VISUAL_STATE_SEVERITY[parent["visualState"]]
+        ):
+            parent["visualState"] = child["visualState"]
 
     return [rows[str(component["id"])] for component in components]
 
@@ -358,8 +401,9 @@ def vitals_snapshot_to_dict(
     snapshot: Any,
     description: dict[str, Any],
 ) -> dict[str, Any]:
-    signals = [
-        {
+    signals = []
+    for signal in snapshot.health_signals:
+        item = {
             "key": signal.key,
             "health": SIGNAL_HEALTH_NAMES.get(int(signal.status), "unknown"),
             "status": int(signal.status),
@@ -367,8 +411,8 @@ def vitals_snapshot_to_dict(
             "observedValue": float(signal.observed_value),
             "referenceValue": float(signal.reference_value),
         }
-        for signal in snapshot.health_signals
-    ]
+        item["visualState"] = _signal_visual_state(item)
+        signals.append(item)
     bodies = [
         {
             "key": body.key,
@@ -390,15 +434,20 @@ def vitals_snapshot_to_dict(
     ]
     component_health = aggregate_component_health(description, signals, bodies)
     power = snapshot.power
+    soc_percent = float(power.soc_percent)
+    voltage = float(power.voltage)
+    power_summary = None
+    if soc_percent >= 0 or voltage >= 0:
+        power_summary = {
+            "socPercent": soc_percent,
+            "voltage": voltage,
+            "charging": bool(power.charging),
+            "remainingSeconds": int(power.remaining_s),
+        }
     return {
         "timestampNs": int(snapshot.ts_ns),
         "updatedAtMs": int(snapshot.ts_ns // 1_000_000) if snapshot.ts_ns else _now_ms(),
-        "power": {
-            "socPercent": float(power.soc_percent),
-            "voltage": float(power.voltage),
-            "charging": bool(power.charging),
-            "remainingSeconds": int(power.remaining_s),
-        },
+        "power": power_summary,
         "signals": signals,
         "bodies": bodies,
         "componentHealth": component_health,

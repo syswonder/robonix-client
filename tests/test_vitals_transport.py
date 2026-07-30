@@ -117,6 +117,32 @@ class ComponentHealthTest(unittest.TestCase):
             ["body/base/battery/soc"],
         )
 
+    def test_marks_disabled_actuator_idle_without_changing_health(self):
+        signals = [
+            {
+                "key": "body/base/left_wheel/torque_enabled",
+                "health": "ok",
+                "detail": "left wheel torque is disabled (idle)",
+                "observedValue": 0.0,
+                "referenceValue": 0.0,
+            }
+        ]
+
+        rows = aggregate_component_health(
+            self.description,
+            signals,
+            [{"key": "body", "health": "ok"}],
+        )
+        health = {row["componentId"]: row for row in rows}
+
+        wheel = health["body/base/left_wheel"]
+        self.assertEqual(wheel["health"], "ok")
+        self.assertEqual(wheel["directHealth"], "ok")
+        self.assertEqual(wheel["directVisualState"], "idle")
+        self.assertEqual(wheel["visualState"], "idle")
+        self.assertEqual(health["body/base"]["visualState"], "idle")
+        self.assertEqual(health["body"]["visualState"], "idle")
+
     def test_converts_vitals_snapshot_to_browser_shape(self):
         snapshot = vitals_client_pb2.VitalsSnapshot(
             ts_ns=1_700_000_000_000_000_000,
@@ -142,6 +168,64 @@ class ComponentHealthTest(unittest.TestCase):
         self.assertEqual(result["signals"][0]["health"], "ok")
         self.assertEqual(result["summary"]["overall"], "ok")
         self.assertEqual(result["updatedAtMs"], 1_700_000_000_000)
+
+    def test_omits_negative_missing_power_sentinels(self):
+        snapshot = vitals_client_pb2.VitalsSnapshot(
+            power=vitals_client_pb2.PowerState(
+                soc_percent=-1.0,
+                voltage=-1.0,
+                remaining_s=-1,
+            )
+        )
+
+        result = vitals_snapshot_to_dict(snapshot, self.description)
+
+        self.assertIsNone(result["power"])
+
+    def test_marks_disabled_torque_signal_idle_in_browser_shape(self):
+        snapshot = vitals_client_pb2.VitalsSnapshot(
+            health_signals=[
+                vitals_client_pb2.HealthSignal(
+                    key="body/base/left_wheel/torque_enabled",
+                    status=0,
+                    detail="left wheel torque is disabled (idle)",
+                    observed_value=0.0,
+                )
+            ],
+            bodies=[vitals_client_pb2.BodyHealth(key="body", status=0)],
+        )
+
+        result = vitals_snapshot_to_dict(snapshot, self.description)
+
+        self.assertEqual(result["signals"][0]["health"], "ok")
+        self.assertEqual(result["signals"][0]["visualState"], "idle")
+        self.assertEqual(result["summary"]["overall"], "ok")
+
+    def test_marks_enabled_torque_signal_ready_in_browser_shape(self):
+        snapshot = vitals_client_pb2.VitalsSnapshot(
+            health_signals=[
+                vitals_client_pb2.HealthSignal(
+                    key="body/base/left_wheel/torque_enabled",
+                    status=0,
+                    detail="left wheel torque is enabled (ready)",
+                    observed_value=1.0,
+                    reference_value=1.0,
+                )
+            ],
+            bodies=[vitals_client_pb2.BodyHealth(key="body", status=0)],
+        )
+
+        result = vitals_snapshot_to_dict(snapshot, self.description)
+        wheel = next(
+            row
+            for row in result["componentHealth"]
+            if row["componentId"] == "body/base/left_wheel"
+        )
+
+        self.assertEqual(result["signals"][0]["visualState"], "ok")
+        self.assertEqual(wheel["directHealth"], "ok")
+        self.assertEqual(wheel["directVisualState"], "ok")
+        self.assertEqual(wheel["signalCount"], 1)
 
 
 class VitalsStreamOrderingTest(unittest.IsolatedAsyncioTestCase):

@@ -256,6 +256,10 @@ files attached to Soma's `get_urdf` response are cached behind a same-origin
 resource URL, so this path does not depend on a robot model name. The
 procedural renderer remains the final fallback.
 
+Actuators that report `torque_enabled=0` remain healthy but are presented as
+yellow `idle` components. This readiness state propagates to their parent robot
+for rendering and does not create a warning incident.
+
 Vitals persists hardware, module, and provider incidents in
 `~/.local/share/robonix-client/vitals-alerts.sqlite3`. Set
 `ROBONIX_CLIENT_VITALS_DB` to use another database path. A reported anomaly is

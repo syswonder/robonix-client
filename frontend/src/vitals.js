@@ -21,10 +21,11 @@ import {
   createElement as createIconElement,
 } from "lucide";
 
-const HEALTH_SEVERITY = { unknown: 0, ok: 1, stale: 2, warn: 3, error: 4 };
+const HEALTH_SEVERITY = { unknown: 0, ok: 1, idle: 2, stale: 3, warn: 4, error: 5 };
 const HEALTH_COLORS = {
   unknown: new THREE.Color(0x000000),
   ok: new THREE.Color(0x2f8a55),
+  idle: new THREE.Color(0xe0b449),
   stale: new THREE.Color(0x657177),
   warn: new THREE.Color(0xd89b31),
   error: new THREE.Color(0xd94b42),
@@ -761,11 +762,11 @@ class RobotViewport {
           material.color?.copy?.(material.userData.vitalsBaseColor || new THREE.Color(0xffffff));
           material.emissive.copy(material.userData.vitalsBaseEmissive || new THREE.Color(0x000000));
           material.emissiveIntensity = material.userData.vitalsBaseIntensity || 0;
-          if (["warn", "error", "stale"].includes(normalized)) {
-            const colorMix = normalized === "error" ? 0.72 : normalized === "warn" ? 0.46 : 0.32;
+          if (["idle", "warn", "error", "stale"].includes(normalized)) {
+            const colorMix = normalized === "error" ? 0.72 : normalized === "warn" ? 0.46 : normalized === "idle" ? 0.44 : 0.32;
             material.color?.lerp?.(HEALTH_COLORS[normalized], colorMix);
-            material.emissive.lerp(HEALTH_COLORS[normalized], normalized === "error" ? 0.94 : 0.76);
-            material.emissiveIntensity = normalized === "error" ? 0.9 : normalized === "warn" ? 0.58 : 0.34;
+            material.emissive.lerp(HEALTH_COLORS[normalized], normalized === "error" ? 0.94 : normalized === "idle" ? 0.68 : 0.76);
+            material.emissiveIntensity = normalized === "error" ? 0.9 : normalized === "warn" ? 0.58 : normalized === "idle" ? 0.46 : 0.34;
           }
         });
       }));
@@ -892,6 +893,13 @@ class RobotViewport {
         (value, material) => Math.max(
           value,
           Number(material.color?.r || 0) - Math.max(Number(material.color?.g || 0), Number(material.color?.b || 0)),
+        ),
+        0,
+      ),
+      maxYellowDominance: materials.reduce(
+        (value, material) => Math.max(
+          value,
+          Math.min(Number(material.color?.r || 0), Number(material.color?.g || 0)) - Number(material.color?.b || 0),
         ),
         0,
       ),
@@ -1107,13 +1115,16 @@ class VitalsDashboard {
   }
 
   componentHealthMap() {
-    return new Map((this.hardware?.componentHealth || []).map((row) => [row.componentId, safeHealth(row.health)]));
+    return new Map((this.hardware?.componentHealth || []).map((row) => [
+      row.componentId,
+      safeHealth(row.visualState || row.health),
+    ]));
   }
 
   componentVisualHealthMap() {
     return new Map((this.hardware?.componentHealth || []).map((row) => [
       row.componentId,
-      safeHealth(row.directHealth || row.health),
+      safeHealth(row.visualState || row.directVisualState || row.directHealth || row.health),
     ]));
   }
 
@@ -1413,18 +1424,29 @@ class VitalsDashboard {
 
   renderOverview() {
     const hardwareHealth = safeHealth(this.hardware?.summary?.overall);
+    const hardwareVisualState = safeHealth(
+      (this.hardware?.componentHealth || []).find((row) => row.componentId === "body")?.visualState
+      || hardwareHealth,
+    );
     const moduleHealth = safeHealth(this.modules?.summary?.overall);
     const providerHealth = safeHealth(this.providers?.summary?.overall);
-    const overall = highestHealth([hardwareHealth, moduleHealth, providerHealth]);
+    const overall = highestHealth([hardwareVisualState, moduleHealth, providerHealth]);
     setHealthLabel(byId("vitalsOverallHealth"), overall);
-    setHealthLabel(byId("vitalsInspectorHealth"), this.selectedHealth()?.health || "unknown");
+    setHealthLabel(
+      byId("vitalsInspectorHealth"),
+      this.selectedHealth()?.visualState || this.selectedHealth()?.health || "unknown",
+    );
     if (byId("vitalsHardwareSummary")) byId("vitalsHardwareSummary").textContent = healthSummary(this.hardware?.summary, "components");
     if (byId("vitalsSoftwareSummary")) byId("vitalsSoftwareSummary").textContent = healthSummary(this.modules?.summary, "modules");
     const power = this.hardware?.power;
     if (byId("vitalsBatterySummary")) {
-      byId("vitalsBatterySummary").textContent = power
-        ? `${Math.round(power.socPercent)}% · ${Number(power.voltage).toFixed(1)} V${power.charging ? " · charging" : ""}`
-        : "--";
+      const parts = [];
+      const socPercent = Number(power?.socPercent);
+      const voltage = Number(power?.voltage);
+      if (Number.isFinite(socPercent) && socPercent >= 0) parts.push(`${Math.round(socPercent)}%`);
+      if (Number.isFinite(voltage) && voltage >= 0) parts.push(`${voltage.toFixed(1)} V`);
+      if (parts.length && power?.charging) parts.push("charging");
+      byId("vitalsBatterySummary").textContent = parts.join(" · ") || "--";
     }
     this.renderUpdatedAt();
   }
@@ -1519,7 +1541,7 @@ class VitalsDashboard {
     clear(root);
     if (byId("vitalsInspectorTitle")) byId("vitalsInspectorTitle").textContent = component?.label || "Robot";
     if (byId("vitalsInspectorPath")) byId("vitalsInspectorPath").textContent = component?.id || "body";
-    setHealthLabel(byId("vitalsInspectorHealth"), health?.health || "unknown");
+    setHealthLabel(byId("vitalsInspectorHealth"), health?.visualState || health?.health || "unknown");
     if (!component) {
       const empty = document.createElement("div");
       empty.className = "vitals-empty";
@@ -1540,8 +1562,9 @@ class VitalsDashboard {
 
     const status = this.inspectorSection("Status");
     status.append(
-      this.detailRow("Aggregate", health?.health || "unknown"),
-      this.detailRow("Direct", health?.directHealth || "unknown"),
+      this.detailRow("Aggregate health", health?.health || "unknown"),
+      this.detailRow("Direct health", health?.directHealth || "unknown"),
+      this.detailRow("Readiness", health?.visualState === "idle" ? "idle" : health?.health === "ok" ? "ready" : "attention"),
       this.detailRow("Signals", String(health?.signalCount || 0)),
       this.detailRow("Source", health?.sourceComponentId || component.id),
     );
@@ -1561,7 +1584,7 @@ class VitalsDashboard {
         const row = document.createElement("div");
         row.className = "vitals-signal-row";
         const dot = document.createElement("span");
-        dot.className = `vitals-status-dot ${safeHealth(signal.health)}`;
+        dot.className = `vitals-status-dot ${safeHealth(signal.visualState || signal.health)}`;
         const copy = document.createElement("span");
         copy.className = "vitals-signal-copy";
         const key = document.createElement("strong");

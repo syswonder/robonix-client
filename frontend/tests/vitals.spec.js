@@ -132,12 +132,45 @@ const ARM_HARDWARE = {
     componentId: component.id,
     health: "ok",
     directHealth: "ok",
-    signalCount: 0,
-    detail: "",
+    visualState: "ok",
+    directVisualState: "ok",
+    signalCount: component.id === "body/gripper" ? 1 : 0,
+    detail: component.id === "body/gripper" ? "gripper torque is enabled (ready)" : "",
     sourceComponentId: component.id,
-    signalKeys: [],
+    signalKeys: component.id === "body/gripper" ? ["body/gripper/torque_enabled"] : [],
   })),
-  signals: [],
+  signals: [
+    {
+      key: "body/gripper/torque_enabled",
+      health: "ok",
+      visualState: "ok",
+      detail: "gripper torque is enabled (ready)",
+      observedValue: 1,
+      referenceValue: 1,
+    },
+  ],
+};
+
+const IDLE_ARM_HARDWARE = {
+  ...ARM_HARDWARE,
+  componentHealth: ARM_HARDWARE.componentHealth.map((row) => ({
+    ...row,
+    visualState: "idle",
+    directVisualState: row.componentId === "body/gripper" ? "idle" : row.directHealth,
+    detail: row.componentId === "body/gripper" ? "gripper torque is disabled (idle)" : row.detail,
+    signalCount: row.componentId === "body/gripper" ? 1 : row.signalCount,
+    signalKeys: row.componentId === "body/gripper" ? ["body/gripper/torque_enabled"] : row.signalKeys,
+  })),
+  signals: [
+    {
+      key: "body/gripper/torque_enabled",
+      health: "ok",
+      visualState: "idle",
+      detail: "gripper torque is disabled (idle)",
+      observedValue: 0,
+      referenceValue: 0,
+    },
+  ],
 };
 
 const MOBILE_MANIPULATOR_DESCRIPTION = {
@@ -460,10 +493,34 @@ test("renders a distinct manipulator family from Soma metadata", async ({ page }
   expect(debug.renderMode).toBe("procedural");
   await expect(page.locator("#vitalsOverallHealth")).toHaveText("ok");
   await expect(page.locator(".vitals-component-row", { hasText: "Gripper" })).toHaveCount(1);
+  await page.locator(".vitals-component-row", { hasText: "Gripper" }).click();
+  await expect(page.locator("#vitalsInspectorHealth")).toHaveText("ok");
+  await expect(page.locator("#vitalsInspectorBody")).toContainText("Readinessready");
 
   const canvas = await page.evaluate(() => window.__robonixVitalsDebug.canvasStats());
   expect(canvas.foregroundSamples).toBeGreaterThan(4);
   expect(canvas.distinctColors).toBeGreaterThan(3);
+});
+
+test("renders a disabled actuator yellow without creating an alert", async ({ page }) => {
+  await openVitals(page, ARM_DESCRIPTION, IDLE_ARM_HARDWARE);
+  await expect(page.locator("#vitalsOverallHealth")).toHaveText("idle");
+  await expect(page.locator("#vitalsOverallHealth")).toHaveClass(/idle/);
+  await expect(page.locator("#vitalsAlertCount")).toHaveText("0");
+
+  const gripperRow = page.locator(".vitals-component-row", { hasText: "Gripper" });
+  await expect(gripperRow.locator(".vitals-status-dot")).toHaveClass(/idle/);
+  await gripperRow.click();
+  await expect(page.locator("#vitalsInspectorHealth")).toHaveText("idle");
+  await expect(page.locator("#vitalsInspectorBody")).toContainText("Aggregate healthok");
+  await expect(page.locator("#vitalsInspectorBody")).toContainText("Readinessidle");
+  await expect(page.locator("#vitalsInspectorBody .vitals-signal-row .vitals-status-dot")).toHaveClass(/idle/);
+
+  const visual = await page.evaluate(
+    () => window.__robonixVitalsDebug.componentVisualStats("body/gripper"),
+  );
+  expect(visual.materialCount).toBeGreaterThan(0);
+  expect(visual.maxYellowDominance).toBeGreaterThan(0.1);
 });
 
 test("loads a relative mesh attached to a Soma URDF", async ({ page }) => {

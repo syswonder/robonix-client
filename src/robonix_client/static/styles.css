@@ -2597,6 +2597,7 @@ select:focus {
   color: var(--green);
 }
 
+.health-label.idle,
 .health-label.warn {
   border-color: rgba(241, 186, 79, 0.44);
   color: var(--amber);
@@ -2735,6 +2736,7 @@ select:focus {
 }
 
 .vitals-source.connecting::before,
+.vitals-status-dot.idle,
 .vitals-status-dot.warn {
   background: var(--amber);
 }
