@@ -339,6 +339,29 @@ class SoftwareHealthTest(unittest.TestCase):
         self.assertEqual(providers["old"]["health"], "stale")
         self.assertEqual(result["summary"]["overall"], "error")
 
+    def test_treats_inactive_skill_as_healthy_without_masking_primitive(self):
+        result = provider_snapshot_to_dict(
+            {
+                "providers": [
+                    {
+                        "id": "dual_piper_initialize",
+                        "kind": "skill",
+                        "state": "INACTIVE",
+                    },
+                    {
+                        "id": "left_piper",
+                        "kind": "primitive",
+                        "state": "INACTIVE",
+                    },
+                ]
+            }
+        )
+
+        providers = {provider["id"]: provider for provider in result["providers"]}
+        self.assertEqual(providers["dual_piper_initialize"]["health"], "ok")
+        self.assertEqual(providers["left_piper"]["health"], "warn")
+        self.assertEqual(result["summary"]["overall"], "warn")
+
 
 if __name__ == "__main__":
     unittest.main()

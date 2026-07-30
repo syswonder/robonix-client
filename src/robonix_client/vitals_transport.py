@@ -495,18 +495,25 @@ def module_snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
     }
 
 
-def provider_snapshot_to_dict(snapshot: dict[str, Any]) -> dict[str, Any]:
-    state_health = {
+def _provider_health(provider: dict[str, Any]) -> str:
+    state = str(provider.get("state") or "").upper()
+    kind = str(provider.get("kind") or "").lower()
+    if kind == "skill" and state == "INACTIVE":
+        return "ok"
+    return {
         "ACTIVE": "ok",
         "ERROR": "error",
         "TERMINATED": "stale",
         "INACTIVE": "warn",
         "REGISTERED": "warn",
-    }
+    }.get(state, "unknown")
+
+
+def provider_snapshot_to_dict(snapshot: dict[str, Any]) -> dict[str, Any]:
     providers = [
         {
             **provider,
-            "health": state_health.get(str(provider.get("state") or ""), "unknown"),
+            "health": _provider_health(provider),
         }
         for provider in snapshot.get("providers", [])
         if isinstance(provider, dict)
