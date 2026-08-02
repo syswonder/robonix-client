@@ -232,6 +232,7 @@ async def stop_client_audio() -> None:
 @app.get("/settings")
 @app.get("/profile")
 @app.get("/admin")
+@app.get("/sentinel")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
