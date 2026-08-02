@@ -8,12 +8,14 @@ import unittest
 
 ROOT = Path(__file__).parents[1]
 STATIC = ROOT / "src" / "robonix_client" / "static"
+APP = ROOT / "src" / "robonix_client" / "app.py"
 
 
 class FrontendStructureTests(unittest.TestCase):
     def setUp(self) -> None:
         self.html = (STATIC / "index.html").read_text(encoding="utf-8")
         self.javascript = (STATIC / "app.js").read_text(encoding="utf-8")
+        self.app = APP.read_text(encoding="utf-8")
         self.styles = "\n".join(
             path.read_text(encoding="utf-8")
             for path in (STATIC / "styles.css", STATIC / "next-ui.css")
@@ -47,10 +49,14 @@ class FrontendStructureTests(unittest.TestCase):
                 "executions",
                 "logs",
                 "profile",
+                "sentinel",
                 "settings",
                 "vitals",
             },
         )
+
+    def test_sentinel_direct_route_serves_spa(self) -> None:
+        self.assertIn('@app.get("/sentinel")', self.app)
 
     def test_material_ui_dependencies_do_not_return(self) -> None:
         frontend = "\n".join((self.html, self.javascript, self.styles)).lower()
@@ -94,6 +100,23 @@ class FrontendStructureTests(unittest.TestCase):
         ):
             with self.subTest(behavior=behavior):
                 self.assertIn(behavior, self.javascript)
+
+    def test_sentinel_uses_typed_generic_predicates(self) -> None:
+        frontend = "\n".join((self.html, self.javascript))
+        for required in (
+            "SENTINEL_VALUE_KINDS",
+            "SENTINEL_NUMERIC_OPERATORS",
+            "RFC 6901",
+            "min_inclusive",
+            "max_inclusive",
+            "Robot conditions",
+            "Argument conditions",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, frontend)
+        for forbidden in ('value="gripper_open"', 'value="moving"', "Robot state"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, frontend)
 
 
 if __name__ == "__main__":

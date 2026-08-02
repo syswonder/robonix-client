@@ -7,6 +7,20 @@ from robonix_client import transport
 
 
 class AccountTransportTest(unittest.IsolatedAsyncioTestCase):
+    def test_remote_atlas_host_rewrites_loopback_sentinel_endpoint(self):
+        self.assertEqual(
+            transport.rewrite_remote_endpoint(
+                "127.0.0.1:50062", "100.117.99.116:50051"
+            ),
+            "100.117.99.116:50062",
+        )
+        self.assertEqual(
+            transport.rewrite_remote_endpoint(
+                "127.0.0.1:50062", "127.0.0.1:50051"
+            ),
+            "127.0.0.1:50062",
+        )
+
     async def test_connection_gate_requires_keystone_login_and_registration(self):
         settings = transport.ClientSettings(atlas_endpoint="robot:50051")
         with mock.patch.object(
@@ -209,6 +223,40 @@ class AccountTransportTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context["user_id"], "Alice")
         self.assertEqual(context["session_token"], "opaque-session")
         self.assertNotIn("opaque-session", task.text)
+
+    async def test_sentinel_rules_use_sentinel_provider_and_admin_session(self):
+        settings = transport.ClientSettings(
+            atlas_endpoint="robot:50051", auth_token="opaque-session"
+        )
+        response = SimpleNamespace(rules_json='[{"id":"deny-motion"}]')
+        with (
+            mock.patch.object(
+                transport,
+                "discover_endpoint_handle",
+                mock.AsyncMock(return_value=("channel-1", "robot:50062")),
+            ) as discover,
+            mock.patch.object(
+                transport, "_unary_unary", mock.AsyncMock(return_value=response)
+            ) as call,
+            mock.patch.object(
+                transport, "disconnect_capability", mock.AsyncMock()
+            ) as disconnect,
+        ):
+            rules = await transport.sentinel_list_rules(settings)
+
+        discover.assert_awaited_once_with(
+            "robot:50051", transport.CONTRACT_SENTINEL_LIST_RULES, "sentinel"
+        )
+        disconnect.assert_awaited_once_with("robot:50051", "channel-1")
+        endpoint, method, request, response_type = call.await_args.args
+        self.assertEqual(endpoint, "robot:50062")
+        self.assertEqual(
+            method,
+            "/robonix.contracts.RobonixSystemSentinelListRules/ListRules",
+        )
+        self.assertEqual(request.session_token, "opaque-session")
+        self.assertIs(response_type, transport.sentinel_pb2.ListRules_Response)
+        self.assertEqual(rules, [{"id": "deny-motion"}])
 
 
 if __name__ == "__main__":

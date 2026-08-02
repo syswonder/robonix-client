@@ -22,6 +22,9 @@ dependencies = [
 audio = [
   "sounddevice>=0.4.6",
 ]
+codegen = [
+  "grpcio-tools==1.76.0",
+]
 
 [project.scripts]
 robonix-client = "robonix_client.cli:main"
@@ -37,6 +40,7 @@ robonix_client = [
   "static/*.js",
   "static/fonts/*",
   "proto/*.py",
+  "proto/*.proto",
   "audio_device_server/*.py",
   "audio_device_server/requirements.txt",
 ]
