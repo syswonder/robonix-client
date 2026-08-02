@@ -1189,6 +1189,115 @@ progress {
   padding: 0;
 }
 
+.sentinel-rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sentinel-help,
+#sentinelSummary {
+  color: var(--muted);
+}
+
+.sentinel-rule-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: #0d171c;
+}
+
+:root[data-theme="light"] .sentinel-rule-card {
+  background: #f4f8f6;
+}
+
+.sentinel-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.sentinel-rule-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sentinel-rule-grid .wide {
+  grid-column: span 2;
+}
+
+.sentinel-rule-grid input,
+.sentinel-rule-grid select,
+.sentinel-predicate-row input,
+.sentinel-predicate-row select {
+  min-width: 0;
+  width: 100%;
+}
+
+.sentinel-predicate-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.sentinel-predicate-heading,
+.sentinel-predicate-row,
+.sentinel-predicate-values {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.sentinel-predicate-heading {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sentinel-predicate-row > label,
+.sentinel-predicate-values label {
+  display: grid;
+  flex: 1 1 120px;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sentinel-predicate-row > .wide {
+  flex: 2 1 260px;
+}
+
+.sentinel-predicate-values {
+  flex: 2 1 280px;
+}
+
+.sentinel-predicate-values .check-row {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.sentinel-predicate-values .check-row input {
+  width: auto;
+}
+
+.sentinel-rule-footer,
+.sentinel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sentinel-actions {
+  justify-content: flex-start;
+  margin-top: 16px;
+}
+
 #adminSummary,
 [data-page-panel="admin"] .settings-section > #adminSummary {
   margin: 0 0 16px;
@@ -1518,6 +1627,27 @@ progress {
   .execution-graph,
   .node-inspector {
     min-height: 420px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .sentinel-rule-grid {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
+
+  .sentinel-predicate-row,
+  .sentinel-predicate-values {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 620px) {
+  .sentinel-rule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sentinel-rule-grid .wide {
+    grid-column: auto;
   }
 }
 

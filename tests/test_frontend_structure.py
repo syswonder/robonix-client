@@ -47,6 +47,7 @@ class FrontendStructureTests(unittest.TestCase):
                 "executions",
                 "logs",
                 "profile",
+                "sentinel",
                 "settings",
                 "vitals",
             },
@@ -94,6 +95,23 @@ class FrontendStructureTests(unittest.TestCase):
         ):
             with self.subTest(behavior=behavior):
                 self.assertIn(behavior, self.javascript)
+
+    def test_sentinel_uses_typed_generic_predicates(self) -> None:
+        frontend = "\n".join((self.html, self.javascript))
+        for required in (
+            "SENTINEL_VALUE_KINDS",
+            "SENTINEL_NUMERIC_OPERATORS",
+            "RFC 6901",
+            "min_inclusive",
+            "max_inclusive",
+            "Robot conditions",
+            "Argument conditions",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, frontend)
+        for forbidden in ('value="gripper_open"', 'value="moving"', "Robot state"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, frontend)
 
 
 if __name__ == "__main__":

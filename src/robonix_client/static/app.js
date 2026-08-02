@@ -61,6 +61,7 @@ const state = {
   },
   voiceprintPreviewUrl: "",
   voiceprintPreviewRequestFor: "",
+  sentinelRules: [],
 };
 
 const DEFAULT_ATLAS_PORT = 50051;
@@ -74,6 +75,7 @@ const PAGE_ROUTES = {
   audio: "/audio",
   settings: "/settings",
   profile: "/profile",
+  sentinel: "/sentinel",
   admin: "/admin",
 };
 const PAGE_TITLES = {
@@ -84,6 +86,7 @@ const PAGE_TITLES = {
   audio: "Audio",
   settings: "Settings",
   profile: "Profile",
+  sentinel: "Sentinel",
   admin: "Admin Console",
 };
 const ROUTE_PAGES = Object.fromEntries(
@@ -162,6 +165,7 @@ function resetAccountTransientUi() {
     "passwordStatus",
     "voiceprintStatus",
     "adminStatus",
+    "sentinelStatus",
   ].forEach((id) => setText(id, ""));
   if (state.voiceprintPreviewUrl) URL.revokeObjectURL(state.voiceprintPreviewUrl);
   state.voiceprintPreviewUrl = "";
@@ -1177,6 +1181,306 @@ async function adminDeleteUser(user) {
   });
 }
 
+const SENTINEL_VALUE_KINDS = ["boolean", "string", "integer", "float"];
+const SENTINEL_NUMERIC_OPERATORS = ["eq", "ne", "lt", "le", "gt", "ge", "range"];
+
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeSentinelPredicate(predicate) {
+  const kind = SENTINEL_VALUE_KINDS.includes(predicate?.kind) ? predicate.kind : "boolean";
+  const allowed = ["boolean", "string"].includes(kind) ? ["eq", "ne"] : SENTINEL_NUMERIC_OPERATORS;
+  const operator = allowed.includes(predicate?.operator) ? predicate.operator : "eq";
+  const normalized = {
+    path: String(predicate?.path || ""),
+    kind,
+    operator,
+    min_inclusive: predicate?.min_inclusive !== false,
+    max_inclusive: predicate?.max_inclusive !== false,
+  };
+  if (operator === "range") {
+    normalized.min = Number(predicate?.min ?? 0);
+    normalized.max = Number(predicate?.max ?? 0);
+  } else if (kind === "boolean") {
+    normalized.value = predicate?.value === true;
+  } else if (kind === "string") {
+    normalized.value = String(predicate?.value ?? "");
+  } else {
+    normalized.value = Number(predicate?.value ?? 0);
+  }
+  return normalized;
+}
+
+function normalizeSentinelRule(rule, index) {
+  const conditions = rule?.conditions && typeof rule.conditions === "object"
+    ? rule.conditions
+    : {};
+  return {
+    id: String(rule?.id || `rule-${index + 1}`),
+    effect: rule?.effect === "allow" ? "allow" : "deny",
+    priority: Number.isFinite(Number(rule?.priority)) ? Number(rule.priority) : 10,
+    conditions: {
+      contract: String(conditions.contract || ""),
+      users: normalizeStringList(conditions.users),
+      roles: normalizeStringList(conditions.roles),
+      time: Array.isArray(conditions.time) ? conditions.time.slice(0, 1) : [],
+      args: Array.isArray(conditions.args) ? conditions.args.map(normalizeSentinelPredicate) : [],
+      context: Array.isArray(conditions.context)
+        ? conditions.context.map(normalizeSentinelPredicate)
+        : [],
+    },
+    reason: String(rule?.reason || ""),
+  };
+}
+
+function newSentinelRule() {
+  return normalizeSentinelRule({
+    id: `rule-${Date.now().toString(36)}`,
+    effect: "deny",
+    priority: 10,
+    conditions: { contract: "robonix/*", users: [], roles: [], time: [], args: [], context: [] },
+    reason: "Blocked by robot policy",
+  }, state.sentinelRules.length);
+}
+
+async function loadSentinelRules() {
+  if (!state.account?.user?.roles.includes("admin")) return;
+  setText("sentinelStatus", "Loading robot policy...");
+  try {
+    const result = await accountFetch("/api/sentinel/rules", { settings: collectSettings() });
+    state.sentinelRules = result.rules.map(normalizeSentinelRule);
+    renderSentinelRules();
+    setText("sentinelStatus", "");
+  } catch (error) {
+    setText("sentinelStatus", String(error.message || error));
+  }
+}
+
+async function saveSentinelRules() {
+  setText("sentinelStatus", "Saving robot policy...");
+  try {
+    const result = await accountFetch(
+      "/api/sentinel/rules",
+      { settings: collectSettings(), rules: state.sentinelRules },
+      "PUT",
+    );
+    state.sentinelRules = result.rules.map(normalizeSentinelRule);
+    renderSentinelRules();
+    setText("sentinelStatus", "Rules saved on the robot.");
+  } catch (error) {
+    setText("sentinelStatus", String(error.message || error));
+  }
+}
+
+function addSentinelRule() {
+  state.sentinelRules.push(newSentinelRule());
+  renderSentinelRules();
+}
+
+function renderSentinelRules() {
+  const list = maybe("sentinelRuleList");
+  if (!list) return;
+  list.replaceChildren(...state.sentinelRules.map((rule, index) => sentinelRuleCard(rule, index)));
+  setText(
+    "sentinelSummary",
+    `${state.sentinelRules.length} rule${state.sentinelRules.length === 1 ? "" : "s"}`,
+  );
+}
+
+function sentinelRuleCard(rule, index) {
+  const card = document.createElement("article");
+  card.className = "sentinel-rule-card";
+  card.innerHTML = `
+    <div class="sentinel-rule-grid">
+      <label>Rule ID<input class="field" data-rule-field="id" /></label>
+      <label>Effect<select class="field" data-rule-field="effect"><option value="deny">Deny</option><option value="allow">Allow</option></select></label>
+      <label>Priority<input class="field" data-rule-field="priority" type="number" /></label>
+      <label class="wide">Capability contract<input class="field" data-rule-field="contract" placeholder="robonix/service/navigation/*" /></label>
+      <label>User IDs<input class="field" data-rule-field="users" placeholder="user-a, user-b" /></label>
+      <label>Roles<input class="field" data-rule-field="roles" placeholder="user, admin" /></label>
+      <label>Weekdays<input class="field" data-rule-field="days" placeholder="1,2,3,4,5" /></label>
+      <label>Start time<input class="field" data-rule-field="start" type="time" /></label>
+      <label>End time<input class="field" data-rule-field="end" type="time" /></label>
+      <label class="wide">Reason<input class="field" data-rule-field="reason" placeholder="Why the call is blocked" /></label>
+    </div>
+    <div class="sentinel-predicate-editor" data-predicate-editor="context"></div>
+    <div class="sentinel-predicate-editor" data-predicate-editor="args"></div>
+    <div class="sentinel-rule-footer">
+      <span>All non-empty conditions must match.</span>
+      <button class="ghost-button danger-action" data-rule-remove type="button">Remove</button>
+    </div>`;
+  const field = (name) => card.querySelector(`[data-rule-field="${name}"]`);
+  const window = rule.conditions.time[0] || { days: [], start: "", end: "" };
+  const values = {
+    id: rule.id,
+    effect: rule.effect,
+    priority: rule.priority,
+    contract: rule.conditions.contract,
+    users: rule.conditions.users.join(", "),
+    roles: rule.conditions.roles.join(", "),
+    days: (window.days || []).join(","),
+    start: window.start || "",
+    end: window.end || "",
+    reason: rule.reason,
+  };
+  Object.entries(values).forEach(([name, value]) => { field(name).value = value; });
+  ["id", "effect", "priority", "contract", "users", "roles", "reason"]
+    .forEach((name) => field(name).addEventListener("input", () => {
+      if (name === "contract") {
+        rule.conditions[name] = field(name).value;
+      } else if (["users", "roles"].includes(name)) {
+        rule.conditions[name] = field(name).value.split(",").map((value) => value.trim()).filter(Boolean);
+      } else if (name === "priority") {
+        rule.priority = Number(field(name).value || 0);
+      } else {
+        rule[name] = field(name).value;
+      }
+    }));
+  const syncTime = () => {
+    const start = field("start").value;
+    const end = field("end").value;
+    const days = field("days").value
+      .split(",")
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter((value) => Number.isInteger(value));
+    rule.conditions.time = start && end ? [{ days, start, end }] : [];
+  };
+  ["days", "start", "end"].forEach((name) => field(name).addEventListener("input", syncTime));
+  renderSentinelPredicateEditor(
+    card.querySelector('[data-predicate-editor="context"]'),
+    rule.conditions.context,
+    "Robot conditions",
+    "RFC 6901 path under /soma, /vitals, or /scene",
+  );
+  renderSentinelPredicateEditor(
+    card.querySelector('[data-predicate-editor="args"]'),
+    rule.conditions.args,
+    "Argument conditions",
+    "RFC 6901 path in capability args, for example /speed_percent",
+  );
+  card.querySelector("[data-rule-remove]").addEventListener("click", () => {
+    state.sentinelRules.splice(index, 1);
+    renderSentinelRules();
+  });
+  return card;
+}
+
+function renderSentinelPredicateEditor(host, predicates, title, pathHint) {
+  const heading = document.createElement("div");
+  heading.className = "sentinel-predicate-heading";
+  heading.innerHTML = `<strong>${title}</strong><button class="ghost-button" type="button">Add condition</button>`;
+  heading.querySelector("button").addEventListener("click", () => {
+    predicates.push(normalizeSentinelPredicate({ path: "", kind: "boolean", operator: "eq", value: false }));
+    renderSentinelRules();
+  });
+  const rows = predicates.map((predicate, predicateIndex) => (
+    sentinelPredicateRow(predicate, predicateIndex, predicates, pathHint)
+  ));
+  host.replaceChildren(heading, ...rows);
+}
+
+function sentinelPredicateRow(predicate, predicateIndex, predicates, pathHint) {
+  const row = document.createElement("div");
+  row.className = "sentinel-predicate-row";
+  row.innerHTML = `
+    <label class="wide">Path<input class="field" data-predicate-field="path" /></label>
+    <label>Type<select class="field" data-predicate-field="kind">
+      <option value="boolean">Boolean</option><option value="string">String</option>
+      <option value="integer">Integer</option><option value="float">Float</option>
+    </select></label>
+    <label>Operator<select class="field" data-predicate-field="operator"></select></label>
+    <div class="sentinel-predicate-values" data-predicate-values></div>
+    <button class="ghost-button danger-action" data-predicate-remove type="button">Remove</button>`;
+  const get = (name) => row.querySelector(`[data-predicate-field="${name}"]`);
+  get("path").value = predicate.path;
+  get("path").placeholder = pathHint;
+  get("kind").value = predicate.kind;
+  const operator = get("operator");
+  const allowed = ["boolean", "string"].includes(predicate.kind)
+    ? ["eq", "ne"]
+    : SENTINEL_NUMERIC_OPERATORS;
+  operator.replaceChildren(...allowed.map((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    return option;
+  }));
+  operator.value = predicate.operator;
+  renderSentinelPredicateValues(row.querySelector("[data-predicate-values]"), predicate);
+  get("path").addEventListener("input", () => { predicate.path = get("path").value; });
+  get("kind").addEventListener("change", () => {
+    Object.assign(predicate, normalizeSentinelPredicate({
+      path: predicate.path,
+      kind: get("kind").value,
+      operator: "eq",
+      value: get("kind").value === "boolean" ? false : get("kind").value === "string" ? "" : 0,
+    }));
+    renderSentinelRules();
+  });
+  operator.addEventListener("change", () => {
+    predicate.operator = operator.value;
+    if (predicate.operator === "range") {
+      delete predicate.value;
+      predicate.min = 0;
+      predicate.max = 0;
+      predicate.min_inclusive = true;
+      predicate.max_inclusive = true;
+    } else {
+      delete predicate.min;
+      delete predicate.max;
+      predicate.value = predicate.kind === "boolean" ? false : predicate.kind === "string" ? "" : 0;
+    }
+    renderSentinelRules();
+  });
+  row.querySelector("[data-predicate-remove]").addEventListener("click", () => {
+    predicates.splice(predicateIndex, 1);
+    renderSentinelRules();
+  });
+  return row;
+}
+
+function renderSentinelPredicateValues(host, predicate) {
+  if (predicate.operator === "range") {
+    host.innerHTML = `
+      <label>Minimum<input class="field" data-value-field="min" type="number" /></label>
+      <label>Maximum<input class="field" data-value-field="max" type="number" /></label>
+      <label class="check-row"><input data-value-field="min_inclusive" type="checkbox" /> Include minimum</label>
+      <label class="check-row"><input data-value-field="max_inclusive" type="checkbox" /> Include maximum</label>`;
+    for (const name of ["min", "max"]) {
+      const input = host.querySelector(`[data-value-field="${name}"]`);
+      input.step = predicate.kind === "integer" ? "1" : "any";
+      input.value = predicate[name];
+      input.addEventListener("input", () => { predicate[name] = Number(input.value); });
+    }
+    for (const name of ["min_inclusive", "max_inclusive"]) {
+      const input = host.querySelector(`[data-value-field="${name}"]`);
+      input.checked = predicate[name] !== false;
+      input.addEventListener("change", () => { predicate[name] = input.checked; });
+    }
+    return;
+  }
+  if (predicate.kind === "boolean") {
+    host.innerHTML = `<label>Value<select class="field" data-value-field="value"><option value="true">true</option><option value="false">false</option></select></label>`;
+    const input = host.querySelector('[data-value-field="value"]');
+    input.value = predicate.value ? "true" : "false";
+    input.addEventListener("change", () => { predicate.value = input.value === "true"; });
+    return;
+  }
+  host.innerHTML = `<label>Value<input class="field" data-value-field="value" /></label>`;
+  const input = host.querySelector('[data-value-field="value"]');
+  if (["integer", "float"].includes(predicate.kind)) {
+    input.type = "number";
+    input.step = predicate.kind === "integer" ? "1" : "any";
+  }
+  input.value = predicate.value;
+  input.addEventListener("input", () => {
+    predicate.value = predicate.kind === "string" ? input.value : Number(input.value);
+  });
+}
+
 async function performAdminDeleteUser(user) {
   try {
     await accountFetch("/api/admin/users/delete", {
@@ -1254,6 +1558,9 @@ function bindEvents() {
   maybe("speakerNodeId")?.addEventListener("change", () => loadAudioRouteDevices("speaker"));
   maybe("testMicrophone")?.addEventListener("click", testMicrophone);
   maybe("testSpeaker")?.addEventListener("click", testSpeaker);
+  maybe("refreshSentinelRules")?.addEventListener("click", loadSentinelRules);
+  maybe("addSentinelRule")?.addEventListener("click", addSentinelRule);
+  maybe("saveSentinelRules")?.addEventListener("click", saveSentinelRules);
   document.querySelectorAll("[data-page]").forEach((button) => {
     button.addEventListener("click", () => activatePage(button.dataset.page));
   });
@@ -1530,7 +1837,8 @@ function pageFromLocation() {
 
 function activatePage(requestedName, { historyMode = "push" } = {}) {
   const isAdmin = Boolean(state.account?.user?.roles?.includes("admin"));
-  const name = PAGE_ROUTES[requestedName] && (requestedName !== "admin" || isAdmin)
+  const adminPage = requestedName === "admin" || requestedName === "sentinel";
+  const name = PAGE_ROUTES[requestedName] && (!adminPage || isAdmin)
     ? requestedName
     : "dashboard";
   let activePageButton = null;
@@ -1560,6 +1868,8 @@ function activatePage(requestedName, { historyMode = "push" } = {}) {
     renderOwnProfile();
   } else if (name === "admin") {
     loadAdminUsers();
+  } else if (name === "sentinel") {
+    loadSentinelRules();
   }
 }
 

@@ -50,6 +50,8 @@ from .transport import (
     account_replace_voiceprint,
     account_unbind_voiceprint,
     account_update_profile,
+    sentinel_list_rules,
+    sentinel_replace_rules,
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -162,6 +164,10 @@ class AdminUpdateUserRequest(AccountRequest):
 
 class AdminTargetRequest(AccountRequest):
     targetUserId: str
+
+
+class SentinelRulesRequest(AccountRequest):
+    rules: list[dict[str, Any]]
 
 
 def _payload_steer(payload: dict[str, Any]) -> bool:
@@ -456,6 +462,26 @@ async def admin_reset_voiceprint(req: AdminTargetRequest) -> dict[str, Any]:
             ClientSettings.from_payload(req.settings), req.targetUserId
         )
         return {"ok": True, "user": user}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.post("/api/sentinel/rules")
+async def sentinel_rules(req: AccountRequest) -> dict[str, Any]:
+    try:
+        rules = await sentinel_list_rules(ClientSettings.from_payload(req.settings))
+        return {"ok": True, "rules": rules}
+    except Exception as exc:
+        return {"ok": False, "error": _rpc_error(exc)}
+
+
+@app.put("/api/sentinel/rules")
+async def sentinel_rules_replace(req: SentinelRulesRequest) -> dict[str, Any]:
+    try:
+        rules = await sentinel_replace_rules(
+            ClientSettings.from_payload(req.settings), req.rules
+        )
+        return {"ok": True, "rules": rules}
     except Exception as exc:
         return {"ok": False, "error": _rpc_error(exc)}
 

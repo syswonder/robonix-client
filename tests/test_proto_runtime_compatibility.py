@@ -13,7 +13,7 @@ class ProtoRuntimeCompatibilityTests(unittest.TestCase):
             / "robonix_client"
             / "proto"
         )
-        for filename in ("executor_pb2.py", "keystone_pb2.py"):
+        for filename in ("executor_pb2.py", "keystone_pb2.py", "sentinel_pb2.py"):
             with self.subTest(filename=filename):
                 generated = (proto_dir / filename).read_text(encoding="utf-8")
                 match = re.search(

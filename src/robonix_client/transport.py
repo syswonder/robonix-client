@@ -26,6 +26,7 @@ import executor_pb2  # type: ignore  # noqa: E402
 import liaison_pb2  # type: ignore  # noqa: E402
 import keystone_pb2  # type: ignore  # noqa: E402
 import pilot_pb2  # type: ignore  # noqa: E402
+import sentinel_pb2  # type: ignore  # noqa: E402
 import tts_pb2  # type: ignore  # noqa: E402
 import voiceprint_pb2  # type: ignore  # noqa: E402
 
@@ -79,6 +80,8 @@ CONTRACT_KEYSTONE_GET_VOICEPRINT_PREVIEW = (
 CONTRACT_KEYSTONE_ADMIN_RESET_VOICEPRINT = (
     "robonix/system/keystone/admin_reset_voiceprint"
 )
+CONTRACT_SENTINEL_LIST_RULES = "robonix/system/sentinel/list_rules"
+CONTRACT_SENTINEL_REPLACE_RULES = "robonix/system/sentinel/replace_rules"
 
 PILOT_EVENT_NAMES = {
     0: "text_chunk",
@@ -307,6 +310,18 @@ async def connect_capability(
     contract_id: str,
     consumer_id: str = CONSUMER_ID,
 ) -> str:
+    _, endpoint = await connect_capability_handle(
+        atlas_endpoint, provider_id, contract_id, consumer_id
+    )
+    return endpoint
+
+
+async def connect_capability_handle(
+    atlas_endpoint: str,
+    provider_id: str,
+    contract_id: str,
+    consumer_id: str = CONSUMER_ID,
+) -> tuple[str, str]:
     req = atlas_pb2.ConnectCapabilityRequest(
         consumer_id=consumer_id,
         provider_id=provider_id,
@@ -319,7 +334,18 @@ async def connect_capability(
         req,
         atlas_pb2.ConnectCapabilityResponse,
     )
-    return rewrite_remote_endpoint(resp.endpoint, atlas_endpoint)
+    return resp.channel_id, rewrite_remote_endpoint(resp.endpoint, atlas_endpoint)
+
+
+async def disconnect_capability(atlas_endpoint: str, channel_id: str) -> None:
+    if not channel_id:
+        return
+    await _unary_unary(
+        atlas_endpoint,
+        "/robonix.atlas.Atlas/DisconnectCapability",
+        atlas_pb2.DisconnectCapabilityRequest(channel_id=channel_id),
+        atlas_pb2.DisconnectCapabilityResponse,
+    )
 
 
 async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> str:
@@ -336,6 +362,27 @@ async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint
             endpoint = await connect_capability(atlas_endpoint, provider.id, contract_id)
             if endpoint:
                 return endpoint
+    raise RobonixApiError(f"no provider found for {contract_id}")
+
+
+async def discover_endpoint_handle(
+    atlas_endpoint: str, contract_id: str, provider_hint: str = ""
+) -> tuple[str, str]:
+    providers = await query_atlas(
+        atlas_endpoint,
+        provider_id=provider_hint,
+        contract_id=contract_id,
+        transport=1,
+    )
+    for provider in providers:
+        if provider_hint and provider.id != provider_hint and provider.namespace != provider_hint:
+            continue
+        if any(cap.contract_id == contract_id and cap.transport == 1 for cap in provider.capabilities):
+            channel_id, endpoint = await connect_capability_handle(
+                atlas_endpoint, provider.id, contract_id
+            )
+            if endpoint:
+                return channel_id, endpoint
     raise RobonixApiError(f"no provider found for {contract_id}")
 
 
@@ -984,6 +1031,65 @@ async def account_admin_reset_voiceprint(
         keystone_pb2.AdminResetVoiceprint_Response,
     )
     return keystone_user_to_dict(response.user)
+
+
+async def sentinel_call(
+    settings: ClientSettings,
+    contract_id: str,
+    method: str,
+    request: Any,
+    response_type: Any,
+) -> Any:
+    """Resolve the robot-local Sentinel provider and invoke one admin RPC."""
+    channel_id, endpoint = await discover_endpoint_handle(
+        settings.atlas_endpoint, contract_id, "sentinel"
+    )
+    try:
+        return await _unary_unary(
+            endpoint,
+            f"/robonix.contracts.RobonixSystemSentinel{method}/{method}",
+            request,
+            response_type,
+            timeout=6.0,
+        )
+    finally:
+        try:
+            await disconnect_capability(settings.atlas_endpoint, channel_id)
+        except grpc.aio.AioRpcError:
+            pass
+
+
+async def sentinel_list_rules(settings: ClientSettings) -> list[dict[str, Any]]:
+    response = await sentinel_call(
+        settings,
+        CONTRACT_SENTINEL_LIST_RULES,
+        "ListRules",
+        sentinel_pb2.ListRules_Request(session_token=settings.auth_token),
+        sentinel_pb2.ListRules_Response,
+    )
+    rules = json.loads(response.rules_json or "[]")
+    if not isinstance(rules, list):
+        raise RobonixApiError("Sentinel returned a non-list rule set")
+    return rules
+
+
+async def sentinel_replace_rules(
+    settings: ClientSettings, rules: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    response = await sentinel_call(
+        settings,
+        CONTRACT_SENTINEL_REPLACE_RULES,
+        "ReplaceRules",
+        sentinel_pb2.ReplaceRules_Request(
+            session_token=settings.auth_token,
+            rules_json=json.dumps(rules, separators=(",", ":")),
+        ),
+        sentinel_pb2.ReplaceRules_Response,
+    )
+    normalized = json.loads(response.rules_json or "[]")
+    if not isinstance(normalized, list):
+        raise RobonixApiError("Sentinel returned a non-list rule set")
+    return normalized
 
 
 async def account_replace_voiceprint(
