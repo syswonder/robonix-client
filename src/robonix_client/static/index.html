@@ -4,14 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260904a" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261009d" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="nav-rail">
-        <div class="brand" data-i18n="Robonix Client">Robonix Client</div>
+        <div class="brand">
+          <div class="brand-title">Robonix</div>
+          <div class="brand-sub" data-i18n="Client">Client</div>
+        </div>
         <nav class="nav-list" aria-label="Workspace" data-i18n-aria-label="Workspace">
           <button class="nav-item active" type="button" data-page="dashboard"><span data-i18n="Chat">Chat</span></button>
+          <button class="nav-item" type="button" data-page="perception"><span data-i18n="Perception">Perception</span></button>
           <button class="nav-item" type="button" data-page="vitals"><span data-i18n="Vitals">Vitals</span></button>
           <button class="nav-item" type="button" data-page="audio"><span data-i18n="Audio">Audio</span></button>
           <button class="nav-item" type="button" data-page="settings"><span data-i18n="Settings">Settings</span></button>
@@ -30,18 +34,22 @@
             <input id="sessionTitleInput" autocomplete="off" placeholder="Untitled chat" data-i18n-placeholder="Untitled chat" title="Name of this session. Edit to rename it; New session creates one under this name." data-i18n-title="Name of this session. Edit to rename it; New session creates one under this name." />
           </div>
           <button class="new-session-button" type="button" id="newSessionAction" title="Start a fresh conversation under the name on the left. The robot's planner keeps history per session, so a new session clears it and stops resending old turns to the model." data-i18n-title="Start a fresh conversation under the name on the left. The robot's planner keeps history per session, so a new session clears it and stops resending old turns to the model."><span class="btn-icon" aria-hidden="true">＋</span><span class="btn-label" data-i18n="New session">New session</span></button>
-          <label class="select-field endpoint">
-            <span data-i18n="Robot Host">Robot Host</span>
-            <input id="robotHost" autocomplete="off" placeholder="100.x.y.z" />
-          </label>
-          <label class="select-field">
-            <span data-i18n="Atlas Port">Atlas Port</span>
-            <input id="atlasPort" autocomplete="off" inputmode="numeric" placeholder="50051" />
-          </label>
-          <label class="select-field">
-            <span data-i18n="User">User</span>
-            <input id="userId" autocomplete="off" placeholder="voice:client" />
-          </label>
+          
+          <input id="robotHost" type="hidden" />
+          <input id="atlasPort" type="hidden" />
+          <input id="userId" type="hidden" />
+          
+          <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings" title="Robot Atlas Endpoint. Click to edit in Settings." data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
+            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            <span class="endpoint-label" data-i18n="Atlas:">Atlas:</span>
+            <span class="endpoint-val" id="atlasEndpointDisplay">127.0.0.1:50051</span>
+          </button>
+          
+          <button class="endpoint-badge user-badge" id="userBadge" type="button" data-page-link="settings" title="Current Operator. Click to edit in Settings." data-i18n-title="Current Operator. Click to edit in Settings.">
+            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span class="endpoint-val" id="userDisplay">voice:client</span>
+          </button>
+
           <button class="status-chip" id="refreshSystem" type="button">
             <span class="dot"></span>
             <span id="connectionState" data-i18n="offline">offline</span>
@@ -73,10 +81,26 @@
             <form class="composer" id="composer">
               <div class="composer-row">
                 <textarea id="taskInput" rows="1" placeholder="Type a message..." data-i18n-placeholder="Type a message..."></textarea>
-                <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)"><span class="btn-icon" aria-hidden="true">🎙</span><span class="btn-label" data-i18n="Start recording">Start recording</span><kbd class="btn-key">F2</kbd></button>
-                <button class="tool-button finish-button" type="button" id="finishVoiceButton" title="Stop recording and send what you have said so far (F2). Does not cancel the task." data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task." hidden><span class="btn-icon" aria-hidden="true">⏹</span><span class="btn-label" data-i18n="Stop recording">Stop recording</span><kbd class="btn-key">F2</kbd></button>
-                <button class="danger-button stop-button" type="button" id="stopButton" title="Emergency stop: cancels every running task and any robot motion it started. Does not stop voice recording." data-i18n-title="Emergency stop: cancels every running task and any robot motion it started. Does not stop voice recording." hidden><span class="btn-icon" aria-hidden="true">⛔</span><span class="btn-label" data-i18n="Abort all tasks">Abort all tasks</span></button>
-                <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)" data-i18n-title="Send task (Enter)"><span class="btn-label" data-i18n="Send">Send</span><kbd class="btn-key">Enter</kbd></button>
+                <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)">
+                  <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                  <span class="btn-label" data-i18n="Start recording">Start recording</span>
+                  <kbd class="btn-key">F2</kbd>
+                </button>
+                <button class="tool-button finish-button" type="button" id="finishVoiceButton" title="Stop recording and send what you have said so far (F2). Does not cancel the task." data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task." hidden>
+                  <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  <span class="btn-label" data-i18n="Stop recording">Stop recording</span>
+                  <kbd class="btn-key">F2</kbd>
+                </button>
+                <button class="danger-button stop-button" type="button" id="stopButton" title="Emergency stop: cancels every running task and any robot motion it started. Does not stop voice recording." data-i18n-title="Emergency stop: cancels every running task and any robot motion it started. Does not stop voice recording." hidden>
+                  <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <span class="btn-label" data-i18n="Abort all tasks">Abort all tasks</span>
+                </button>
+                <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)" data-i18n-title="Send task (Enter)">
+                  <svg class="btn-icon send-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  <svg class="btn-icon steer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                  <span class="btn-label" data-i18n="Send">Send</span>
+                  <kbd class="btn-key">Enter</kbd>
+                </button>
               </div>
             </form>
             </section>
@@ -148,6 +172,221 @@
               </section>
             </section>
           </section>
+        </section>
+
+        <section class="page perception-page" data-page-panel="perception" aria-labelledby="perceptionTitle">
+          <div class="perception-shell">
+            <header class="perception-header">
+              <div class="perception-title-group">
+                <div class="perception-title-line">
+                  <h2 id="perceptionTitle" data-i18n="Perception">Perception</h2>
+                </div>
+                <div class="perception-health-pill" id="perceptionHealthBadge">
+                  <span class="pulse-dot"></span>
+                  <span id="perceptionHealthText" data-i18n="Telemetry Active">Telemetry Active</span>
+                </div>
+              </div>
+              <div class="perception-toolbar">
+                <button type="button" class="perception-control-btn" id="perceptionPauseBtn" title="Pause / Resume stream" data-i18n-title="Pause / Resume stream">
+                  <svg class="pause-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  <svg class="play-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span data-i18n="Live">Live</span>
+                </button>
+                <div class="perception-source-strip" id="perceptionSourceStrip" data-i18n-aria-label="Data source status" aria-label="Data source status"></div>
+              </div>
+            </header>
+            <div class="perception-grid" id="perceptionGrid">
+              <section class="perception-tile" data-tile="camera">
+                <header class="perception-tile-header">
+                  <div class="tile-title-group">
+                    <span class="tile-live-indicator"></span>
+                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <h3 data-i18n="Camera">Camera</h3>
+                  </div>
+                  <div class="perception-tile-tools">
+                    <span class="perception-tile-meta" data-tile-meta></span>
+                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
+                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="perception-tile-body perception-camera-body">
+                  <div class="hud-bracket top-left"></div>
+                  <div class="hud-bracket top-right"></div>
+                  <div class="hud-bracket bottom-left"></div>
+                  <div class="hud-bracket bottom-right"></div>
+                  <div class="perception-tile-placeholder" data-tile-placeholder="camera">
+                    <div class="perception-placeholder-content">
+                      <div class="perception-placeholder-crosshair"></div>
+                      <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                      </svg>
+                      <span class="perception-placeholder-badge" data-i18n="NO SIGNAL">NO SIGNAL</span>
+                      <span class="perception-placeholder-hint" data-i18n="Awaiting video feed...">Awaiting video feed...</span>
+                    </div>
+                  </div>
+                  <img class="perception-camera-img" data-camera-img alt="RGB camera" data-i18n-alt="Camera" draggable="false" />
+                </div>
+              </section>
+              <section class="perception-tile" data-tile="depth">
+                <header class="perception-tile-header">
+                  <div class="tile-title-group">
+                    <span class="tile-live-indicator"></span>
+                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5" stroke-dasharray="3 3"/></svg>
+                    <h3 data-i18n="Depth Camera">Depth Camera</h3>
+                  </div>
+                  <div class="perception-tile-tools">
+                    <button type="button" class="colormap-toggle-btn active" id="depthColormapBtn" title="Toggle Turbo Colormap" data-i18n-title="Toggle Turbo Colormap">
+                      <span class="colormap-preview"></span>
+                      <span data-i18n="Heatmap">Heatmap</span>
+                    </button>
+                    <span class="perception-tile-meta" data-tile-meta></span>
+                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
+                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="perception-tile-body perception-camera-body perception-depth-body">
+                  <div class="hud-bracket top-left"></div>
+                  <div class="hud-bracket top-right"></div>
+                  <div class="hud-bracket bottom-left"></div>
+                  <div class="hud-bracket bottom-right"></div>
+                  <div class="depth-hover-tooltip" id="depthHoverTooltip" hidden></div>
+                  <div class="perception-tile-placeholder" data-tile-placeholder="depth">
+                    <div class="perception-placeholder-content">
+                      <div class="perception-placeholder-crosshair"></div>
+                      <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 2v20M2 12h20"/>
+                        <circle cx="12" cy="12" r="9"/>
+                        <circle cx="12" cy="12" r="5" stroke-dasharray="3 3"/>
+                      </svg>
+                      <span class="perception-placeholder-badge" data-i18n="STANDBY">STANDBY</span>
+                      <span class="perception-placeholder-hint" data-i18n="Awaiting depth feed...">Awaiting depth feed...</span>
+                    </div>
+                  </div>
+                  <canvas class="perception-depth-canvas" data-depth-canvas></canvas>
+                  <img class="perception-camera-img" data-depth-img alt="Depth camera" data-i18n-alt="Depth Camera" draggable="false" style="display:none;" />
+                </div>
+              </section>
+              <section class="perception-tile perception-tile-wide" data-tile="scene">
+                <header class="perception-tile-header">
+                  <div class="tile-title-group">
+                    <span class="tile-live-indicator"></span>
+                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+                    <h3 data-i18n="Scene Map">Scene Map</h3>
+                  </div>
+                  <div class="perception-tile-actions">
+                    <div class="perception-layers" role="group" data-i18n-aria-label="Map view" aria-label="Map view">
+                      <button class="perception-view-btn" type="button" data-scene-view="fit" data-i18n="fit" title="Fit to Viewport" data-i18n-title="Fit to Viewport">fit</button>
+                      <label class="perception-layer-pill" title="Track Robot Center" data-i18n-title="Track Robot Center"><input type="checkbox" data-scene-view="follow" /><span data-i18n="follow">follow</span></label>
+                    </div>
+                    <div class="perception-layers" role="group" data-i18n-aria-label="Map layers" aria-label="Map layers">
+                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="map" checked /><span data-i18n="map">map</span></label>
+                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="regions" checked /><span data-i18n="regions">regions</span></label>
+                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="objects" checked /><span data-i18n="objects">objects</span></label>
+                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="robot" checked /><span data-i18n="robot">robot</span></label>
+                      <label class="perception-layer-pill laser-layer-pill"><input type="checkbox" data-scene-layer="lidar" checked /><span data-i18n="laser">laser</span></label>
+                    </div>
+                    <span class="perception-tile-meta" data-tile-meta></span>
+                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
+                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="perception-tile-body perception-canvas-body">
+                  <div class="hud-bracket top-left"></div>
+                  <div class="hud-bracket top-right"></div>
+                  <div class="hud-bracket bottom-left"></div>
+                  <div class="hud-bracket bottom-right"></div>
+                  <div class="scene-compass" title="Map North (+Y)" data-i18n-title="Map North (+Y)">
+                    <span class="compass-n">N</span>
+                    <span class="compass-needle"></span>
+                  </div>
+                  <canvas class="perception-canvas" data-scene-canvas></canvas>
+                </div>
+              </section>
+            </div>
+            <div class="perception-empty" id="perceptionEmpty" hidden>
+              <div class="perception-empty-card">
+                <div class="perception-radar-halo" aria-hidden="true">
+                  <div class="radar-circle radar-c1"></div>
+                  <div class="radar-circle radar-c2"></div>
+                  <div class="radar-circle radar-c3"></div>
+                  <div class="radar-sweep"></div>
+                  <svg class="radar-center-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M12 2a10 10 0 0 1 10 10M12 6a6 6 0 0 1 6 6M12 22a10 10 0 0 1-10-10M12 18a6 6 0 0 1-6-6"/>
+                  </svg>
+                </div>
+
+                <div class="perception-empty-text">
+                  <span class="perception-empty-pill" data-i18n="Sensor Array Inactive">Sensor Array Inactive</span>
+                  <h3 data-i18n="No Active Sensor Streams">No Active Sensor Streams</h3>
+                  <p data-i18n="The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.">The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.</p>
+                </div>
+
+                <div class="perception-empty-diagnostics">
+                  <div class="perception-diag-row">
+                    <span class="perception-diag-label" data-i18n="Target Endpoint:">Target Endpoint:</span>
+                    <code class="perception-diag-val" id="perceptionEmptyEndpoint">127.0.0.1:50051</code>
+                  </div>
+                  <div class="perception-channel-matrix">
+                    <div class="perception-channel-card" data-channel="camera">
+                      <div class="channel-head">
+                        <span class="channel-dot offline"></span>
+                        <strong data-i18n="Camera">Camera</strong>
+                        <span class="channel-status" data-i18n="Offline">Offline</span>
+                      </div>
+                      <span class="channel-desc" data-i18n="RGB Camera snapshot stream">RGB Camera snapshot stream</span>
+                      <code class="channel-contract">camera/snapshot</code>
+                    </div>
+                    <div class="perception-channel-card" data-channel="depth">
+                      <div class="channel-head">
+                        <span class="channel-dot offline"></span>
+                        <strong data-i18n="Depth Camera">Depth Camera</strong>
+                        <span class="channel-status" data-i18n="Offline">Offline</span>
+                      </div>
+                      <span class="channel-desc" data-i18n="Depth Camera point & depth map">Depth Camera point & depth map</span>
+                      <code class="channel-contract">camera/depth_snapshot</code>
+                    </div>
+
+                    <div class="perception-channel-card" data-channel="scene">
+                      <div class="channel-head">
+                        <span class="channel-dot offline"></span>
+                        <strong data-i18n="Scene Map">Scene Map</strong>
+                        <span class="channel-status" data-i18n="Offline">Offline</span>
+                      </div>
+                      <span class="channel-desc" data-i18n="Semantic scene objects & regions">Semantic scene objects & regions</span>
+                      <code class="channel-contract">scene/get_robot_context</code>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="perception-empty-actions">
+                  <button class="perception-retry-btn" type="button" id="perceptionRetryBtn">
+                    <svg class="retry-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M23 4v6h-6M1 20v-6h6"/>
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    <span data-i18n="Retry Probe">Retry Probe</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="page vitals-page" data-page-panel="vitals" aria-labelledby="vitalsRobotName">
@@ -289,6 +528,7 @@
                 </div>
                 <footer>
                   <button class="secondary-button" id="vitalsWarningDismiss" type="button" data-i18n="Dismiss">Dismiss</button>
+                  <button class="secondary-button" id="vitalsWarningDismissAll" type="button" data-i18n="Dismiss all">Dismiss all</button>
                   <button class="primary-button" id="vitalsWarningInspect" type="button" data-i18n="Inspect">Inspect</button>
                 </footer>
               </section>
@@ -467,6 +707,65 @@
       </main>
     </div>
 
+    <div class="modal-backdrop" id="computeNodeModal" role="dialog" aria-modal="true" aria-labelledby="computeNodeTitle" hidden>
+      <section class="compute-node compute-node-modal" id="computeNodeRoot" aria-labelledby="computeNodeTitle">
+        <header class="compute-node-header">
+          <div class="compute-node-title-line">
+            <span class="compute-node-icon" id="computeNodeHeaderIcon" aria-hidden="true"></span>
+            <div>
+              <strong id="computeNodeTitle" data-i18n="Compute Node">Compute Node</strong>
+              <span class="compute-node-subtitle" data-i18n="Compute node telemetry from Vitals">Compute node telemetry from Vitals</span>
+            </div>
+          </div>
+          <div class="compute-node-actions">
+            <span class="compute-node-status"><span class="vitals-status-dot stale" id="computeNodeStatusDot" data-compute-dot></span><span id="computeNodeUpdated">--</span></span>
+            <span class="health-label stale" id="computeNodeSource" data-compute-source></span>
+            <button class="icon-button vitals-refresh" id="computeNodeReconnect" type="button" title="Reconnect compute-node stream" data-i18n-title="Reconnect compute-node stream" aria-label="Reconnect compute-node stream" data-i18n-aria-label="Reconnect compute-node stream">
+              <span class="compute-node-reconnect-icon">⟳</span>
+            </button>
+            <button class="icon-button modal-close" id="computeNodeModalClose" type="button" aria-label="Close compute-node telemetry" data-i18n-aria-label="Close compute-node telemetry">×</button>
+          </div>
+        </header>
+        <div class="compute-metrics">
+          <div class="compute-metric ok" id="compKpiCpu">
+            <span class="compute-metric-icon" id="compKpiCpuSpan" aria-hidden="true"></span>
+            <div class="compute-metric-copy">
+              <span class="compute-metric-label" data-compute-label data-i18n="CPU temp">CPU temp</span>
+              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiCpuUnit">°C</span></div>
+            </div>
+          </div>
+          <div class="compute-metric ok" id="compKpiVolt">
+            <span class="compute-metric-icon" id="compKpiVoltSpan" aria-hidden="true"></span>
+            <div class="compute-metric-copy">
+              <span class="compute-metric-label" data-compute-label data-i18n="Voltage">Voltage</span>
+              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiVoltUnit">V</span></div>
+            </div>
+          </div>
+          <div class="compute-metric ok" id="compKpiCurr">
+            <span class="compute-metric-icon" id="compKpiCurrSpan" aria-hidden="true"></span>
+            <div class="compute-metric-copy">
+              <span class="compute-metric-label" data-compute-label data-i18n="Current">Current</span>
+              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiCurrUnit">A</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="compute-charts">
+          <div class="compute-chart">
+            <div class="compute-chart-head"><span data-compute-label data-i18n="CPU temp">CPU temp</span><span class="compute-chart-unit">°C</span></div>
+            <div class="compute-chart-canvas"><canvas id="compChartCpu"></canvas></div>
+          </div>
+          <div class="compute-chart">
+            <div class="compute-chart-head"><span data-compute-label data-i18n="Voltage">Voltage</span><span class="compute-chart-unit">V</span></div>
+            <div class="compute-chart-canvas"><canvas id="compChartVolt"></canvas></div>
+          </div>
+          <div class="compute-chart">
+            <div class="compute-chart-head"><span data-compute-label data-i18n="Current">Current</span><span class="compute-chart-unit">A</span></div>
+            <div class="compute-chart-canvas"><canvas id="compChartCurr"></canvas></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="activeRtdlModal" role="dialog" aria-modal="true" aria-labelledby="activeRtdlTitle" hidden>
       <section class="active-rtdl-modal">
         <header class="rtdl-history-modal-header">
@@ -504,8 +803,8 @@
       </section>
     </div>
 
-    <script src="/static/i18n.js?v=20260904a"></script>
-    <script src="/static/app.js?v=20260904a"></script>
-    <script src="/static/vitals.bundle.js?v=20260904a"></script>
+    <script src="/static/i18n.js?v=20261009d"></script>
+    <script src="/static/app.js?v=20261009d"></script>
+    <script src="/static/vitals.bundle.js?v=20261009d"></script>
   </body>
 </html>

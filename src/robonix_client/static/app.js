@@ -284,6 +284,12 @@ async function init() {
   rememberLastSession(state.sessionId);
   bindSettings();
   bindEvents();
+  bindSceneLayers();
+  bindSceneView();
+  bindPerceptionControls();
+  bindCameraSnapshot();
+  bindDepthColormap();
+  bindDepthHover();
   renderAudioBars();
   renderHistory();
   renderMessages();
@@ -321,6 +327,10 @@ function bindSettings() {
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
   if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
+  const endpointEl = maybe("atlasEndpointDisplay");
+  if (endpointEl) endpointEl.textContent = `${state.settings.robotHost || "127.0.0.1"}:${state.settings.atlasPort || DEFAULT_ATLAS_PORT}`;
+  const userEl = maybe("userDisplay");
+  if (userEl) userEl.textContent = state.settings.userId || "voice:client";
   renderSessionChip();
 
   [
@@ -362,6 +372,10 @@ async function syncConnectionSettings(fromSettings = false, persist = false) {
   if (maybe("settingsUserId") && maybe(userSource)) $("settingsUserId").value = $(userSource).value.trim();
   if (maybe("recordSeconds") && maybe(secondsSource)) $("recordSeconds").value = $(secondsSource).value;
   if (maybe("settingsRecordSeconds") && maybe(secondsSource)) $("settingsRecordSeconds").value = $(secondsSource).value;
+  const syncEndpoint = maybe("atlasEndpointDisplay");
+  if (syncEndpoint) syncEndpoint.textContent = `${host || "127.0.0.1"}:${port || DEFAULT_ATLAS_PORT}`;
+  const syncUser = maybe("userDisplay");
+  if (syncUser) syncUser.textContent = (maybe(userSource) ? $(userSource).value.trim() : "") || "voice:client";
   state.settings = collectSettings();
   saveSettings();
   window.dispatchEvent(new CustomEvent("robonix:settings"));
@@ -1014,7 +1028,13 @@ function startVoice() {
 
 function wireStream(socket, done, voiceSocket = null) {
   socket.onmessage = (event) => {
-    const payload = JSON.parse(event.data);
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (err) {
+      console.warn("robonix: malformed websocket payload", err);
+      return;
+    }
     if (payload.type === "pilot_event") handlePilotEvent(payload.event);
     if (payload.type === "voice_event") handleVoiceEvent(payload.event, voiceSocket);
     if (payload.type === "accepted") addStatusLine(t("Connected; waiting for Robonix events."));
@@ -1042,7 +1062,7 @@ function handlePilotEvent(event) {
   if (event.kind === "text_chunk" && event.textChunk) {
     appendAgent(event.textChunk);
   } else if (event.kind === "final_text" && event.finalText) {
-    finalizeAgent(event.finalText);
+    finalizeAgent(t(event.finalText));
   } else if (event.kind === "plan" && event.plan) {
     state.plan = event.plan;
     upsertPlanRecord(event.plan);
@@ -1100,8 +1120,11 @@ function handlePilotEvent(event) {
       state.taskRunning = false;
       setBusy(state.activeStreams > 0);
     }
-    addTimeline("status", event.status.message || t("state {state}", { state: event.status.state }));
-    if (event.status.message) addStatusLine(event.status.message);
+    addTimeline(
+      "status",
+      event.status.message ? t(event.status.message) : t("state {state}", { state: event.status.state }),
+    );
+    if (event.status.message) addStatusLine(t(event.status.message));
   }
 }
 
@@ -1189,8 +1212,10 @@ function finishVoiceCaptureUi() {
 
 function hasActiveTurn() {
   if (state.activeTurnId) return true;
-  const status = String(state.taskState?.status || "").trim().toLowerCase();
-  return state.taskRunning || ["in_progress", "running", "planning", "executing"].includes(status);
+  // `state.taskState` outlives a turn: Completed/Failed clear `taskRunning` but
+  // leave the last snapshot behind, so re-reading its status here kept every
+  // later message labelled as a steer into a turn that had already ended.
+  return state.taskRunning;
 }
 
 function addMessage(role, text, meta = "", attachments = []) {
@@ -1229,14 +1254,46 @@ function announcePlan(plan) {
   if (msg) msg.planRound = round;
 }
 
+// Streamed chunks are persisted on a short delay: writing localStorage on every
+// chunk is wasteful, but never writing it loses the reply already on screen
+// when the socket drops or the page is reloaded mid-stream.
+let agentPersistTimer = 0;
+const AGENT_PERSIST_DELAY_MS = 500;
+
+function scheduleAgentPersist() {
+  if (agentPersistTimer) window.clearTimeout(agentPersistTimer);
+  agentPersistTimer = window.setTimeout(() => {
+    agentPersistTimer = 0;
+    persistCurrentConversation();
+  }, AGENT_PERSIST_DELAY_MS);
+}
+
 function appendAgent(text) {
   if (!state.activeAgentId) {
     state.activeAgentId = addMessage("agent", "", "Robonix");
   }
   const msg = state.messages.find((item) => item.id === state.activeAgentId);
   if (msg) msg.text += text;
-  renderMessages();
-  persistCurrentConversation();
+  scheduleAgentPersist();
+
+  const root = $("messages");
+  if (!root) return;
+  const existingEl = root.querySelector(`[data-message-id="${state.activeAgentId}"]`);
+  if (!existingEl) {
+    renderMessages();
+    return;
+  }
+  let body = existingEl.querySelector(".agent-markdown-body");
+  if (!body) {
+    renderMessages();
+    return;
+  }
+  const isNearBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
+  clear(body);
+  appendAgentMarkdown(body, msg);
+  if (isNearBottom) {
+    root.scrollTop = root.scrollHeight;
+  }
 }
 
 function finalizeAgent(text) {
@@ -1244,11 +1301,24 @@ function finalizeAgent(text) {
     state.activeAgentId = null;
     return;
   }
-  if (!state.activeAgentId) {
-    addMessage("agent", text, "Robonix");
-    return;
+  // Status lines interleaved mid-turn clear `activeAgentId` (addMessage drops it
+  // for every non-agent role), so a FinalText arriving right after a status such
+  // as "Plan control accepted" would open a second bubble for text that was
+  // already streamed. Skip trailing status lines and merge into this turn's last
+  // agent bubble instead; any other role in between (a user message starts a new
+  // turn) means this is genuinely a fresh bubble.
+  let targetId = state.activeAgentId;
+  if (!targetId) {
+    for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+      const message = state.messages[i];
+      if (message.role === "status") continue;
+      if (message.role === "agent") targetId = message.id;
+      break;
+    }
   }
-  const msg = state.messages.find((item) => item.id === state.activeAgentId);
+  const msg = targetId
+    ? state.messages.find((item) => item.id === targetId)
+    : null;
   if (msg) {
     const current = msg.text || "";
     msg.text = mergeFinalText(current, text);
@@ -1270,6 +1340,178 @@ function mergeFinalText(current, finalText) {
   return `${currentText}${currentText.endsWith("\n") ? "" : "\n"}${final}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimal Markdown rendering for agent replies.
+//
+// The planner answers in Markdown (`**bold**`, numbered lists, code spans) but
+// the bubble used to draw that source literally because it appended a text node.
+// This renders the subset the model actually emits into DOM nodes built with
+// createElement/textContent only — never innerHTML — so model output can never
+// inject markup or scripts. Only agent bubbles go through here; status/user/RTDL
+// messages stay plain text. Deliberately not supported: tables, nested lists,
+// and `_`/`__` emphasis (they would mangle snake_case identifiers and tool ids).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MD_HEADING = /^(#{1,6})\s+(.*)$/;
+const MD_ULIST = /^\s*[-*+]\s+(.*)$/;
+const MD_OLIST = /^\s*(\d+)[.)]\s+(.*)$/;
+const MD_RULE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
+const MD_FENCE = /^\s*```\s*([\w+-]*)\s*$/;
+const MD_QUOTE = /^\s*>\s?(.*)$/;
+const MD_LINK = /^(https?:\/\/|mailto:)/i;
+
+/// Cache the parsed nodes per message so a long stream does not re-parse every
+/// bubble on every chunk. Keyed by the message object, so nothing is stored on
+/// the message itself (it is persisted to disk as JSON).
+const markdownCache = new WeakMap();
+
+function appendAgentMarkdown(el, message) {
+  const source = String(message.text || "");
+  let cached = markdownCache.get(message);
+  if (!cached || cached.source !== source) {
+    cached = { source, nodes: markdownNodes(source) };
+    markdownCache.set(message, cached);
+  }
+  // renderMessages clears the container first, so the cached nodes are detached
+  // and safe to re-append.
+  cached.nodes.forEach((node) => el.appendChild(node));
+}
+
+function markdownNodes(text) {
+  const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+  const nodes = [];
+  const paragraph = [];
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    const el = document.createElement("p");
+    appendInline(el, paragraph.join("\n"));
+    nodes.push(el);
+    paragraph.length = 0;
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(MD_FENCE);
+    if (fence) {
+      flushParagraph();
+      const body = [];
+      i += 1;
+      while (i < lines.length && !MD_FENCE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1; // consume the closing fence when present
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (fence[1]) code.className = `language-${fence[1]}`;
+      code.textContent = body.join("\n");
+      pre.appendChild(code);
+      nodes.push(pre);
+      continue;
+    }
+    if (!line.trim()) {
+      flushParagraph();
+      i += 1;
+      continue;
+    }
+    const heading = line.match(MD_HEADING);
+    if (heading) {
+      flushParagraph();
+      // Keep model headings below the page's own h1/h2 rather than letting a
+      // leading `#` outrank the surrounding panel titles.
+      const el = document.createElement(`h${Math.min(heading[1].length + 2, 6)}`);
+      appendInline(el, heading[2].trim());
+      nodes.push(el);
+      i += 1;
+      continue;
+    }
+    if (MD_RULE.test(line)) {
+      flushParagraph();
+      nodes.push(document.createElement("hr"));
+      i += 1;
+      continue;
+    }
+    if (MD_QUOTE.test(line)) {
+      flushParagraph();
+      const quote = document.createElement("blockquote");
+      const body = [];
+      while (i < lines.length && MD_QUOTE.test(lines[i])) {
+        body.push(lines[i].match(MD_QUOTE)[1]);
+        i += 1;
+      }
+      appendInline(quote, body.join("\n"));
+      nodes.push(quote);
+      continue;
+    }
+    const ordered = line.match(MD_OLIST);
+    if (ordered || MD_ULIST.test(line)) {
+      flushParagraph();
+      const list = document.createElement(ordered ? "ol" : "ul");
+      if (ordered && Number(ordered[1]) > 1) list.start = Number(ordered[1]);
+      while (i < lines.length) {
+        const item = lines[i].match(ordered ? MD_OLIST : MD_ULIST);
+        if (!item) break;
+        const li = document.createElement("li");
+        appendInline(li, ordered ? item[2] : item[1]);
+        list.appendChild(li);
+        i += 1;
+      }
+      nodes.push(list);
+      continue;
+    }
+    paragraph.push(line.trim());
+    i += 1;
+  }
+  flushParagraph();
+  return nodes;
+}
+
+function appendInline(parent, text) {
+  // A fresh regex per call: the recursive calls below would otherwise share one
+  // global lastIndex, which a nested scan resets to 0 and the outer loop then
+  // rescans from the start forever.
+  const pattern =
+    /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|\*([\s\S]+?)\*|\[([^\]]+)\]\(([^)\s]+)\)|\n/g;
+  let last = 0;
+  let match;
+  while ((match = pattern.exec(text))) {
+    if (match.index > last) {
+      parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+    }
+    last = pattern.lastIndex;
+    if (match[2] !== undefined) {
+      const code = document.createElement("code");
+      code.textContent = match[2].trim();
+      parent.appendChild(code);
+    } else if (match[3] !== undefined) {
+      const strong = document.createElement("strong");
+      appendInline(strong, match[3]);
+      parent.appendChild(strong);
+    } else if (match[4] !== undefined) {
+      const em = document.createElement("em");
+      appendInline(em, match[4]);
+      parent.appendChild(em);
+    } else if (match[5] !== undefined) {
+      const href = match[6];
+      if (MD_LINK.test(href)) {
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        appendInline(link, match[5]);
+        parent.appendChild(link);
+      } else {
+        parent.appendChild(document.createTextNode(match[5]));
+      }
+    } else {
+      parent.appendChild(document.createElement("br"));
+    }
+  }
+  if (last < text.length) {
+    parent.appendChild(document.createTextNode(text.slice(last)));
+  }
+}
+
 function renderMessages() {
   const root = $("messages");
   clear(root);
@@ -1282,13 +1524,21 @@ function renderMessages() {
   state.messages.forEach((message) => {
     const el = document.createElement("div");
     el.className = `message ${message.role}`;
+    el.dataset.messageId = message.id;
     if (message.meta) {
       const meta = document.createElement("span");
       meta.className = "meta";
       meta.textContent = message.meta;
       el.appendChild(meta);
     }
-    el.appendChild(document.createTextNode(message.text));
+    if (message.role === "agent") {
+      const body = document.createElement("div");
+      body.className = "agent-markdown-body";
+      appendAgentMarkdown(body, message);
+      el.appendChild(body);
+    } else {
+      el.appendChild(document.createTextNode(message.text));
+    }
     if (message.planRound) {
       const action = document.createElement("button");
       action.type = "button";
@@ -1727,7 +1977,7 @@ function statusKey(status) {
   const raw = String(status || "pending").toLowerCase();
   if (raw === "succeeded" || raw === "success" || raw === "done" || raw === "completed") return "success";
   if (["failed", "failure", "error", "canceled", "cancelled", "timeout", "aborted"].includes(raw)) return "failed";
-  if (raw === "running" || raw === "in_progress" || raw === "active") return "running";
+  if (["running", "in_progress", "active", "verifying", "paused"].includes(raw)) return "running";
   if (raw === "ended" || raw === "inactive") return "ended";
   return "pending";
 }
@@ -3038,6 +3288,10 @@ function applyVoiceUser(rawUserId) {
   $("userId").value = `voice:${id}`;
   state.settings.userId = `voice:${id}`;
   saveSettings();
+  // Enrolment changes the operator outside of the settings form, so refresh the
+  // header badge here or it keeps showing the previous user.
+  const userEl = maybe("userDisplay");
+  if (userEl) userEl.textContent = state.settings.userId;
 }
 
 function normalizeVoiceId(rawUserId) {
@@ -3087,10 +3341,18 @@ function setButtonLabel(node, text) {
 
 function setBusy(value) {
   state.busy = value;
-  $("sendButton").classList.toggle("busy", value);
-  setButtonLabel($("sendButton"), t("Send"));
-  $("sendButton").title = value ? t("Send to the running task (Enter)") : t("Send task (Enter)");
-  $("stopButton").hidden = !value;
+  const sendBtn = maybe("sendButton");
+  if (sendBtn) {
+    sendBtn.classList.toggle("busy", value);
+    sendBtn.classList.toggle("steer-mode", value);
+    const sendIcon = sendBtn.querySelector(".send-icon");
+    const steerIcon = sendBtn.querySelector(".steer-icon");
+    if (sendIcon) sendIcon.style.display = value ? "none" : "";
+    if (steerIcon) steerIcon.style.display = value ? "" : "none";
+    setButtonLabel(sendBtn, value ? t("Steer") : t("Send"));
+    sendBtn.title = value ? t("Send to the running task (Enter)") : t("Send task (Enter)");
+  }
+  if (maybe("stopButton")) $("stopButton").hidden = !value;
   // Left enabled while busy on purpose: a disabled button swallows the click
   // and the "abort the running task first" guard never gets to explain
   // itself, which reads as the control being broken.
@@ -3130,6 +3392,1308 @@ function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Perception page — adaptive sensor / spatial visualisation driven by Atlas.
+//
+// Each tile is gated on whether the connected deployment exposes the matching
+// MCP contract (camera/lidar/scene snapshots).  Tiles whose data is only
+// published on ROS 2 (transport=2) are not reachable from the host-side
+// client, so the availability probe simply reports them offline and the UI
+// hides them instead of rendering a broken tile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PERCEPTION_INTERVAL_MS = 1000;
+
+const perception = {
+  polling: false,
+  paused: false,
+  layoutMode: "split",
+  focusedTile: null,
+  depthColormap: true,
+  lastDepthData: null,
+  timers: new Set(),
+  tiles: { camera: false, depth: false, scene: false },
+  resources: {},
+  sceneLayers: { map: true, regions: true, objects: true, lidar: true, robot: true },
+  lastMap: null,
+  lastLidarScan: null,
+  lastScene: null,
+  mapAvailable: false,
+  mapImage: null,
+  // Scene map viewport, in the map frame: px-per-metre plus the world point at
+  // the canvas centre. ``auto`` stays true until the operator pans or zooms,
+  // after which the view is theirs and nothing rescales it behind their back.
+  // ``fittedKey`` records what the current fit was computed from so the view can
+  // re-fit once when the occupancy grid turns up, and never again.
+  sceneView: { scale: null, center: null, auto: true, fittedKey: null, follow: false },
+  sceneHit: [],
+  sceneHover: -1,
+  scenePan: null,
+};
+
+// Tile ids the Perception page lays out, mirroring PERCEPTION_TILES in
+// perception.py. Kept in one place so the layout loops and the telemetry
+// badge denominator never drift apart.
+const PERCEPTION_TILE_IDS = ["camera", "depth", "scene"];
+
+// Precomputed 256-entry Turbo/Spectral palette for pseudo-color depth heatmap
+const DEPTH_COLORMAP = (() => {
+  const stops = [
+    { p: 0.0, r: 24, g: 30, b: 90 },     // Close: deep indigo
+    { p: 0.2, r: 40, g: 110, b: 230 },   // Mid-close: vibrant blue
+    { p: 0.4, r: 45, g: 210, b: 200 },   // Mid: turquoise/cyan
+    { p: 0.6, r: 50, g: 220, b: 100 },   // Mid-far: bright green
+    { p: 0.8, r: 250, g: 200, b: 40 },   // Far: warm amber
+    { p: 1.0, r: 240, g: 60, b: 60 },    // Out of range: coral red
+  ];
+  const table = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    let s0 = stops[0], s1 = stops[stops.length - 1];
+    for (let j = 0; j < stops.length - 1; j++) {
+      if (t >= stops[j].p && t <= stops[j + 1].p) {
+        s0 = stops[j];
+        s1 = stops[j + 1];
+        break;
+      }
+    }
+    const span = s1.p - s0.p || 1;
+    const ratio = Math.max(0, Math.min(1, (t - s0.p) / span));
+    table[i * 3] = Math.round(s0.r + (s1.r - s0.r) * ratio);
+    table[i * 3 + 1] = Math.round(s0.g + (s1.g - s0.g) * ratio);
+    table[i * 3 + 2] = Math.round(s0.b + (s1.b - s0.b) * ratio);
+  }
+  return table;
+})();
+
+function renderDepthHeatmap(img) {
+  const canvas = document.querySelector("[data-depth-canvas]");
+  if (!canvas) return;
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) return;
+
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  try {
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    if (!perception.lastDepthData || perception.lastDepthData.width !== w || perception.lastDepthData.height !== h) {
+      perception.lastDepthData = { width: w, height: h, raw: new Uint8Array(w * h) };
+    }
+    const raw = perception.lastDepthData.raw;
+    for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+      const gray = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000 | 0;
+      raw[p] = gray;
+      const cIdx = gray * 3;
+      data[i] = DEPTH_COLORMAP[cIdx];
+      data[i + 1] = DEPTH_COLORMAP[cIdx + 1];
+      data[i + 2] = DEPTH_COLORMAP[cIdx + 2];
+      data[i + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  } catch (_) {}
+}
+
+function perceptionAtlas() {
+  const s = collectSettings();
+  if (s.atlasEndpoint) return s.atlasEndpoint;
+  const host = s.robotHost || "127.0.0.1";
+  const port = s.atlasPort || DEFAULT_ATLAS_PORT;
+  return `${host}:${port}`;
+}
+
+async function perceptionFetch(path) {
+  const atlas = encodeURIComponent(perceptionAtlas());
+  const resp = await fetch(`/api/perception/${path}?atlas=${atlas}`);
+  return resp.json();
+}
+
+function perceptionTile(id) {
+  return document.querySelector(`.perception-tile[data-tile="${id}"]`);
+}
+
+function perceptionMeta(id, text) {
+  const meta = perceptionTile(id)?.querySelector("[data-tile-meta]");
+  if (meta) meta.textContent = text;
+}
+
+function perceptionSetAvailable(id, available) {
+  perception.tiles[id] = !!available;
+  const tile = perceptionTile(id);
+  if (tile) tile.hidden = !available;
+}
+
+function fitCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const parent = canvas.parentElement;
+  let w = canvas.clientWidth;
+  let h = canvas.clientHeight;
+
+  // If canvas dimensions are not computed yet (layout not ready), use parent dimensions
+  if (!w || !h) {
+    if (parent) {
+      w = parent.clientWidth || 480;
+      h = parent.clientHeight || 480;
+    } else {
+      w = 480;
+      h = 480;
+    }
+  }
+
+  w = Math.max(1, w);
+  h = Math.max(1, h);
+  const pw = Math.round(w * dpr);
+  const ph = Math.round(h * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+function applyPerceptionLayout() {
+  const grid = document.getElementById("perceptionGrid");
+  if (!grid) return;
+
+  // Sync focus buttons on tile headers
+  const focusBtns = document.querySelectorAll('.perception-tile button[data-action="focus"]');
+  focusBtns.forEach((b) => {
+    const tile = b.closest(".perception-tile");
+    const tileId = tile ? tile.dataset.tile : null;
+    const isThisFocused = perception.focusedTile === tileId;
+    b.classList.toggle("active", isThisFocused);
+    b.setAttribute("title", isThisFocused ? t("Restore Layout") : t("Focus / Maximize"));
+  });
+
+  // Reset tile inline grid assignments
+  for (const id of PERCEPTION_TILE_IDS) {
+    const tile = perceptionTile(id);
+    if (tile) {
+      tile.style.gridColumn = "";
+      tile.style.gridRow = "";
+      tile.classList.toggle("is-focused", perception.focusedTile === id);
+    }
+  }
+
+  grid.classList.remove("layout-focus");
+
+  if (perception.focusedTile) {
+    grid.classList.add("layout-focus");
+    grid.style.gridTemplateColumns = "";
+    grid.style.gridTemplateRows = "";
+    return;
+  }
+
+  // On narrow screens let the CSS media query own the single-column layout;
+  // inline grid templates would otherwise override it.
+  if (window.matchMedia && window.matchMedia("(max-width: 720px)").matches) {
+    grid.style.gridTemplateColumns = "";
+    grid.style.gridTemplateRows = "";
+    return;
+  }
+
+  // Default: layout-split (Large scene on left, stacked sensors on right)
+  grid.classList.add("layout-split");
+  const sensors = ["camera", "depth"].filter((id) => perception.tiles[id]);
+  if (perception.tiles.scene) {
+    grid.style.gridTemplateColumns = "minmax(0, 3.2fr) minmax(0, 2fr)";
+    grid.style.gridTemplateRows = `repeat(${Math.max(1, sensors.length)}, minmax(0, 1fr))`;
+    const scene = perceptionTile("scene");
+    if (scene) {
+      scene.style.gridColumn = "1";
+      scene.style.gridRow = "1 / -1";
+    }
+    sensors.forEach((id, i) => {
+      const tile = perceptionTile(id);
+      if (tile) {
+        tile.style.gridColumn = "2";
+        tile.style.gridRow = `${i + 1}`;
+      }
+    });
+  } else {
+    const cols = Math.max(1, sensors.length);
+    grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    grid.style.gridTemplateRows = "minmax(0, 1fr)";
+    sensors.forEach((id, i) => {
+      const tile = perceptionTile(id);
+      if (tile) {
+        tile.style.gridColumn = `${i + 1}`;
+        tile.style.gridRow = "1";
+      }
+    });
+  }
+}
+
+async function perceptionPollImage(id, endpoint) {
+  const img = document.querySelector(`[data-${id}-img]`);
+  const placeholder = document.querySelector(`[data-tile-placeholder="${id}"]`);
+  if (!img) return;
+  const started = performance.now();
+  try {
+    const data = await perceptionFetch(endpoint);
+    if (!data.ok || !data.image || !data.image.data) {
+      perceptionMeta(id, data.error || t("No image data"));
+      img.classList.remove("loaded");
+      if (placeholder) {
+        placeholder.classList.remove("has-feed");
+        placeholder.hidden = false;
+      }
+      return;
+    }
+    const src = `data:image/${data.image.encoding || "jpeg"};base64,${data.image.data}`;
+    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    img.classList.add("loaded");
+    if (placeholder) {
+      placeholder.classList.add("has-feed");
+      placeholder.hidden = true;
+    }
+    const ms = Math.round(performance.now() - started);
+    perceptionMeta(id, `${data.image.width}×${data.image.height} · ${ms}ms`);
+
+    if (id === "depth") {
+      const canvas = document.querySelector("[data-depth-canvas]");
+      if (perception.depthColormap) {
+        if (canvas) canvas.style.display = "block";
+        img.style.display = "none";
+        const doRender = () => {
+          if (perception.depthColormap) renderDepthHeatmap(img);
+        };
+        if (img.complete && img.naturalWidth > 0) {
+          doRender();
+        } else {
+          img.onload = doRender;
+        }
+      } else {
+        if (canvas) canvas.style.display = "none";
+        img.style.display = "block";
+      }
+    }
+  } catch (_) {
+    perceptionMeta(id, t("Offline"));
+    img.classList.remove("loaded");
+    if (placeholder) {
+      placeholder.classList.remove("has-feed");
+      placeholder.hidden = false;
+    }
+  }
+}
+
+function scenePoint(x, y) {
+  const nx = Number(x);
+  const ny = Number(y);
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null;
+  return { x: nx, y: ny };
+}
+
+function regionPolygons(regions) {
+  // ``points_xy`` is a flat [x0, y0, x1, y1, ...] vertex list.
+  const list = (regions && regions.regions) || [];
+  const out = [];
+  for (const r of list) {
+    const pts = r.points_xy || [];
+    if (!Array.isArray(pts) || pts.length < 6) continue;
+    const poly = [];
+    let ok = true;
+    for (let i = 0; i + 1 < pts.length; i += 2) {
+      const p = scenePoint(pts[i], pts[i + 1]);
+      if (!p) { ok = false; break; }
+      poly.push(p);
+    }
+    if (ok && poly.length >= 3) {
+      out.push({ name: r.name || r.id || "room", kind: r.kind || "room", poly });
+    }
+  }
+  return out;
+}
+
+function regionColor(index) {
+  const palette = [
+    { fill: "rgba(91,141,239,0.10)", stroke: "#5b8def" },
+    { fill: "rgba(53,224,160,0.10)", stroke: "#35e0a0" },
+    { fill: "rgba(197,139,242,0.10)", stroke: "#c58bf2" },
+    { fill: "rgba(90,209,230,0.10)", stroke: "#5ad1e6" },
+    { fill: "rgba(242,114,111,0.10)", stroke: "#f2726f" },
+  ];
+  return palette[index % palette.length];
+}
+
+function mapImageFor(occupancy) {
+  // Decode the occupancy PNG once and reuse it across polls.
+  // Double-buffer: keep serving the currently-decoded image while a new payload
+  // decodes in the background, so drawScene never flashes a blank frame without a map.
+  const src = occupancy && occupancy.png_b64 ? occupancy.png_b64 : "";
+  if (!src) return null;
+
+  if (!perception.mapImage) {
+    const img = new Image();
+    img.onload = () => {
+      perception.mapImage = { src, img };
+      redrawScene();
+    };
+    img.src = `data:image/png;base64,${src}`;
+    return null;
+  }
+
+  if (perception.mapImage.src !== src && perception.mapPendingSrc !== src) {
+    perception.mapPendingSrc = src;
+    const nextImg = new Image();
+    nextImg.onload = () => {
+      perception.mapImage = { src, img: nextImg };
+      perception.mapPendingSrc = null;
+      redrawScene();
+    };
+    nextImg.src = `data:image/png;base64,${src}`;
+  }
+
+  const cached = perception.mapImage;
+  return cached && cached.img && cached.img.complete && cached.img.naturalWidth ? cached.img : null;
+}
+
+function boundsFrom(minX, minY, maxX, maxY) {
+  return {
+    cx: (minX + maxX) / 2,
+    cy: (minY + maxY) / 2,
+    spanX: Math.max(0.6, maxX - minX),
+    spanY: Math.max(0.6, maxY - minY),
+  };
+}
+
+function sceneBounds(points) {
+  if (!points.length) return null;
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return boundsFrom(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
+}
+
+// Extent of the occupancy grid in the map frame, or null when it is unusable.
+function sceneMapRect(baseMap) {
+  if (!baseMap) return null;
+  const mx = Number(baseMap.origin_x);
+  const my = Number(baseMap.origin_y);
+  const mw = Number(baseMap.width) * Number(baseMap.resolution);
+  const mh = Number(baseMap.height) * Number(baseMap.resolution);
+  if (![mx, my, mw, mh].every(Number.isFinite) || mw <= 0 || mh <= 0) return null;
+  return { ...boundsFrom(mx, my, mx + mw, my + mh), minX: mx, minY: my, maxX: mx + mw, maxY: my + mh };
+}
+
+function sceneFitTo(view, w, h, bounds) {
+  view.scale = Math.min((w - 56) / bounds.spanX, (h - 56) / bounds.spanY);
+  view.center = { x: bounds.cx, y: bounds.cy };
+}
+
+function drawScaleBar(ctx, w, h, scale) {
+  // Longest round number of metres that still fits in ~15% of the width.
+  const target = (w * 0.15) / scale;
+  const decade = Math.pow(10, Math.floor(Math.log10(target)));
+  const metres = [1, 2, 5, 10].map((m) => m * decade).find((v) => v >= target) || decade * 10;
+  const px = metres * scale;
+  const x0 = 12;
+  const y0 = h - 12;
+  ctx.strokeStyle = "rgba(223,230,245,0.7)";
+  ctx.fillStyle = "rgba(223,230,245,0.7)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 - 4);
+  ctx.lineTo(x0, y0 + 4);
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0 + px, y0);
+  ctx.moveTo(x0 + px, y0 - 4);
+  ctx.lineTo(x0 + px, y0 + 4);
+  ctx.stroke();
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "left";
+  ctx.fillText(`${metres} m`, x0, y0 - 8);
+}
+
+// Object labels, largest box first, skipping any that would land on a label
+// already placed. A dense scene then reads as a map instead of a wall of text;
+// whatever gets skipped is still reachable by hovering it (which always wins).
+function drawObjectLabels(ctx, candidates) {
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "center";
+  const placed = [];
+  const visible = new Array(candidates.length).fill(false);
+  const order = candidates.map((_c, i) => i).sort((a, b) => {
+    const ca = candidates[a];
+    const cb = candidates[b];
+    if (ca.force !== cb.force) return ca.force ? -1 : 1;
+    return cb.area - ca.area;
+  });
+  // Zooming out makes every box small; without a cap a crowded floor plan still
+  // ends up wall-to-wall text. The biggest few carry the scene at that zoom.
+  let budget = 12;
+  for (const i of order) {
+    const c = candidates[i];
+    if (!c.force) {
+      if (c.minExtent < 26) continue;
+      if (budget <= 0) continue;
+    }
+    const half = ctx.measureText(c.text).width / 2 + 2;
+    const box = { x0: c.x - half, x1: c.x + half, y0: c.y - 10, y1: c.y + 3 };
+    if (!c.force && placed.some((p) => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) {
+      continue;
+    }
+    placed.push(box);
+    visible[i] = true;
+    if (!c.force) budget -= 1;
+  }
+  candidates.forEach((c, i) => {
+    if (!visible[i]) return;
+    ctx.fillStyle = c.force ? "#ffffff" : "#dfe6f5";
+    ctx.fillText(c.text, c.x, c.y);
+  });
+}
+
+function redrawScene() {
+  const canvas = document.querySelector("[data-scene-canvas]");
+  if (canvas) {
+    if (perception.lastScene) drawScene(canvas, perception.lastScene);
+    else drawSceneStandby(canvas);
+  }
+}
+
+function drawSceneStandby(canvas) {
+  const { ctx, w, h } = fitCanvas(canvas);
+  const cx = w / 2;
+  const cy = h / 2;
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#0b1618";
+  ctx.fillRect(0, 0, w, h);
+
+  // Subtle coordinate grid
+  const gridSize = 40;
+  ctx.strokeStyle = "rgba(95, 205, 216, 0.05)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  const startX = cx % gridSize;
+  for (let x = startX; x < w; x += gridSize) {
+    ctx.moveTo(x, 0); ctx.lineTo(x, h);
+  }
+  const startY = cy % gridSize;
+  for (let y = startY; y < h; y += gridSize) {
+    ctx.moveTo(0, y); ctx.lineTo(w, y);
+  }
+  ctx.stroke();
+
+  // Origin coordinate axes (+X red/orange, +Y cyan)
+  const axisLen = 32;
+  ctx.strokeStyle = "rgba(240, 103, 88, 0.85)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy); ctx.lineTo(cx + axisLen, cy);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(240, 103, 88, 0.85)";
+  ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("+X", cx + axisLen + 4, cy);
+
+  ctx.strokeStyle = "rgba(95, 205, 216, 0.85)";
+  ctx.beginPath();
+  ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - axisLen);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(95, 205, 216, 0.85)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.fillText("+Y", cx, cy - axisLen - 3);
+
+  // Origin point
+  ctx.fillStyle = "#eef4f3";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Watermark text
+  ctx.fillStyle = "rgba(154, 169, 173, 0.4)";
+  ctx.font = "12px Inter, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(t("Spatial context inactive"), cx, cy + 34);
+}
+
+function drawScene(canvas, scene) {
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#0b1618";
+  ctx.fillRect(0, 0, w, h);
+
+  const objects = (scene.objects && scene.objects.objects) || [];
+  const robot = scene.robot || {};
+  const polys = regionPolygons(scene.regions);
+  const layers = perception.sceneLayers || {};
+  const baseMap = layers.map !== false ? perception.lastMap : null;
+  const mapRect = sceneMapRect(baseMap);
+
+  const pts = [];
+  for (const o of objects) {
+    const p = scenePoint(o.x, o.y);
+    if (p) pts.push(p);
+  }
+  const rp = scenePoint(robot.x, robot.y);
+  if (rp) pts.push(rp);
+  for (const poly of polys) pts.push(...poly.poly);
+
+  const view = perception.sceneView;
+  perception.sceneHit = [];
+  // Fit target: the occupancy grid when there is one, because unlike the object
+  // cloud its extent never moves. Deployments without a map service fall back to
+  // the bounds of whatever data they do have.
+  const fitKey = mapRect ? "map" : "data";
+  const fitBase = mapRect || sceneBounds(pts);
+  if (!fitBase) {
+    ctx.fillStyle = "rgba(154, 169, 173, 0.4)";
+    ctx.font = "12px Inter, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(t("Spatial context inactive"), w / 2, h / 2);
+    return;
+  }
+
+  // Fit once, and once more only if the grid turns up after the first scene poll
+  // (it is a better basis than the object cloud). The fit never downgrades, so
+  // unchecking the map layer cannot rescale the view -- and from then on the
+  // basis is fixed, so a new object or a driving robot cannot either.
+  const needsFit = view.fittedKey === null || (fitKey === "map" && view.fittedKey !== "map");
+  if (view.auto && needsFit) {
+    sceneFitTo(view, w, h, fitBase);
+    view.fittedKey = fitKey;
+  }
+  if (view.scale == null || view.center == null) sceneFitTo(view, w, h, fitBase);
+  if (view.follow && rp) view.center = { x: rp.x, y: rp.y };
+
+  const scale = view.scale;
+  const center = view.center;
+  const toX = (x) => w / 2 + (x - center.x) * scale;
+  const toY = (y) => h / 2 - (y - center.y) * scale;
+
+  // Base map: draw the occupancy PNG under every overlay, aligned to the same
+  // "map" frame via origin/resolution. The image's row 0 is the highest y, so
+  // its canvas top edge is toY(origin_y + height * resolution).
+  if (baseMap && mapRect) {
+    const img = mapImageFor(baseMap);
+    if (img) {
+      ctx.drawImage(
+        img,
+        toX(mapRect.minX),
+        toY(mapRect.maxY),
+        (mapRect.maxX - mapRect.minX) * scale,
+        (mapRect.maxY - mapRect.minY) * scale,
+      );
+    }
+  }
+
+  ctx.strokeStyle = "rgba(120,140,180,0.12)";
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx <= w; gx += 40) {
+    ctx.beginPath();
+    ctx.moveTo(gx, 0);
+    ctx.lineTo(gx, h);
+    ctx.stroke();
+  }
+  for (let gy = 0; gy <= h; gy += 40) {
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(w, gy);
+    ctx.stroke();
+  }
+
+  if (layers.regions !== false) {
+    polys.forEach((r, i) => {
+      const color = regionColor(i);
+      ctx.beginPath();
+      r.poly.forEach((p, j) => {
+        const x = toX(p.x);
+        const y = toY(p.y);
+        if (j === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = color.fill;
+      ctx.fill();
+      ctx.strokeStyle = color.stroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      const cx = r.poly.reduce((s, p) => s + p.x, 0) / r.poly.length;
+      const cy = r.poly.reduce((s, p) => s + p.y, 0) / r.poly.length;
+      ctx.fillStyle = color.stroke;
+      ctx.font = "11px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(r.name, toX(cx), toY(cy));
+    });
+  }
+
+  if (layers.objects !== false) {
+    const palette = ["#5b8def", "#35e0a0", "#ffd166", "#f2726f", "#c58bf2", "#5ad1e6"];
+    const labels = [];
+    objects.forEach((o, i) => {
+      if ((o.label || "") === "robot") return;
+      const p = scenePoint(o.x, o.y);
+      if (!p) return;
+      const x = toX(p.x);
+      const y = toY(p.y);
+      const yaw = Number(o.yaw) || 0;
+      const ow = Math.max(7, (Number(o.size_x) || 0.3) * scale);
+      const oh = Math.max(7, (Number(o.size_y) || 0.3) * scale);
+      // Screen-space extent of the rotated box, for hit-testing and for judging
+      // whether a label has anywhere to go.
+      const absCos = Math.abs(Math.cos(yaw));
+      const absSin = Math.abs(Math.sin(yaw));
+      const bw = ow * absCos + oh * absSin;
+      const bh = ow * absSin + oh * absCos;
+      const hitIndex = perception.sceneHit.length;
+      perception.sceneHit.push({ x, y, w: bw, h: bh, label: o.label || "object" });
+      const hovered = hitIndex === perception.sceneHover;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-yaw);
+      ctx.fillStyle = palette[i % palette.length];
+      ctx.globalAlpha = hovered ? 1 : 0.85;
+      ctx.fillRect(-ow / 2, -oh / 2, ow, oh);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = hovered ? "#ffffff" : "rgba(255,255,255,0.35)";
+      ctx.lineWidth = hovered ? 2 : 1;
+      ctx.strokeRect(-ow / 2, -oh / 2, ow, oh);
+      ctx.restore();
+      labels.push({
+        x,
+        y: y + oh / 2 + 12,
+        text: o.label || "object",
+        area: bw * bh,
+        minExtent: Math.min(bw, bh),
+        force: hovered,
+      });
+    });
+    drawObjectLabels(ctx, labels);
+  }
+  if (perception.sceneHover >= perception.sceneHit.length) perception.sceneHover = -1;
+
+  // Project real-time LiDAR hits onto Scene Map
+  if (layers.lidar !== false && perception.lastLidarScan && rp) {
+    const scan = perception.lastLidarScan;
+    const ranges = scan.ranges || [];
+    const angleMin = Number(scan.angle_min) || -Math.PI / 2;
+    const angleInc = Number(scan.angle_increment) || 0.01;
+    const rMin = Number(scan.range_min) || 0.01;
+    const rMax = Number(scan.range_max) || 6.0;
+    const robotYaw = Number(robot.yaw) || 0;
+
+    const hitPoints = [];
+    for (let i = 0; i < ranges.length; i += 1) {
+      const r = Number(ranges[i]);
+      if (!Number.isFinite(r) || r < rMin || r > rMax) continue;
+      const angle = robotYaw + angleMin + i * angleInc;
+      const wx = rp.x + r * Math.cos(angle);
+      const wy = rp.y + r * Math.sin(angle);
+      hitPoints.push({ x: toX(wx), y: toY(wy), r });
+    }
+
+    if (hitPoints.length > 0) {
+      ctx.strokeStyle = "rgba(53, 224, 160, 0.4)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let connected = false;
+      for (let i = 0; i < hitPoints.length; i += 1) {
+        const hp = hitPoints[i];
+        const prev = i > 0 ? hitPoints[i - 1] : null;
+        if (prev && Math.hypot(hp.x - prev.x, hp.y - prev.y) < 25) {
+          if (!connected) {
+            ctx.moveTo(prev.x, prev.y);
+            connected = true;
+          }
+          ctx.lineTo(hp.x, hp.y);
+        } else {
+          connected = false;
+        }
+      }
+      ctx.stroke();
+
+      for (const hp of hitPoints) {
+        ctx.fillStyle = hp.r < 0.6 ? "#f2726f" : (hp.r < 1.2 ? "#ffd166" : "#35e0a0");
+        ctx.beginPath();
+        ctx.arc(hp.x, hp.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  if (layers.robot !== false && rp) {
+    const x = toX(rp.x);
+    const y = toY(rp.y);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-(Number(robot.yaw) || 0));
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-6, -6);
+    ctx.lineTo(-6, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#ffd166";
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("robot", x, y + 18);
+  }
+
+  // Update HUD compass needle if available
+  const compassNeedle = document.getElementById("sceneCompassNeedle");
+  if (compassNeedle && robot && robot.yaw != null) {
+    const deg = Math.round(((Number(robot.yaw) || 0) * 180) / Math.PI);
+    compassNeedle.style.transform = `rotate(${-deg}deg)`;
+  }
+
+  // Zoom makes the scale a live variable, so state it rather than leaving the
+  // operator to infer distances from the grid.
+  drawScaleBar(ctx, w, h, scale);
+}
+
+async function perceptionPollScene() {
+  const canvas = document.querySelector("[data-scene-canvas]");
+  if (!canvas) return;
+  let data;
+  try {
+    data = await perceptionFetch("scene");
+  } catch (_) {
+    perceptionMeta("scene", t("Offline"));
+    perception.lastScene = null;
+    drawSceneStandby(canvas);
+    return;
+  }
+  if (!data.ok || !data.scene) {
+    perceptionMeta("scene", data.error || t("Map data unavailable"));
+    perception.lastScene = null;
+    drawSceneStandby(canvas);
+    return;
+  }
+  perception.lastScene = data.scene;
+
+  // The base map is fetched if available. Never wipe lastMap on transient poll failures!
+  if (perception.mapAvailable && perception.sceneLayers.map !== false) {
+    try {
+      const mapData = await perceptionFetch("map");
+      if (mapData && mapData.ok && mapData.occupancy) {
+        perception.lastMap = mapData.occupancy;
+      }
+    } catch (_) {
+      // Retain last known valid map to prevent flashing/flickering
+    }
+  }
+
+  // Fetch lidar scan for the 2D scene map laser overlay if layer is active
+  if (perception.sceneLayers.lidar !== false) {
+    try {
+      const lidarData = await perceptionFetch("lidar");
+      if (lidarData && lidarData.ok && lidarData.scan) {
+        perception.lastLidarScan = lidarData.scan;
+      }
+    } catch (_) {
+      // Retain last known valid scan on map
+    }
+  }
+
+  // Draw once with all updated scene & map data ready
+  drawScene(canvas, data.scene);
+
+  const objects = (data.scene.objects && data.scene.objects.objects) || [];
+  const regions = (data.scene.regions && data.scene.regions.regions) || [];
+  const room = (data.scene.robot && data.scene.robot.room_name) || "";
+  const parts = [`${objects.length} objects`];
+  if (regions.length) parts.push(`${regions.length} regions`);
+  if (room) parts.push(room);
+  perceptionMeta("scene", parts.join(" · "));
+}
+
+// One round of tile fetches. The four run concurrently; the round settles only
+// after all of them have, including when the render path throws, so no single
+// failing tile can take the loop down with it.
+function perceptionRound() {
+  const round = [];
+  if (perception.tiles.camera) round.push(perceptionPollImage("camera", "camera"));
+  if (perception.tiles.depth) round.push(perceptionPollImage("depth", "depth"));
+  if (perception.tiles.scene) round.push(perceptionPollScene());
+  return Promise.allSettled(round);
+}
+
+// Poll on a self-rescheduling timer rather than setInterval. Every tile awaits
+// its fetch, and a slow robot -- an MCP handshake alone is two round-trips --
+// outlasts the interval, so setInterval used to stack rounds on top of each
+// other without bound. Here the next round is armed only once this one is done,
+// padded so a robot that keeps up still settles into the nominal cadence.
+async function perceptionTick() {
+  const started = performance.now();
+  if (!perception.paused) {
+    try {
+      await perceptionRound();
+    } catch (_) {
+      // allSettled makes this unreachable today; keep loop alive
+    }
+  }
+  if (!perception.polling) return;
+  perceptionArm(Math.max(0, PERCEPTION_INTERVAL_MS - (performance.now() - started)));
+}
+
+function perceptionArm(delay) {
+  if (!perception.polling) return;
+  const timer = setTimeout(perceptionTick, delay);
+  // Only one tick is ever pending; drop the spent id so the set does not grow.
+  perception.timers.clear();
+  perception.timers.add(timer);
+}
+
+const PERCEPTION_LABELS = {
+  camera: () => t("Camera"),
+  depth: () => t("Depth Camera"),
+  scene: () => t("Scene Map"),
+};
+
+function renderPerceptionStrip(tiles) {
+  const strip = document.getElementById("perceptionSourceStrip");
+  if (!strip) return;
+  strip.textContent = "";
+  for (const id of PERCEPTION_TILE_IDS) {
+    const chip = document.createElement("span");
+    chip.className = `perception-source-chip ${tiles[id] ? "online" : "offline"}`;
+    chip.textContent = PERCEPTION_LABELS[id] ? PERCEPTION_LABELS[id]() : id;
+    strip.appendChild(chip);
+  }
+}
+
+function updatePerceptionEmptyDiagnostics(tiles) {
+  const ep = document.getElementById("perceptionEmptyEndpoint");
+  if (ep) ep.textContent = perceptionAtlas();
+  for (const id of PERCEPTION_TILE_IDS) {
+    const card = document.querySelector(`.perception-channel-card[data-channel="${id}"]`);
+    if (card) {
+      const isOnline = !!tiles[id];
+      const dot = card.querySelector(".channel-dot");
+      if (dot) {
+        dot.classList.toggle("online", isOnline);
+        dot.classList.toggle("offline", !isOnline);
+      }
+      const st = card.querySelector(".channel-status");
+      if (st) {
+        st.classList.toggle("online", isOnline);
+        st.textContent = isOnline ? t("Connected") : t("Offline");
+      }
+    }
+  }
+}
+
+function bindPerceptionRetry() {
+  const btn = document.getElementById("perceptionRetryBtn");
+  if (!btn || btn.dataset.retryBound) return;
+  btn.dataset.retryBound = "1";
+  btn.addEventListener("click", async () => {
+    btn.classList.add("loading");
+    btn.disabled = true;
+    const label = btn.querySelector("span");
+    if (label) label.textContent = t("Probing...");
+    try {
+      await perceptionRefresh();
+      if (perception.polling) await perceptionRound();
+    } finally {
+      btn.classList.remove("loading");
+      btn.disabled = false;
+      if (label) label.textContent = t("Retry Probe");
+    }
+  });
+}
+
+async function perceptionRefresh() {
+  bindPerceptionRetry();
+  try {
+    const data = await perceptionFetch("status");
+    const tiles = (data && data.tiles) || {};
+    perception.resources = (data && data.resources) || {};
+    let any = false;
+    for (const [id, available] of Object.entries(tiles)) {
+      perceptionSetAvailable(id, !!available);
+      any = any || !!available;
+    }
+    // The occupancy base map is only offered when the robot-local map service
+    // is actually reachable; otherwise hide its toggle rather than show a
+    // layer that can never draw anything.
+    perception.mapAvailable = !!(perception.resources.scene && perception.resources.scene.map);
+    const mapLayer = document.querySelector('[data-scene-layer="map"]');
+    const layerPill = mapLayer?.closest(".perception-layer-pill") || mapLayer?.closest(".perception-layer") || mapLayer?.parentElement;
+    if (layerPill) layerPill.hidden = !perception.mapAvailable;
+    applyPerceptionLayout();
+    renderPerceptionStrip(tiles);
+    updatePerceptionEmptyDiagnostics(tiles);
+
+    const activeCount = Object.values(tiles).filter(Boolean).length;
+    const totalCount = Object.keys(tiles).length || PERCEPTION_TILE_IDS.length;
+    const healthBadge = document.getElementById("perceptionHealthBadge");
+    const healthText = document.getElementById("perceptionHealthText");
+    if (healthBadge) {
+      healthBadge.classList.toggle("online", activeCount > 0);
+      healthBadge.classList.toggle("offline", activeCount === 0);
+    }
+    if (healthText) {
+      if (activeCount === totalCount && totalCount > 0) {
+        healthText.textContent = t("All Streams Active");
+      } else if (activeCount > 0) {
+        healthText.textContent = `${activeCount}/${totalCount} ${t("Telemetry Active")}`;
+      } else {
+        healthText.textContent = t("Sensor Array Standby");
+      }
+    }
+
+    const grid = document.getElementById("perceptionGrid");
+    if (grid) grid.hidden = !any;
+    const empty = document.getElementById("perceptionEmpty");
+    if (empty) empty.hidden = any;
+  } catch (_) {
+    renderPerceptionStrip({});
+    updatePerceptionEmptyDiagnostics({});
+    const healthBadge = document.getElementById("perceptionHealthBadge");
+    const healthText = document.getElementById("perceptionHealthText");
+    if (healthBadge) {
+      healthBadge.classList.remove("online");
+      healthBadge.classList.add("offline");
+    }
+    if (healthText) {
+      healthText.textContent = `0/${PERCEPTION_TILE_IDS.length} ${t("Offline")}`;
+    }
+    const grid = document.getElementById("perceptionGrid");
+    if (grid) grid.hidden = true;
+    const empty = document.getElementById("perceptionEmpty");
+    if (empty) empty.hidden = false;
+  }
+}
+
+function bindSceneLayers() {
+  const root = document.querySelector('.perception-tile[data-tile="scene"]');
+  if (!root || root.dataset.layersBound) return;
+  root.dataset.layersBound = "1";
+  root.querySelectorAll("[data-scene-layer]").forEach((input) => {
+    const key = input.dataset.sceneLayer;
+    input.addEventListener("change", () => {
+      perception.sceneLayers[key] = input.checked;
+      redrawScene();
+    });
+  });
+}
+
+function sceneCanvasPoint(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return { px: event.clientX - rect.left, py: event.clientY - rect.top };
+}
+
+// Topmost hit wins: sceneHit is in draw order, so scan it backwards.
+function sceneHoverAt(px, py) {
+  const hit = perception.sceneHit;
+  for (let i = hit.length - 1; i >= 0; i -= 1) {
+    const b = hit[i];
+    if (Math.abs(px - b.x) <= b.w / 2 && Math.abs(py - b.y) <= b.h / 2) return i;
+  }
+  return -1;
+}
+
+function bindSceneView() {
+  const root = document.querySelector('.perception-tile[data-tile="scene"]');
+  const canvas = document.querySelector("[data-scene-canvas]");
+  if (!root || !canvas || canvas.dataset.viewBound) return;
+  canvas.dataset.viewBound = "1";
+  const view = perception.sceneView;
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    // Touching the map hands the viewport to the operator: no more auto-fit.
+    view.auto = false;
+    perception.scenePan = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    canvas.setPointerCapture(event.pointerId);
+    canvas.style.cursor = "grabbing";
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    const pan = perception.scenePan;
+    if (pan && pan.id === event.pointerId) {
+      if (view.center && view.scale) {
+        view.center = {
+          x: view.center.x - (event.clientX - pan.x) / view.scale,
+          y: view.center.y + (event.clientY - pan.y) / view.scale,
+        };
+      }
+      pan.x = event.clientX;
+      pan.y = event.clientY;
+      redrawScene();
+      return;
+    }
+    const { px, py } = sceneCanvasPoint(canvas, event);
+    const found = sceneHoverAt(px, py);
+    if (found === perception.sceneHover) return;
+    perception.sceneHover = found;
+    canvas.style.cursor = found >= 0 ? "pointer" : "";
+    redrawScene();
+  });
+
+  const endPan = (event) => {
+    const pan = perception.scenePan;
+    if (!pan || pan.id !== event.pointerId) return;
+    perception.scenePan = null;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    canvas.style.cursor = "";
+  };
+  canvas.addEventListener("pointerup", endPan);
+  canvas.addEventListener("pointercancel", endPan);
+
+  canvas.addEventListener("pointerleave", () => {
+    if (perception.scenePan || perception.sceneHover === -1) return;
+    perception.sceneHover = -1;
+    canvas.style.cursor = "";
+    redrawScene();
+  });
+
+  // Zoom about the pointer, so the world point under it stays put.
+  canvas.addEventListener("wheel", (event) => {
+    if (!view.scale || !view.center) return;
+    event.preventDefault();
+    const { px, py } = sceneCanvasPoint(canvas, event);
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const wx = view.center.x + (px - w / 2) / view.scale;
+    const wy = view.center.y - (py - h / 2) / view.scale;
+    view.scale = Math.min(400, Math.max(2, view.scale * Math.exp(-event.deltaY * 0.0015)));
+    view.center = {
+      x: wx - (px - w / 2) / view.scale,
+      y: wy + (py - h / 2) / view.scale,
+    };
+    view.auto = false;
+    redrawScene();
+  }, { passive: false });
+
+  const fit = root.querySelector('[data-scene-view="fit"]');
+  if (fit) {
+    fit.addEventListener("click", () => {
+      view.auto = true;
+      view.fittedKey = null;
+      redrawScene();
+    });
+  }
+  const follow = root.querySelector('[data-scene-view="follow"]');
+  if (follow) {
+    follow.addEventListener("change", () => {
+      view.follow = follow.checked;
+      redrawScene();
+    });
+  }
+}
+
+function bindPerceptionControls() {
+  const pauseBtn = document.getElementById("perceptionPauseBtn");
+  if (pauseBtn && !pauseBtn.dataset.pauseBound) {
+    pauseBtn.dataset.pauseBound = "1";
+    pauseBtn.addEventListener("click", () => {
+      perception.paused = !perception.paused;
+      pauseBtn.classList.toggle("paused", perception.paused);
+      const label = pauseBtn.querySelector("span");
+      if (label) label.textContent = perception.paused ? t("Paused") : t("Live");
+      if (!perception.paused) perceptionTick();
+    });
+  }
+
+
+
+  // Focus buttons on tile headers
+  const focusBtns = document.querySelectorAll('.perception-tile button[data-action="focus"]');
+  focusBtns.forEach((btn) => {
+    if (btn.dataset.focusBound) return;
+    btn.dataset.focusBound = "1";
+    btn.addEventListener("click", () => {
+      const tile = btn.closest(".perception-tile");
+      const tileId = tile ? tile.dataset.tile : null;
+      if (!tileId) return;
+      if (perception.focusedTile === tileId) {
+        perception.focusedTile = null;
+      } else {
+        perception.focusedTile = tileId;
+      }
+      applyPerceptionLayout();
+      setTimeout(redrawPerceptionCanvases, 40);
+    });
+  });
+}
+
+function bindCameraSnapshot() {
+  const btns = document.querySelectorAll('.perception-tile button[data-action="snapshot"]');
+  btns.forEach((btn) => {
+    if (btn.dataset.snapshotBound) return;
+    btn.dataset.snapshotBound = "1";
+    btn.addEventListener("click", () => {
+      const tile = btn.closest(".perception-tile");
+      const tileId = tile ? tile.dataset.tile : null;
+      if (!tileId) return;
+      let url = "";
+      if (tileId === "camera") {
+        const img = document.querySelector("[data-camera-img]");
+        if (img && img.classList.contains("loaded")) url = img.getAttribute("src") || img.src;
+      } else if (tileId === "depth") {
+        if (perception.depthColormap) {
+          const canvas = document.querySelector("[data-depth-canvas]");
+          if (canvas) url = canvas.toDataURL("image/png");
+        } else {
+          const img = document.querySelector("[data-depth-img]");
+          if (img && img.classList.contains("loaded")) url = img.getAttribute("src") || img.src;
+        }
+      } else if (tileId === "scene") {
+        const canvas = document.querySelector("[data-scene-canvas]");
+        if (canvas) url = canvas.toDataURL("image/png");
+      }
+      if (!url) return;
+      const a = document.createElement("a");
+      a.download = `robonix-${tileId}-${Date.now()}.png`;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      perceptionMeta(tileId, t("Snapshot saved"));
+    });
+  });
+}
+
+function bindDepthColormap() {
+  const btn = document.getElementById("depthColormapBtn");
+  if (!btn || btn.dataset.colormapBound) return;
+  btn.dataset.colormapBound = "1";
+  btn.classList.toggle("active", perception.depthColormap);
+  btn.addEventListener("click", () => {
+    perception.depthColormap = !perception.depthColormap;
+    btn.classList.toggle("active", perception.depthColormap);
+    const canvas = document.querySelector("[data-depth-canvas]");
+    const img = document.querySelector("[data-depth-img]");
+    if (perception.depthColormap) {
+      if (canvas) canvas.style.display = "block";
+      if (img) img.style.display = "none";
+      if (img && img.complete) renderDepthHeatmap(img);
+    } else {
+      if (canvas) canvas.style.display = "none";
+      if (img) img.style.display = "block";
+    }
+  });
+}
+
+function bindDepthHover() {
+  const body = document.querySelector('.perception-tile[data-tile="depth"] .perception-tile-body');
+  const tooltip = document.getElementById("depthHoverTooltip");
+  if (!body || !tooltip || body.dataset.hoverBound) return;
+  body.dataset.hoverBound = "1";
+
+  body.addEventListener("pointermove", (e) => {
+    if (!perception.depthColormap) {
+      tooltip.hidden = true;
+      return;
+    }
+    const depthData = perception.lastDepthData;
+    if (!depthData) {
+      tooltip.hidden = true;
+      return;
+    }
+    const rect = body.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    const imgW = depthData.width;
+    const imgH = depthData.height;
+    if (!imgW || !imgH || !rect.width || !rect.height) {
+      tooltip.hidden = true;
+      return;
+    }
+    const containerAr = rect.width / rect.height;
+    const imgAr = imgW / imgH;
+
+    let renderW, renderH, offsetX, offsetY;
+    if (containerAr > imgAr) {
+      renderH = rect.height;
+      renderW = rect.height * imgAr;
+      offsetX = (rect.width - renderW) / 2;
+      offsetY = 0;
+    } else {
+      renderW = rect.width;
+      renderH = rect.width / imgAr;
+      offsetX = 0;
+      offsetY = (rect.height - renderH) / 2;
+    }
+
+    if (cx < offsetX || cx > offsetX + renderW || cy < offsetY || cy > offsetY + renderH) {
+      tooltip.hidden = true;
+      return;
+    }
+
+    const ix = Math.max(0, Math.min(imgW - 1, Math.floor(((cx - offsetX) / renderW) * imgW)));
+    const iy = Math.max(0, Math.min(imgH - 1, Math.floor(((cy - offsetY) / renderH) * imgH)));
+    const val = depthData.raw[iy * imgW + ix];
+    const distM = ((val / 255) * 5.0).toFixed(2);
+    tooltip.textContent = `${t("Depth")}: ${distM}m (${ix}, ${iy})`;
+    tooltip.style.left = `${cx}px`;
+    tooltip.style.top = `${cy}px`;
+    tooltip.hidden = false;
+  });
+
+  body.addEventListener("pointerleave", () => {
+    tooltip.hidden = true;
+  });
+}
+
+function startPerception() {
+  bindPerceptionRetry();
+  bindPerceptionControls();
+  bindCameraSnapshot();
+  bindDepthColormap();
+  bindDepthHover();
+  bindSceneLayers();
+  bindSceneView();
+  redrawPerceptionCanvases();
+  if (perception.polling) return;
+  perception.polling = true;
+  perceptionRefresh();
+  perceptionArm(0);
+}
+
+function stopPerception() {
+  perception.polling = false;
+  for (const timer of perception.timers) clearTimeout(timer);
+  perception.timers.clear();
+}
+
+function redrawPerceptionCanvases() {
+  const sceneCanvas = document.querySelector("[data-scene-canvas]");
+
+  if (sceneCanvas) {
+    if (perception.lastScene) drawScene(sceneCanvas, perception.lastScene);
+    else drawSceneStandby(sceneCanvas);
+  }
+}
+
+window.addEventListener("robonix:page", (event) => {
+  const name = event.detail && event.detail.name;
+  if (name === "perception") {
+    startPerception();
+  } else {
+    stopPerception();
+  }
+});
+
+// Redraw canvases when window is resized
+let resizeTimeout;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    if (perception.polling) {
+      redrawPerceptionCanvases();
+    }
+  }, 150);
+});
+
 /// Re-render every dynamic region after a language switch. Static markup is
 /// handled by i18n.js walking data-i18n; this covers everything app.js writes
 /// from state. promptTitle is excluded from data-i18n for the same reason:
@@ -3150,6 +4714,8 @@ function handleI18nChange() {
   setText("audioLevelState", t(state.audio.vuState));
   if (state.lastSystemData) renderSystem(state.lastSystemData);
   setBusy(state.busy);
+  updatePerceptionEmptyDiagnostics((perception && perception.tiles) || {});
+  redrawPerceptionCanvases();
 }
 
 window.addEventListener("robonix:i18n", handleI18nChange);

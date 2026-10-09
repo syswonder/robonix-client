@@ -103,6 +103,7 @@ RTDL_NODE_STATE_NAMES = {
     4: "CANCELED",
     5: "TIMEOUT",
     6: "PAUSED",
+    7: "VERIFYING",
 }
 
 STATE_NAMES = {

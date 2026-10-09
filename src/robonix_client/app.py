@@ -15,8 +15,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audio_server_control
+from . import audio_server_control, perception
 from .audio_reverse_bridge import AudioReverseBridge
+from .health_api import router as health_router
 from .vitals_api import router as vitals_router
 from .transport import (
     DEFAULT_ATLAS,
@@ -65,6 +66,7 @@ class _RevalidatingStaticFiles(StaticFiles):
 
 app.mount("/static", _RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(vitals_router)
+app.include_router(health_router)
 _reverse_audio: AudioReverseBridge | None = None
 SETTINGS_PATH = Path(
     os.environ.get(
@@ -276,6 +278,54 @@ async def executor_active_plans(req: ClientSettingsRequest) -> dict[str, Any]:
         return await list_active_plans(ClientSettings.from_payload(req.settings))
     except Exception as exc:
         return {"available": False, "count": 0, "plans": [], "error": str(exc)}
+
+
+@app.get("/api/perception/status")
+async def perception_status(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, **await perception.perception_availability(atlas)}
+    except Exception as exc:
+        return {"ok": False, "tiles": {}, "resources": {}, "groups": {}, "error": str(exc)}
+
+
+@app.get("/api/perception/camera")
+async def perception_camera(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "image": await perception.camera_rgb(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/perception/depth")
+async def perception_depth(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "image": await perception.camera_depth(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/perception/lidar")
+async def perception_lidar(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "scan": await perception.lidar_scan(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/perception/scene")
+async def perception_scene(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "scene": await perception.scene_snapshot(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/perception/map")
+async def perception_map(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "occupancy": await perception.map_occupancy(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.post("/api/voice/finish-supported")

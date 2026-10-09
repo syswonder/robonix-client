@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import URDFLoader from "urdf-loader";
+import "./compute-node.js";
 import {
   AlertTriangle,
   AudioLines,
@@ -14,6 +15,7 @@ import {
   CircleGauge,
   Cpu,
   Disc3,
+  Maximize2,
   Radio,
   RefreshCw,
   ScanLine,
@@ -985,6 +987,7 @@ class VitalsDashboard {
     byId("vitalsAlertHistoryTab")?.addEventListener("click", () => this.setAlertMode("history"));
     byId("vitalsClearAlertHistory")?.addEventListener("click", () => this.clearAlertHistory());
     byId("vitalsWarningDismiss")?.addEventListener("click", () => this.closeWarning());
+    byId("vitalsWarningDismissAll")?.addEventListener("click", () => this.closeWarning(true));
     byId("vitalsWarningInspect")?.addEventListener("click", () => this.inspectCurrentAlert());
     byId("vitalsModulesTab")?.addEventListener("click", () => this.setSoftwareMode("modules"));
     byId("vitalsProvidersTab")?.addEventListener("click", () => this.setSoftwareMode("providers"));
@@ -1169,7 +1172,12 @@ class VitalsDashboard {
     const notifyIds = Array.isArray(data.notifyAlertIds) ? data.notifyAlertIds : [];
     const candidates = this.alertsInitialized
       ? notifyIds
-      : this.alerts.filter((alert) => alert.conditionActive).map((alert) => alert.id);
+      : [];
+    if (!this.alertsInitialized) {
+      this.alerts.forEach((alert) => {
+        if (alert?.id) this.notifiedAlertIds.add(Number(alert.id));
+      });
+    }
     this.alertsInitialized = true;
     candidates.forEach((alertId) => {
       const id = Number(alertId);
@@ -1178,7 +1186,9 @@ class VitalsDashboard {
       this.alertQueue.push(id);
     });
     this.renderAlerts();
-    this.showNextWarning();
+    if (this.alertQueue.length) {
+      this.showNextWarning();
+    }
   }
 
   openAlertPanel() {
@@ -1259,7 +1269,9 @@ class VitalsDashboard {
     source.textContent = `${alert.sourceType || "source"} · ${alert.status || "active"}`;
     heading.append(title, source);
     const detail = document.createElement("p");
-    detail.textContent = alert.detail || t("Health anomaly reported");
+    // Details are backend-provided English sentences: run them through t() so
+    // the keys the zh-CN table carries (e.g. "Hardware health anomaly") apply.
+    detail.textContent = t(alert.detail || "Health anomaly reported");
     const meta = document.createElement("div");
     meta.className = "vitals-alert-meta";
     const firstSeen = document.createElement("span");
@@ -1361,7 +1373,7 @@ class VitalsDashboard {
       dialog?.setAttribute("data-severity", safeHealth(alert.severity));
       if (byId("vitalsWarningSeverity")) byId("vitalsWarningSeverity").textContent = t(safeHealth(alert.severity).toUpperCase());
       if (byId("vitalsWarningTitle")) byId("vitalsWarningTitle").textContent = alert.label || t("Robot alert");
-      if (byId("vitalsWarningDetail")) byId("vitalsWarningDetail").textContent = alert.detail || t("A health anomaly requires attention.");
+      if (byId("vitalsWarningDetail")) byId("vitalsWarningDetail").textContent = t(alert.detail || "A health anomaly requires attention.");
       if (byId("vitalsWarningSource")) byId("vitalsWarningSource").textContent = `${alert.sourceType}: ${alert.sourceId}`;
       if (byId("vitalsWarningTime")) byId("vitalsWarningTime").textContent = formatDateTime(alert.firstSeenAtMs);
       if (byId("vitalsWarningInspect")) {
@@ -1373,11 +1385,17 @@ class VitalsDashboard {
     }
   }
 
-  closeWarning() {
+  closeWarning(dismissAll = false) {
     const layer = byId("vitalsWarningLayer");
     if (layer) layer.hidden = true;
     this.currentAlert = null;
-    window.setTimeout(() => this.showNextWarning(), 120);
+    if (dismissAll) {
+      this.alertQueue = [];
+      return;
+    }
+    if (this.alertQueue.length) {
+      window.setTimeout(() => this.showNextWarning(), 120);
+    }
   }
 
   inspectCurrentAlert() {
@@ -1510,22 +1528,53 @@ class VitalsDashboard {
       row.className = "vitals-component-row";
       row.classList.toggle("active", component.id === this.selectedComponentId);
       row.style.setProperty("--component-depth", String(Math.max(0, component.id.split("/").length - 1)));
-      row.title = component.id;
+      // The compute node opens its telemetry modal instead of the inspector.
+      const isComputeNode = component.localId === "compute_node" || component.type === "computer";
+      if (isComputeNode) row.classList.add("vitals-component-row-action");
+      row.title = isComputeNode ? t("Compute node telemetry from Vitals") : component.id;
+      if (isComputeNode) row.setAttribute("aria-haspopup", "dialog");
       const iconRoot = document.createElement("span");
       iconRoot.className = "vitals-component-icon";
       iconRoot.appendChild(icon(componentIcon(component.type), 15));
       const copy = document.createElement("span");
       copy.className = "vitals-component-copy";
       const label = document.createElement("strong");
-      label.textContent = component.label || component.localId || component.id;
+      const labelText = document.createElement("span");
+      labelText.className = "vitals-component-label";
+      labelText.textContent = component.label || component.localId || component.id;
+      label.appendChild(labelText);
+      if (isComputeNode) {
+        // The row opens a telemetry modal instead of the inspector: say so.
+        const badge = document.createElement("span");
+        badge.className = "vitals-component-badge";
+        badge.textContent = t("Telemetry");
+        label.appendChild(badge);
+      }
       const type = document.createElement("span");
       type.textContent = component.type || t("component");
       copy.append(label, type);
       const status = document.createElement("span");
       status.className = `vitals-status-dot ${safeHealth(healthMap.get(component.id))}`;
       status.title = t(safeHealth(healthMap.get(component.id)));
-      row.append(iconRoot, copy, status);
-      row.addEventListener("click", () => this.selectComponent(component.id));
+      const trailing = document.createElement("span");
+      trailing.className = "vitals-component-trailing";
+      if (isComputeNode) {
+        // Expand icon marks the row as "opens a window". It sits left of the
+        // status dot so the dot stays last and lines up with every other row.
+        const expand = document.createElement("span");
+        expand.className = "vitals-component-expand";
+        expand.appendChild(icon(Maximize2, 13));
+        trailing.appendChild(expand);
+      }
+      trailing.appendChild(status);
+      row.append(iconRoot, copy, trailing);
+      row.addEventListener("click", () => {
+        if (isComputeNode && window.__robonixComputeNode) {
+          window.__robonixComputeNode.open();
+          return;
+        }
+        this.selectComponent(component.id);
+      });
       root?.appendChild(row);
     });
   }
