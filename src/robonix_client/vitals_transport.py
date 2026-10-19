@@ -373,14 +373,13 @@ def aggregate_component_health(
         )
         detail = str(worst_signal.get("detail") or "")
         source_component_id = component_id if direct_values else ""
-        # Components with no scalar telemetry (this deployment's lidar, imu,
-        # camera and audio) would otherwise read "unknown" forever; fall back
-        # to the online/present flag the robot's health source reports for
-        # them in the body component list.
+        # Components without telemetry fall back to their online flag;
+        # `ok` only means the component is online.
         if direct_health == "unknown" and component_id in body_enabled:
             if body_enabled[component_id]:
                 direct_health = "ok"
                 direct_visual_state = "ok"
+                detail = "online, no health data"
             else:
                 direct_health = "error"
                 direct_visual_state = "error"
