@@ -392,7 +392,9 @@ class ComponentHealthTest(unittest.TestCase):
         self.assertEqual(camera["detail"], "online, no health data")
         self.assertEqual(camera["sourceComponentId"], "body/head_camera")
 
-    def test_treats_component_disabled_by_health_source_as_offline(self):
+    def test_keeps_unobserved_component_unknown(self):
+        """Soma reports a component nothing observed as offline, so a false
+        `enabled` cannot tell offline from never seen."""
         rows = aggregate_component_health(
             self.description,
             [],
@@ -405,15 +407,25 @@ class ComponentHealthTest(unittest.TestCase):
             ],
         )
         health = {row["componentId"]: row for row in rows}
+        self.assertEqual(health["body/head_camera"]["health"], "unknown")
 
-        camera = health["body/head_camera"]
-        self.assertEqual(camera["health"], "error")
-        self.assertEqual(camera["directHealth"], "error")
-        self.assertEqual(
-            camera["detail"],
-            "component reported offline by the robot health source",
+    def test_ignores_actuator_torque_flag(self):
+        """An actuator's `enabled` is torque; torque on says nothing about health."""
+        rows = aggregate_component_health(
+            self.description,
+            [],
+            [
+                {
+                    "key": "body",
+                    "health": "ok",
+                    "components": [
+                        {"id": "body/head_camera", "enabled": True, "kind": "gripper"}
+                    ],
+                }
+            ],
         )
-        self.assertEqual(camera["sourceComponentId"], "body/head_camera")
+        health = {row["componentId"]: row for row in rows}
+        self.assertEqual(health["body/head_camera"]["health"], "unknown")
 
     def test_direct_telemetry_takes_precedence_over_online_flag(self):
         signals = [

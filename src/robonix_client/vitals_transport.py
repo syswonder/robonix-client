@@ -29,6 +29,9 @@ VITALS_MODULES_GET_PATH = (
     "/robonix.contracts.RobonixSystemVitalsModulesGet/GetModuleHealthSnapshot"
 )
 
+# Body component kinds whose `enabled` is torque, not presence.
+ACTUATOR_KINDS = frozenset({"arm", "leg", "joint", "wheel", "gripper", "end_effector"})
+
 HEALTH_SEVERITY = {
     "unknown": 0,
     "ok": 1,
@@ -347,11 +350,21 @@ def aggregate_component_health(
         if match:
             body_health[match] = str(body.get("health") or "unknown")
 
-    body_enabled: dict[str, bool] = {}
+    # Vitals' `enabled` is torque for an actuator and present-and-online for
+    # anything else, and Soma reports a component nothing has observed as
+    # offline. So only a non-actuator that is explicitly enabled says
+    # anything: it is online. False means "offline" or "never observed"
+    # alike, and stays unknown.
+    online: set[str] = set()
     for body in bodies:
         for component in body.get("components") or []:
-            if isinstance(component, dict) and component.get("id"):
-                body_enabled[str(component["id"])] = bool(component.get("enabled"))
+            if (
+                isinstance(component, dict)
+                and component.get("id")
+                and component.get("enabled") is True
+                and str(component.get("kind") or "") not in ACTUATOR_KINDS
+            ):
+                online.add(str(component["id"]))
 
     rows: dict[str, dict[str, Any]] = {}
     for component in components:
@@ -373,17 +386,11 @@ def aggregate_component_health(
         )
         detail = str(worst_signal.get("detail") or "")
         source_component_id = component_id if direct_values else ""
-        # Components without telemetry fall back to their online flag;
-        # `ok` only means the component is online.
-        if direct_health == "unknown" and component_id in body_enabled:
-            if body_enabled[component_id]:
-                direct_health = "ok"
-                direct_visual_state = "ok"
-                detail = "online, no health data"
-            else:
-                direct_health = "error"
-                direct_visual_state = "error"
-                detail = "component reported offline by the robot health source"
+        # Without telemetry, `ok` only means the component is online.
+        if direct_health == "unknown" and component_id in online:
+            direct_health = "ok"
+            direct_visual_state = "ok"
+            detail = "online, no health data"
             source_component_id = component_id
         rows[component_id] = {
             "componentId": component_id,
