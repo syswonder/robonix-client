@@ -10,16 +10,20 @@ const t = (key, params) => (window.RobonixI18N
     params && params[name] !== undefined && params[name] !== null ? String(params[name]) : whole
   )));
 
+const SIDEBAR_VIEWS = ["rtdl", "events"];
+
 const state = {
   settings: {},
   sessionId: getSessionId(),
   sessionTitle: "",
+  customTitle: false,
   attachments: [],
   messages: [],
   timeline: [],
   plan: null,
   planRecords: [],
   taskState: null,
+  sidebarView: "rtdl",
   batches: [],
   nodeStates: {},
   executorPlans: [],
@@ -30,6 +34,18 @@ const state = {
   history: loadConversations(),
   busy: false,
   taskRunning: false,
+  // Whether the robot has started answering the current turn. Activity groups
+  // stay expanded while we are still waiting, then fold away as soon as the
+  // reply begins so the answer is not interleaved with ambient status lines.
+  turnReplied: false,
+  // Last task_state key (status + goal). Pilot re-sends the same state on many
+  // events; only transitions deserve a line in the transcript.
+  lastTaskStatusKey: "",
+  // Manual open/closed choices for activity groups, keyed by first message id.
+  expandedActivities: new Map(),
+  // The "connected" milestone is worth one line per page session, not one per
+  // task/voice/abort socket.
+  connectionAnnounced: false,
   activeStreams: 0,
   interactionSockets: new Set(),
   activeTurnId: "",
@@ -149,26 +165,57 @@ function loadStoredSettings() {
   }
 }
 
+function truncateTitle(text, maxChars = 24) {
+  if (!text) return "";
+  const clean = String(text)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (!clean) return "";
+  const chars = Array.from(clean);
+  if (chars.length > maxChars) {
+    return chars.slice(0, maxChars).join("") + "…";
+  }
+  return clean;
+}
+
+function hasConversationContent(conversation = null) {
+  const target = conversation || state;
+  if (!target) return false;
+  if (target.customTitle && target.title) return true;
+  const msgs = target.messages || [];
+  const hasUserMsg = msgs.some((m) => m.role === "user" && String(m.text || "").trim());
+  if (hasUserMsg) return true;
+  if (target.plan || (target.planRecords && target.planRecords.length > 0)) return true;
+  return false;
+}
+
 function loadConversations() {
   try {
-    const conversations = JSON.parse(localStorage.getItem("robonix.conversations") || "[]");
-    if (Array.isArray(conversations)) return conversations;
+    const raw = JSON.parse(localStorage.getItem("robonix.conversations") || "[]");
+    if (Array.isArray(raw)) {
+      return raw.filter((c) => hasConversationContent(c));
+    }
   } catch (_) {
     // Fall through to one-time migration from the old prompt-only history.
   }
   try {
     const oldHistory = JSON.parse(localStorage.getItem("robonix.history") || "[]");
     if (!Array.isArray(oldHistory)) return [];
-    return oldHistory.slice(0, 18).map((item) => ({
-      id: getSessionId(),
-      title: item.text || t("Untitled chat"),
-      updatedAt: item.at || Date.now(),
-      messages: item.text ? [{ id: getSessionId(), role: "user", text: item.text, meta: "" }] : [],
-      timeline: [],
-      plan: null,
-      batches: [],
-      nodeStates: {},
-    }));
+    return oldHistory
+      .slice(0, 18)
+      .filter((item) => item.text && item.text.trim())
+      .map((item) => ({
+        id: getSessionId(),
+        title: truncateTitle(item.text, 24) || t("Untitled chat"),
+        customTitle: false,
+        updatedAt: item.at || Date.now(),
+        messages: [{ id: getSessionId(), role: "user", text: item.text, meta: "" }],
+        timeline: [],
+        plan: null,
+        batches: [],
+        nodeStates: {},
+      }));
   } catch (_) {
     return [];
   }
@@ -237,6 +284,7 @@ function restoreLastSession() {
   if (!conversation) return false;
   state.sessionId = conversation.id;
   state.sessionTitle = conversation.title || "";
+  state.customTitle = Boolean(conversation.customTitle);
   state.messages = (conversation.messages || []).map((item) => ({ ...item }));
   state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
   state.plan = conversation.plan || null;
@@ -287,6 +335,7 @@ async function init() {
   bindSceneLayers();
   bindSceneView();
   bindPerceptionControls();
+  bindStudioControls();
   bindCameraSnapshot();
   bindDepthColormap();
   bindDepthHover();
@@ -301,12 +350,43 @@ async function init() {
   refreshAudioRoute();
   refreshVoiceFinishSupport();
   // The speaking aura is visible on every page, so its physical output-level
-  // stream must be connected at startup rather than only after opening Audio.
   checkAudioServer();
-  setInterval(refreshSystem, 7000);
-  setInterval(refreshActivePlans, 2000);
-  setInterval(refreshHandsfree, 2500);
-  setInterval(refreshVoiceFinishSupport, 7000);
+
+  const targetPage = (window.location.hash.slice(1) || localStorage.getItem("robonix.active_page") || "dashboard").toLowerCase();
+  const validButton = document.querySelector(`[data-page="${targetPage}"]`);
+  activatePage(validButton ? targetPage : "dashboard");
+
+  window.addEventListener("hashchange", () => {
+    const pageFromHash = window.location.hash.slice(1).toLowerCase();
+    if (pageFromHash && document.querySelector(`[data-page="${pageFromHash}"]`)) {
+      if (state.activePage !== pageFromHash) {
+        activatePage(pageFromHash);
+      }
+    }
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (perception.polling) {
+        stopPerception();
+        perception.pausedByVisibility = true;
+      }
+    } else {
+      if (state.activePage === "perception" && perception.pausedByVisibility) {
+        perception.pausedByVisibility = false;
+        startPerception();
+      }
+      refreshSystem();
+      if (state.activePage === "dashboard") {
+        refreshActivePlans();
+      }
+    }
+  });
+
+  setInterval(() => { if (!document.hidden) refreshSystem(); }, 7000);
+  setInterval(() => { if (!document.hidden && state.activePage === "dashboard") refreshActivePlans(); }, 2000);
+  setInterval(() => { if (!document.hidden) refreshHandsfree(); }, 2500);
+  setInterval(() => { if (!document.hidden) refreshVoiceFinishSupport(); }, 7000);
 }
 
 function bindSettings() {
@@ -423,7 +503,28 @@ function interactionSettings(useActiveTurn = false) {
   return settings;
 }
 
+// The right sidebar keeps all three panels in the DOM but shows one at a time;
+// the menu at the top of the column picks which. Panels are never rebuilt, so
+// the goal card, the execution tree, the node detail, and the event log keep
+// rendering into them while they are hidden.
+function setSidebarView(view) {
+  const next = SIDEBAR_VIEWS.includes(view) ? view : "rtdl";
+  state.sidebarView = next;
+  document.querySelectorAll("[data-sidebar-view]").forEach((item) => {
+    const active = item.dataset.sidebarView === next;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  document.querySelectorAll("[data-sidebar-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.sidebarPanel !== next;
+  });
+}
+
 function bindEvents() {
+  document.querySelectorAll("[data-sidebar-view]").forEach((item) => {
+    item.addEventListener("click", () => setSidebarView(item.dataset.sidebarView));
+  });
+  setSidebarView(state.sidebarView);
   $("composer").addEventListener("submit", (event) => {
     event.preventDefault();
     sendTask();
@@ -439,7 +540,7 @@ function bindEvents() {
     event.preventDefault();
     if (state.voiceRecording) {
       if (state.voiceFinishSupported) finishVoiceCapture();
-      else addStatusLine(t("This robot cannot stop a recording on request; it ends on silence or at the record-seconds limit."));
+      else addStatusLine(t("This robot cannot stop a recording on request; it ends on silence or at the record-seconds limit."), "activity", "This robot cannot stop a recording on request; it ends on silence or at the record-seconds limit.");
       return;
     }
     if (state.voiceActive) return;
@@ -513,9 +614,14 @@ function bindEvents() {
   maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeRtdlHistory();
   });
+  maybe("closeNodeDetail")?.addEventListener("click", closeNodeDetail);
+  maybe("nodeDetailModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeNodeDetail();
+  });
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
     if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
+    if (event.key === "Escape" && !maybe("nodeDetailModal")?.hidden) closeNodeDetail();
   });
 }
 
@@ -532,6 +638,20 @@ function closeActiveRtdl() {
   if (!modal || modal.hidden) return;
   modal.hidden = true;
   maybe("openActiveRtdl")?.focus();
+}
+
+function showNodeDetail(node, status, nodeState = null) {
+  renderExecutionDetail(node, status, nodeState);
+  const modal = maybe("nodeDetailModal");
+  if (!modal) return;
+  modal.hidden = false;
+  maybe("closeNodeDetail")?.focus();
+}
+
+function closeNodeDetail() {
+  const modal = maybe("nodeDetailModal");
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
 }
 
 function openRtdlHistory() {
@@ -575,7 +695,7 @@ async function refreshHandsfree() {
 
 async function toggleHandsfree() {
   if (state.voiceActive) {
-    addStatusLine(t("Stop the active F2 voice session before changing hands-free mode."));
+    addStatusLine(t("Stop the active F2 voice session before changing hands-free mode."), "activity", "Stop the active F2 voice session before changing hands-free mode.");
     return;
   }
   if (state.handsfree.busy) return;
@@ -703,7 +823,7 @@ function syncHandsfreeEventStream() {
   state.handsfreeSocket = socket;
   socket.onopen = () => {
     socket.send(JSON.stringify({ settings: collectSettings() }));
-    addStatusLine(t("Watching robot hands-free interaction."));
+    addStatusLine(t("Watching robot hands-free interaction."), "activity", "Watching robot hands-free interaction.");
   };
   socket.onmessage = (message) => {
     const payload = JSON.parse(message.data);
@@ -773,11 +893,24 @@ function renderAttachments() {
 }
 
 function activatePage(name) {
+  if (!name) return;
+  state.activePage = name;
+  try {
+    localStorage.setItem("robonix.active_page", name);
+    if (window.location.hash.slice(1) !== name) {
+      history.replaceState(null, "", `#${name}`);
+    }
+  } catch (_) {}
   document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   window.dispatchEvent(new CustomEvent("robonix:page", { detail: { name } }));
   if (name === "audio") {
     checkAudioServer();
+    renderAudioBars();
+    renderAudioLog();
+  }
+  if (name === "dashboard") {
+    refreshActivePlans();
   }
 }
 
@@ -793,12 +926,15 @@ function forgetActiveTurn() {
   state.activePilotSessionId = "";
   state.taskState = null;
   state.taskRunning = false;
+  state.turnReplied = false;
+  state.lastTaskStatusKey = "";
+  state.expandedActivities.clear();
 }
 
 function newSession() {
   if (state.busy) {
     pendingNewSessionTitle = null;
-    addStatusLine(t("Abort the running task before starting a new session."));
+    addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
     return;
   }
   // Captured at mousedown, before the field blurred. An untouched field still
@@ -812,7 +948,8 @@ function newSession() {
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
-  state.sessionTitle = "";
+  state.sessionTitle = requestedTitle ? uniqueConversationTitle(requestedTitle, state.sessionId) : "";
+  state.customTitle = Boolean(requestedTitle);
   state.messages = [];
   state.timeline = [];
   state.plan = null;
@@ -820,16 +957,11 @@ function newSession() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  state.sessionTitle = uniqueConversationTitle(requestedTitle || t("Untitled chat"), state.sessionId);
-  $("promptTitle").textContent = state.sessionTitle;
+  if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
   renderSessionChip();
-  // force: an empty transcript would otherwise fail the has-content check and
-  // the new session would not appear in the sidebar until its first message.
-  persistCurrentConversation("", true);
   // Pilot keys conversation history by session id, so a fresh id is what
-  // actually drops the old turns from the next prompt. Say so -- against an
-  // already-empty transcript the reset is otherwise invisible.
-  addStatusLine(t("New session started; the planner's history for this conversation is cleared."));
+  // actually drops the old turns from the next prompt.
+  addStatusLine(t("New session started; the planner's history for this conversation is cleared."), "milestone", "New session started; the planner's history for this conversation is cleared.");
   addTimeline("status", t("new session {id}", { id: state.sessionId.slice(0, 8) }));
   renderMessages();
   renderTimeline();
@@ -861,14 +993,24 @@ function commitSessionTitle() {
     return;
   }
   const typed = field.value.trim();
-  if (!typed || typed === state.sessionTitle) {
+  if (!typed) {
+    state.customTitle = false;
+    const userPrompt = firstUserMessage();
+    state.sessionTitle = userPrompt ? truncateTitle(userPrompt, 24) : "";
+    if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
+    renderSessionChip();
+    persistCurrentConversation();
+    return;
+  }
+  if (typed === state.sessionTitle) {
     renderSessionChip();
     return;
   }
   const title = uniqueConversationTitle(typed, state.sessionId);
   state.sessionTitle = title;
+  state.customTitle = true;
   if (maybe("promptTitle")) $("promptTitle").textContent = title;
-  persistCurrentConversation("", true);
+  persistCurrentConversation(title, true);
   renderSessionChip();
 }
 
@@ -881,9 +1023,17 @@ async function sendTask() {
   // mark input as steer while Pilot has task state that can actually accept it.
   const wasBusy = hasActiveTurn();
   state.activeVoiceMode = "voice";
+  // A fresh instruction opens a new turn: activity starts unfolded again even
+  // when this message steers a task that is already running.
+  state.turnReplied = false;
+  state.lastTaskStatusKey = "";
   const display = text || attachments.map((item) => item.name).join(", ");
   addMessage("user", display, wasBusy ? t("added to running task") : (attachments.length ? t("{count} image", { count: attachments.length }) : ""), attachments);
-  addStatusLine(wasBusy ? t("Sent to the running task; waiting for Pilot to react.") : t("Submitted task; waiting for Pilot stream."));
+  addStatusLine(
+    wasBusy ? t("Sent to the running task; waiting for Pilot to react.") : t("Submitted task; waiting for Pilot stream."),
+    "activity",
+    wasBusy ? "Sent to the running task; waiting for Pilot to react." : "Submitted task; waiting for Pilot stream.",
+  );
   addTimeline("task", wasBusy ? t("added: {text}", { text: display }) : t("task: {text}", { text: display }));
   persistCurrentConversation(display);
   $("taskInput").value = "";
@@ -913,7 +1063,9 @@ function stopCurrentTask() {
   const button = $("stopButton");
   button.disabled = true;
   setButtonLabel(button, t("Aborting"));
-  addStatusLine(t("Abort requested; canceling every running task and any robot motion."));
+  // Everything after this point is teardown; keep the transcript folded.
+  state.turnReplied = true;
+  addStatusLine(t("Abort requested; canceling every running task and any robot motion."), "milestone", "Abort requested; canceling every running task and any robot motion.");
   addTimeline("cancel", state.activeTurnId
     ? t("abort requested for {turn}", { turn: state.activeTurnId })
     : t("abort requested"));
@@ -978,7 +1130,7 @@ function finishVoiceCapture() {
     button.disabled = true;
     setButtonLabel(button, t("Stopping"));
   }
-  addStatusLine(t("Stopping recording; submitting what has been recognized so far."));
+  addStatusLine(t("Stopping recording; submitting what has been recognized so far."), "activity", "Stopping recording; submitting what has been recognized so far.");
   const send = () => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "finish" }));
   };
@@ -988,16 +1140,18 @@ function finishVoiceCapture() {
 
 function startVoice() {
   if (state.voiceActive) {
-    addStatusLine(t("Voice recording is already active."));
+    addStatusLine(t("Voice recording is already active."), "activity", "Voice recording is already active.");
     return;
   }
   const wasBusy = hasActiveTurn();
   state.voiceActive = true;
+  state.turnReplied = false;
+  state.lastTaskStatusKey = "";
   maybe("voiceButton")?.classList.add("active");
   document.querySelectorAll("[data-page-action='voice-start']").forEach((button) => button.classList.add("active"));
   if (maybe("voiceState")) $("voiceState").textContent = t("recording");
   syncVoiceControls();
-  addStatusLine(t("Listening for voice input."));
+  addStatusLine(t("Listening for voice input."), "activity", "Listening for voice input.");
   addTimeline("voice", wasBusy ? t("voice input for running task") : t("voice session requested"));
   const socket = new WebSocket(wsUrl("/ws/voice"));
   beginStream(socket);
@@ -1037,7 +1191,15 @@ function wireStream(socket, done, voiceSocket = null) {
     }
     if (payload.type === "pilot_event") handlePilotEvent(payload.event);
     if (payload.type === "voice_event") handleVoiceEvent(payload.event, voiceSocket);
-    if (payload.type === "accepted") addStatusLine(t("Connected; waiting for Robonix events."));
+    if (payload.type === "accepted") {
+      addTimeline("status", t("Connected; waiting for Robonix events."));
+      // One connection milestone per page session; every task/voice/abort
+      // stream re-sends "accepted" and used to flood the transcript.
+      if (!state.connectionAnnounced) {
+        state.connectionAnnounced = true;
+        addStatusLine(t("Connected; waiting for Robonix events."), "milestone", "Connected; waiting for Robonix events.");
+      }
+    }
     if (payload.type === "status") addTimeline("status", payload.message || t("status"));
     if (payload.type === "finish_requested") {
       addTimeline(payload.ok ? "voice" : "error", payload.detail || (payload.ok ? t("recording stop requested") : t("could not stop recording")));
@@ -1104,7 +1266,20 @@ function handlePilotEvent(event) {
     }
     setBusy(state.activeStreams > 0 || state.taskRunning);
     addTimeline("status", t(event.taskState.status || event.taskState.goal || "task update"));
-    addStatusLine(t(event.taskState.status || event.taskState.goal || "Task state updated."));
+    const taskKey = `${taskStatus}|${String(event.taskState.goal || "")}`;
+    const taskChanged = taskKey !== state.lastTaskStatusKey;
+    if (taskChanged) state.lastTaskStatusKey = taskKey;
+    // A finished task can arrive without a final reply; fold the activity run
+    // instead of leaving it stuck open until the socket closes.
+    if (["done", "completed", "failed", "cancelled", "canceled", "aborted"].includes(taskStatus)) {
+      state.turnReplied = true;
+    }
+    if (taskChanged) {
+      const taskText = event.taskState.status || event.taskState.goal || "Task state updated.";
+      addStatusLine(t(taskText), "activity", taskText);
+    }
+    // Dedupe can swallow the line above; the fold still has to happen.
+    if (state.turnReplied) renderMessages();
     renderPlan();
     persistCurrentConversation();
   } else if (event.kind === "status" && event.status) {
@@ -1112,19 +1287,26 @@ function handlePilotEvent(event) {
     if (turnMatch) {
       state.activeTurnId = turnMatch[1];
       state.activePilotSessionId = String(event.status.sessionId || event.sessionId || "");
+      // A new turn is waiting for its answer again.
+      state.turnReplied = false;
+      state.lastTaskStatusKey = "";
       return;
     }
     if ([1, 2].includes(Number(event.status.state))) {
       state.activeTurnId = "";
       state.activePilotSessionId = "";
       state.taskRunning = false;
+      // The turn is over even if the socket lingers for TTS: fold the run.
+      state.turnReplied = true;
       setBusy(state.activeStreams > 0);
     }
     addTimeline(
       "status",
       event.status.message ? t(event.status.message) : t("state {state}", { state: event.status.state }),
     );
-    if (event.status.message) addStatusLine(t(event.status.message));
+    if (event.status.message) {
+      addStatusLine(t(event.status.message), "activity", event.status.message);
+    }
   }
 }
 
@@ -1168,6 +1350,10 @@ function handleVoiceEvent(event, sourceSocket = null) {
   }
   if (event.kind === "asr_final") {
     const mode = sourceSocket?.robonixVoiceMode || "voice";
+    // The recognized utterance opens a new turn: its activity run starts
+    // unfolded again.
+    state.turnReplied = false;
+    state.lastTaskStatusKey = "";
     addMessage("user", event.text, mode);
     if (sourceSocket && state.activeVoiceSocket === sourceSocket) {
       state.activeVoiceSocket = null;
@@ -1180,12 +1366,15 @@ function handleVoiceEvent(event, sourceSocket = null) {
     handlePilotEvent(event.pilot);
   } else if (event.kind === "tts_started") {
     setTtsAura(true);
-    addMessage("status", label || t("TTS playback started"));
+    const ttsKey = label || "TTS playback started";
+    addStatusLine(t(ttsKey), "activity", ttsKey);
     addTimeline("voice", label || t("TTS playback started"));
   } else if (event.kind === "tts_done") {
     setTtsAura(false);
     const skipped = String(label || "").toLowerCase().includes("skipped");
-    addMessage(skipped ? "error" : "status", label || t("TTS playback done"));
+    const ttsKey = label || "TTS playback done";
+    if (skipped) addMessage("error", t(ttsKey));
+    else addStatusLine(t(ttsKey), "activity", ttsKey);
     addTimeline(skipped ? "error" : "voice", label || t("TTS playback done"));
   } else if (event.kind === "error") {
     addMessage("error", event.error || t("voice error"));
@@ -1218,9 +1407,9 @@ function hasActiveTurn() {
   return state.taskRunning;
 }
 
-function addMessage(role, text, meta = "", attachments = []) {
+function addMessage(role, text, meta = "", attachments = [], extra = {}) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  state.messages.push({ id, role, text, meta, attachments });
+  state.messages.push({ at: Date.now(), ...extra, id, role, text, meta, attachments });
   if (role !== "agent") state.activeAgentId = null;
   renderMessages();
   renderSceneAssets();
@@ -1228,12 +1417,21 @@ function addMessage(role, text, meta = "", attachments = []) {
   return id;
 }
 
-function addStatusLine(text) {
+/// Ambient narration. `kind` is "activity" for the folded activity group and
+/// "milestone" for lifecycle notices (new session, abort) that deserve their
+/// own centered divider.
+function addStatusLine(text, kind = "activity", i18nKey = "", i18nParams = null) {
   const clean = String(text || "").trim();
   if (!clean) return null;
+  const now = Date.now();
   const last = state.messages[state.messages.length - 1];
-  if (last?.role === "status" && last.text === clean) return last.id;
-  return addMessage("status", clean, "status");
+  if (last?.role === "status" && last.text === clean && now - (last.at || 0) < 5000) {
+    return last.id;
+  }
+  return addMessage("status", clean, "", [], {
+    statusKind: kind,
+    ...(i18nKey ? { i18nKey, i18nParams } : {}),
+  });
 }
 
 function announcePlan(plan) {
@@ -1244,14 +1442,18 @@ function announcePlan(plan) {
   const calls = planCalls(plan);
   const names = calls.map((node) => capabilityLabel(node)).filter(Boolean);
   const preview = names.slice(0, 3).join(", ");
-  const suffix = names.length > 3 ? ` +${names.length - 3} more` : "";
-  const id = addMessage(
+  const suffix = names.length > 3
+    ? ` ${t("and {count} more", { count: names.length - 3 })}`
+    : "";
+  const i18nKey = names.length ? "Calling {names}" : "RTDL plan round {round}";
+  const i18nParams = names.length ? { names: `${preview}${suffix}` } : { round };
+  addMessage(
     "status",
-    names.length ? `Calling ${preview}${suffix}` : `RTDL plan round ${round}`,
-    "RTDL",
+    t(i18nKey, i18nParams),
+    "",
+    [],
+    { statusKind: "plan", planRound: round, planNames: names, i18nKey, i18nParams },
   );
-  const msg = state.messages.find((item) => item.id === id);
-  if (msg) msg.planRound = round;
 }
 
 // Streamed chunks are persisted on a short delay: writing localStorage on every
@@ -1269,6 +1471,8 @@ function scheduleAgentPersist() {
 }
 
 function appendAgent(text) {
+  // The reply has begun: activity groups above it should fold immediately.
+  state.turnReplied = true;
   if (!state.activeAgentId) {
     state.activeAgentId = addMessage("agent", "", "Robonix");
   }
@@ -1301,6 +1505,8 @@ function finalizeAgent(text) {
     state.activeAgentId = null;
     return;
   }
+  // Covers replies that arrive as one final_text with no streamed chunks.
+  state.turnReplied = true;
   // Status lines interleaved mid-turn clear `activeAgentId` (addMessage drops it
   // for every non-agent role), so a FinalText arriving right after a status such
   // as "Plan control accepted" would open a second bubble for text that was
@@ -1512,57 +1718,225 @@ function appendInline(parent, text) {
   }
 }
 
+/// Status lines and plan announcements form the ambient activity run that
+/// folds between conversational turns. Milestones stay outside the run.
+function isActivityMessage(message) {
+  if (message.role !== "status") return false;
+  const kind = message.statusKind || (message.planRound ? "plan" : "activity");
+  return kind !== "milestone";
+}
+
+function activityTime(message) {
+  return message.at ? new Date(message.at).toLocaleTimeString() : "";
+}
+
+function activityLink(message) {
+  if (!message.planRound) return null;
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "message-link";
+  action.textContent = t("Show RTDL");
+  action.addEventListener("click", () => {
+    openRtdlHistory();
+  });
+  return action;
+}
+
+/// Status text is stored together with its i18n key when the client authored
+/// it, so switching language re-renders the transcript instead of leaving the
+/// old language behind. Messages without a key keep their raw text.
+function messageText(message) {
+  if (!message) return "";
+  if (message.statusKind === "plan" && Array.isArray(message.planNames)) {
+    if (!message.planNames.length) {
+      return t("RTDL plan round {round}", { round: message.planRound });
+    }
+    const preview = message.planNames.slice(0, 3).join(", ");
+    const suffix = message.planNames.length > 3
+      ? ` ${t("and {count} more", { count: message.planNames.length - 3 })}`
+      : "";
+    return t("Calling {names}", { names: `${preview}${suffix}` });
+  }
+  if (message.i18nKey) return t(message.i18nKey, message.i18nParams || undefined);
+  // Rows persisted before i18nKey existed only carry text, which may be the
+  // English key or an already translated Chinese value.
+  if (message.role === "status") return window.RobonixI18N?.translateStored?.(message.text) || message.text || "";
+  return message.text || "";
+}
+
+function activityRow(message) {
+  const row = document.createElement("div");
+  row.className = "activity-row";
+  const stamp = activityTime(message);
+  if (stamp) {
+    const time = document.createElement("span");
+    time.className = "activity-time";
+    time.textContent = stamp;
+    row.appendChild(time);
+  }
+  const text = document.createElement("span");
+  text.className = "activity-text";
+  text.textContent = messageText(message);
+  row.appendChild(text);
+  const link = activityLink(message);
+  if (link) row.appendChild(link);
+  return row;
+}
+
+/// One lone status is already a single line, so it does not earn a disclosure
+/// control; the group header only appears once there is something to fold.
+function renderActivityLine(message, live) {
+  const line = document.createElement("div");
+  line.className = `activity-line${live ? " live" : ""}`;
+  const dot = document.createElement("span");
+  dot.className = "activity-dot";
+  line.appendChild(dot);
+  line.appendChild(activityRow(message));
+  return line;
+}
+
+/// `live` is true while we are still waiting for the robot's reply and this is
+/// the newest block on screen: the run stays open and follows its own tail.
+function renderActivityGroup(entries, live) {
+  const key = entries[0].id;
+  const stored = state.expandedActivities.get(key);
+  const open = stored === undefined ? live : stored;
+  const group = document.createElement("section");
+  group.className = `activity-group${live ? " live" : ""}${open ? " open" : ""}`;
+
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "activity-summary";
+  summary.setAttribute("aria-expanded", String(open));
+  summary.title = t(open ? "Collapse activity" : "Expand activity");
+
+  const dot = document.createElement("span");
+  dot.className = "activity-dot";
+  const count = document.createElement("span");
+  count.className = "activity-count";
+  count.textContent = t("{count} activity events", { count: entries.length });
+  const preview = document.createElement("span");
+  preview.className = "activity-preview";
+  preview.textContent = messageText(entries[entries.length - 1]);
+  const chevron = document.createElement("span");
+  chevron.className = "activity-chevron";
+  chevron.setAttribute("aria-hidden", "true");
+  chevron.textContent = "▾";
+  summary.append(dot, count, preview, chevron);
+
+  const body = document.createElement("div");
+  body.className = "activity-body";
+  body.hidden = !open;
+  entries.forEach((entry) => body.appendChild(activityRow(entry)));
+
+  summary.addEventListener("click", () => {
+    const next = summary.getAttribute("aria-expanded") !== "true";
+    state.expandedActivities.set(key, next);
+    summary.setAttribute("aria-expanded", String(next));
+    summary.title = t(next ? "Collapse activity" : "Expand activity");
+    group.classList.toggle("open", next);
+    body.hidden = !next;
+    if (next) body.scrollTop = body.scrollHeight;
+  });
+
+  group.append(summary, body);
+  return group;
+}
+
+function renderActivityRun(entries, live) {
+  return entries.length === 1
+    ? renderActivityLine(entries[0], live)
+    : renderActivityGroup(entries, live);
+}
+
+function renderMessageElement(message) {
+  if (message.role === "status" && message.statusKind === "milestone") {
+    const divider = document.createElement("div");
+    divider.className = "status-divider";
+    divider.textContent = messageText(message);
+    return divider;
+  }
+  const el = document.createElement("div");
+  el.className = `message ${message.role}`;
+  el.dataset.messageId = message.id;
+  // Legacy status rows carried meta="status"; the label is noise and the role
+  // is already obvious from the styling.
+  if (message.meta && message.role !== "status") {
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = message.meta;
+    el.appendChild(meta);
+  }
+  if (message.role === "agent") {
+    const body = document.createElement("div");
+    body.className = "agent-markdown-body";
+    appendAgentMarkdown(body, message);
+    el.appendChild(body);
+  } else {
+    el.appendChild(document.createTextNode(message.text));
+  }
+  if (Array.isArray(message.attachments) && message.attachments.length) {
+    const images = document.createElement("div");
+    images.className = "message-images";
+    message.attachments.forEach((item) => {
+      const img = document.createElement("img");
+      img.src = item.dataUrl;
+      img.alt = item.name || t("attachment");
+      images.appendChild(img);
+    });
+    el.appendChild(images);
+  }
+  return el;
+}
+
 function renderMessages() {
   const root = $("messages");
+  if (!root) return;
+  // Only follow the tail when the reader is already there; status bursts must
+  // not yank the view away from history the user is reading.
+  const stick = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
   clear(root);
   if (state.messages.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "message status";
+    empty.className = "empty-chat";
     empty.textContent = t("Ready");
     root.appendChild(empty);
   }
+
+  const blocks = [];
+  let run = [];
+  const flushRun = () => {
+    if (!run.length) return;
+    blocks.push({ activity: run });
+    run = [];
+  };
   state.messages.forEach((message) => {
-    const el = document.createElement("div");
-    el.className = `message ${message.role}`;
-    el.dataset.messageId = message.id;
-    if (message.meta) {
-      const meta = document.createElement("span");
-      meta.className = "meta";
-      meta.textContent = message.meta;
-      el.appendChild(meta);
+    if (isActivityMessage(message)) {
+      run.push(message);
+      return;
     }
-    if (message.role === "agent") {
-      const body = document.createElement("div");
-      body.className = "agent-markdown-body";
-      appendAgentMarkdown(body, message);
-      el.appendChild(body);
-    } else {
-      el.appendChild(document.createTextNode(message.text));
-    }
-    if (message.planRound) {
-      const action = document.createElement("button");
-      action.type = "button";
-      action.className = "message-link";
-      action.textContent = t("Show RTDL");
-      action.addEventListener("click", () => {
-        openRtdlHistory();
-      });
-      el.appendChild(action);
-    }
-    if (Array.isArray(message.attachments) && message.attachments.length) {
-      const images = document.createElement("div");
-      images.className = "message-images";
-      message.attachments.forEach((item) => {
-        const img = document.createElement("img");
-        img.src = item.dataUrl;
-        img.alt = item.name || t("attachment");
-        images.appendChild(img);
-      });
-      el.appendChild(images);
-    }
-    root.appendChild(el);
+    flushRun();
+    blocks.push({ message });
   });
-  root.scrollTop = root.scrollHeight;
+  flushRun();
+
+  blocks.forEach((block, index) => {
+    if (block.activity) {
+      const live = index === blocks.length - 1
+        && !state.turnReplied
+        && (state.busy || state.taskRunning);
+      const el = renderActivityRun(block.activity, live);
+      root.appendChild(el);
+      if (live) {
+        const body = el.querySelector(".activity-body");
+        if (body && !body.hidden) body.scrollTop = body.scrollHeight;
+      }
+      return;
+    }
+    root.appendChild(renderMessageElement(block.message));
+  });
+
+  if (stick) root.scrollTop = root.scrollHeight;
 }
 
 function addTimeline(kind, text) {
@@ -1575,6 +1949,9 @@ function addTimeline(kind, text) {
 function renderTimeline() {
   setTextAll("[data-event-summary]", String(state.timeline.length));
   setTextAll("[data-current-task-label]", t("Current Task: {task}", { task: currentTaskLabel() }));
+  document.querySelectorAll("[data-task-status-chip]").forEach((chip) => {
+    chip.classList.toggle("running", Boolean(state.taskRunning));
+  });
   const rows = state.timeline;
   document.querySelectorAll("[data-event-list]").forEach((root) => {
     clear(root);
@@ -1597,23 +1974,38 @@ function renderTimeline() {
 function renderPlan() {
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
+  treeLiveKeys = new Set();
   const records = normalizedPlanRecords();
   const activeRecords = records.filter((record) => recordIsActive(record));
-  const latestRecord = activeRecords[0] || null;
-  const historyRecords = records.filter((record) => !activeRecords.includes(record));
-  const latestCalls = planCalls(latestRecord?.plan).length;
-  setTextAll("[data-plan-summary]", latestRecord
-    ? t("{active} active · plan {plan} · round {round} · {calls} call(s)", {
+  const latestActiveRecord = activeRecords[0] || null;
+  // Keep the running plan if there is one; otherwise keep the most recent
+  // completed plan so the execution tree does not flash and vanish on the
+  // next executor poll.
+  const displayRecord = latestActiveRecord || records[0] || null;
+  const historyRecords = records.filter((record) => record !== displayRecord);
+  const displayCalls = planCalls(displayRecord?.plan).length;
+
+  if (latestActiveRecord) {
+    setTextAll("[data-plan-summary]", t("{active} active · plan {plan} · round {round} · {calls} call(s)", {
       active: activeRecords.length,
-      plan: latestRecord.plan.planId || "-",
-      round: latestRecord.plan.round,
-      calls: latestCalls,
-    })
-    : t("No RTDL tree is currently executing"));
+      plan: latestActiveRecord.plan.planId || "-",
+      round: latestActiveRecord.plan.round,
+      calls: displayCalls,
+    }));
+  } else if (displayRecord) {
+    setTextAll("[data-plan-summary]", t("Latest plan {plan} (completed) · round {round} · {calls} call(s)", {
+      plan: displayRecord.plan.planId || "-",
+      round: displayRecord.plan.round,
+      calls: displayCalls,
+    }));
+  } else {
+    setTextAll("[data-plan-summary]", t("No RTDL tree in this session yet."));
+  }
+
   if (maybe("rtdlHistoryCount")) $("rtdlHistoryCount").textContent = String(historyRecords.length);
   renderGoalPanel();
   renderSceneAssets();
-  if (!latestRecord) {
+  if (!displayRecord) {
     roots.forEach((root) => {
       const empty = document.createElement("div");
       empty.className = "plan-empty";
@@ -1621,10 +2013,14 @@ function renderPlan() {
       root.appendChild(empty);
     });
   } else {
-    roots.forEach((root) => renderPlanRecord(root, latestRecord));
+    roots.forEach((root) => renderPlanRecord(root, displayRecord, showNodeDetail));
   }
   renderPlanHistory(historyRecords);
-  const newest = latestRecord;
+  pruneTreeObservers();
+  const newest = displayRecord;
+  // While the node-detail popup is open, keep showing the node the user clicked
+  // instead of letting the executor poll overwrite it every couple of seconds.
+  if (!maybe("nodeDetailModal")?.hidden) return;
   if (!newest) return renderExecutionDetail(null, "PENDING");
   const maps = buildResultMaps(newest);
   const runningIndex = pickRunningIndex(newest.plan, maps.byIndex);
@@ -1667,6 +2063,207 @@ function renderPlanHistory(records) {
   }
 }
 
+const treeViewStates = new Map();
+const treeResizeObservers = new Map();
+
+// planRecords is capped at 80, so a plan that scrolls off the cap leaves its
+// observer watching a detached viewport forever. Every render rebuilds the
+// trees, so anything not re-registered in this pass is dead weight.
+let treeLiveKeys = new Set();
+
+function pruneTreeObservers() {
+  treeResizeObservers.forEach((entry, key) => {
+    if (!entry.viewport.isConnected) {
+      entry.observer.disconnect();
+      treeResizeObservers.delete(key);
+    }
+  });
+  // The view state is only a few numbers, but the map is unbounded: a long
+  // session used to keep one entry per plan it ever drew.
+  treeViewStates.forEach((_, key) => {
+    if (!treeLiveKeys.has(key)) treeViewStates.delete(key);
+  });
+}
+
+// Map-style interaction for the RTDL tree: drag to pan, wheel to zoom (around
+// the cursor), double click to reset. The view is stored by planId so the
+// periodic re-render of the tree keeps the user's zoom and position.
+function enableTreePanZoom(planId, viewport, svg) {
+  if (!svg) return;
+  treeLiveKeys.add(planId);
+
+  // Read dimensions from viewBox instead of width/height attributes
+  const viewBox = svg.getAttribute("viewBox");
+  const [, , svgWidth, svgHeight] = viewBox ? viewBox.split(/\s+/).map(Number) : [0, 0, 1, 1];
+  let view = treeViewStates.get(planId);
+  let dragging = false;
+  let dragDistance = 0;
+  let lastX = 0;
+  let lastY = 0;
+
+  // A re-render replaces the viewport, so the previous observer is stale.
+  const stale = treeResizeObservers.get(planId);
+  if (stale) {
+    stale.observer.disconnect();
+    treeResizeObservers.delete(planId);
+  }
+
+  // The transform starts at the padding box, so the tree may only use the area
+  // inside the padding. Measuring clientWidth instead offsets the tree by the
+  // padding and clips it on the opposite side. The styles are read lazily
+  // because the viewport is still detached when this runs.
+  let pad = null;
+  const boxSize = () => {
+    // A detached element has no computed style, so wait until it is inserted.
+    if (!pad && viewport.isConnected) {
+      const style = getComputedStyle(viewport);
+      pad = {
+        left: parseFloat(style.paddingLeft) || 0,
+        top: parseFloat(style.paddingTop) || 0,
+        x: (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0),
+        y: (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0),
+      };
+    }
+    return {
+      width: viewport.clientWidth - (pad ? pad.x : 0),
+      height: viewport.clientHeight - (pad ? pad.y : 0),
+    };
+  };
+
+  const clampView = () => {
+    const { width: boxWidth, height: boxHeight } = boxSize();
+    if (!boxWidth || !boxHeight) return;
+    const contentWidth = svgWidth * view.scale;
+    const contentHeight = svgHeight * view.scale;
+    // Only clamp when content is larger than viewport
+    if (contentWidth > boxWidth) {
+      view.x = Math.min(0, Math.max(boxWidth - contentWidth, view.x));
+    }
+    if (contentHeight > boxHeight) {
+      view.y = Math.min(0, Math.max(boxHeight - contentHeight, view.y));
+    }
+  };
+
+  const apply = () => {
+    clampView();
+    svg.style.transform = `translate(${Math.round(view.x)}px, ${Math.round(view.y)}px) scale(${view.scale})`;
+  };
+
+  const fitView = () => {
+    const { width: boxWidth, height: boxHeight } = boxSize();
+    // The tree can render while its panel is hidden (another page or the event
+    // log tab), where the viewport has no measurable size. Centering against a
+    // zero-sized box would push the tree off-screen, so wait for layout.
+    if (!boxWidth || !boxHeight) return;
+    const fit = Math.min(1, (boxWidth - 20) / svgWidth, (boxHeight - 20) / svgHeight);
+    view.scale = Math.max(0.4, fit);
+    // Center the content
+    view.x = (boxWidth - svgWidth * view.scale) / 2;
+    view.y = (boxHeight - svgHeight * view.scale) / 2;
+    view.fitted = true;
+    view.touched = false;
+    apply();
+  };
+
+  if (view) {
+    apply();
+    if (!view.fitted) requestAnimationFrame(fitView);
+  } else {
+    view = { scale: 1, x: 0, y: 0, fitted: false, touched: false };
+    treeViewStates.set(planId, view);
+    apply();
+    // First render only: measure once the viewport is in the document.
+    requestAnimationFrame(fitView);
+  }
+
+  // The panel is still settling on the first frame (and changes size when it is
+  // revealed or the window is resized), so keep the tree centered until the
+  // user pans or zooms. Afterwards the stored view wins.
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      if (view.touched) apply();
+      else fitView();
+    });
+    // The viewport is kept alongside the observer so a later pass can tell a
+    // live tree from one whose element has been replaced.
+    treeResizeObservers.set(planId, { observer, viewport });
+    observer.observe(viewport);
+  }
+
+  viewport.addEventListener("wheel", (event) => {
+    if (!event.deltaY) return;
+    event.preventDefault();
+    const box = viewport.getBoundingClientRect();
+    // The stored offset is relative to the content box, so drop the padding.
+    const px = event.clientX - box.left - (pad ? pad.left : 0);
+    const py = event.clientY - box.top - (pad ? pad.top : 0);
+    const next = Math.min(4, Math.max(0.4, view.scale * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    const ratio = next / view.scale;
+    view.x = px - (px - view.x) * ratio;
+    view.y = py - (py - view.y) * ratio;
+    view.scale = next;
+    view.touched = true;
+    apply();
+  }, { passive: false });
+
+  viewport.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    dragging = true;
+    dragDistance = 0;
+    lastX = event.clientX;
+    lastY = event.clientY;
+  });
+
+  viewport.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    // The pointer was released outside the viewport before capture started.
+    if (event.buttons === 0) {
+      endDrag(event);
+      return;
+    }
+    const dx = event.clientX - lastX;
+    const dy = event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    dragDistance += Math.abs(dx) + Math.abs(dy);
+    if (dragDistance > 4) {
+      // Capture only once it is a real drag, so a plain click still reaches the
+      // node underneath and opens its detail popup.
+      viewport.classList.add("panning");
+      viewport.setPointerCapture?.(event.pointerId);
+    }
+    if (dragDistance <= 4) return;
+    view.x += dx;
+    view.y += dy;
+    view.touched = true;
+    apply();
+  });
+
+  const endDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    viewport.classList.remove("panning");
+    viewport.releasePointerCapture?.(event.pointerId);
+  };
+  viewport.addEventListener("pointerup", endDrag);
+  viewport.addEventListener("pointercancel", endDrag);
+
+  viewport.addEventListener("click", (event) => {
+    if (dragDistance <= 4) {
+      dragDistance = 0;
+      return;
+    }
+    // The drag ended on a node: swallow the click so it does not open the popup.
+    dragDistance = 0;
+    event.stopPropagation();
+    event.preventDefault();
+  }, true);
+
+  viewport.addEventListener("dblclick", () => {
+    fitView();
+  });
+}
+
 function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
   const nodes = plan?.nodes || [];
   const nodeStateByIndex = resultMaps.byIndex;
@@ -1682,6 +2279,7 @@ function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = ren
   });
   if (!treeRoots.length && nodes.length) treeRoots.push(nodes[0]);
 
+  const planId = String(plan.planId || "");
   treeRoots.forEach((treeRoot, treeIndex) => {
     const status = aggregateNodeStatus(treeRoot, plan, resultMaps, runningIndex);
     const card = document.createElement("div");
@@ -1698,7 +2296,13 @@ function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = ren
     header.append(title, pill);
     const viewport = document.createElement("div");
     viewport.className = "bt-tree-viewport";
-    viewport.appendChild(makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect));
+    const svg = makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect);
+    viewport.appendChild(svg);
+    // Both branches need a prefix the other cannot produce: a plan literally
+    // id'd "tree" used to collide with the planless key at the same index and
+    // the two trees then shared one pan/zoom state.
+    const viewKey = planId ? `plan:${planId}:${treeIndex}` : `tree:${treeIndex}`;
+    enableTreePanZoom(viewKey, viewport, svg);
     card.append(header, viewport);
     root.appendChild(card);
   });
@@ -1740,6 +2344,9 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect 
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("class", "bt-svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  // Size the element like the drawing itself. Without this the SVG stretches to
+  // the panel, the browser fits the viewBox inside it, and the pan/zoom
+  // transform ends up scaling a box that no longer matches the tree.
   svg.setAttribute("width", String(width));
   svg.setAttribute("height", String(height));
 
@@ -1844,7 +2451,7 @@ function makePlanRow(node, status, depth, runningIndex) {
   meta.append(type, provider);
   body.append(top, meta);
   row.append(rail, body);
-  row.addEventListener("click", () => renderExecutionDetail(node, status));
+  row.addEventListener("click", () => showNodeDetail(node, status));
   return row;
 }
 
@@ -1967,7 +2574,7 @@ function durationForNode(node, status) {
 function startedForNode(node, status) {
   const result = nodeResult(node);
   const value = result?.startedAt || result?.started_at || result?.startTime || result?.start_time;
-  if (!value) return statusKey(status) === "pending" ? "-" : "";
+  if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -2029,21 +2636,22 @@ async function refreshActivePlans() {
     }
     state.executorMissingPolls.set(planId, Number(state.executorMissingPolls.get(planId) || 0) + 1);
   });
-  renderActivePlans();
-  renderPlan();
+  if (state.activePage === "dashboard") {
+    renderActivePlans();
+    renderPlan();
+  }
 }
 
 function renderActivePlans(error = "") {
   state.activePlansError = error;
+  if (state.activePage !== "dashboard") return;
   const root = maybe("activeRtdlList");
   const count = maybe("activeRtdlCount");
-  const summary = maybe("activeRtdlSummary");
   const modalSummary = maybe("activeRtdlModalSummary");
   if (!root || !count) return;
   clear(root);
   if (error) {
     count.textContent = t("unavailable");
-    if (summary) summary.textContent = t("Executor state unavailable");
     if (modalSummary) modalSummary.textContent = t("Live Executor query failed");
     const row = document.createElement("div");
     row.className = "active-rtdl-empty error";
@@ -2053,7 +2661,6 @@ function renderActivePlans(error = "") {
   }
   const planCount = state.executorPlans.length;
   count.textContent = String(planCount);
-  if (summary) summary.textContent = planCount ? t("{count} running · open live workspace", { count: planCount }) : t("No plans running");
   if (modalSummary) modalSummary.textContent = t(
     planCount === 1 ? "{count} live plan reported by Executor" : "{count} live plans reported by Executor",
     { count: planCount },
@@ -2124,9 +2731,14 @@ function displayStatus(status) {
   return t(statusKey(status).toUpperCase());
 }
 
+// Last node shown in each detail pane. The args payload embeds translated
+// status text, so an open popup has to be re-rendered after a language switch;
+// renderPlan() intentionally leaves the live popup untouched in the meantime.
+const detailSelections = { live: null, history: null };
+
 function renderExecutionDetail(node, status, nodeState = null) {
   if (!maybe("activeProvider")) return;
-  if (maybe("executionDetailTitle")) $("executionDetailTitle").textContent = node ? t("Node detail") : t("Node detail");
+  detailSelections.live = node ? { node, status, nodeState } : null;
   if (!node) {
     $("activeProvider").textContent = "-";
     $("activeStarted").textContent = "-";
@@ -2142,6 +2754,7 @@ function renderExecutionDetail(node, status, nodeState = null) {
 
 function renderHistoryExecutionDetail(node, status, nodeState = null) {
   if (!maybe("historyActiveProvider")) return;
+  detailSelections.history = node ? { node, status, nodeState } : null;
   if (maybe("historyExecutionDetailTitle")) {
     $("historyExecutionDetailTitle").textContent = node ? nodeLabel(node) : t("Node detail");
   }
@@ -2565,16 +3178,38 @@ function uniqueConversationTitle(base, selfId) {
 }
 
 function persistCurrentConversation(titleHint = "", force = false) {
-  const hasContent = state.sessionTitle || state.messages.length || state.timeline.length || state.plan || state.planRecords.length || state.batches.length || Object.keys(state.nodeStates || {}).length;
+  const hasContent = hasConversationContent(state);
   if (!hasContent && !force) return;
   const existingIndex = state.history.findIndex((item) => item.id === state.sessionId);
   const existing = existingIndex >= 0 ? state.history[existingIndex] : null;
-  const baseTitle = state.sessionTitle || existing?.title || titleHint || firstUserMessage() || t("Untitled chat");
+
+  let baseTitle = "";
+  if (state.customTitle && state.sessionTitle) {
+    baseTitle = state.sessionTitle;
+  } else {
+    const firstPrompt = firstUserMessage();
+    if (firstPrompt) {
+      baseTitle = truncateTitle(firstPrompt, 24);
+    } else if (titleHint) {
+      baseTitle = truncateTitle(titleHint, 24);
+    } else if (existing?.title) {
+      baseTitle = existing.title;
+    } else if (state.sessionTitle) {
+      baseTitle = state.sessionTitle;
+    } else {
+      baseTitle = t("Untitled chat");
+    }
+  }
+
   const title = uniqueConversationTitle(baseTitle, state.sessionId);
   state.sessionTitle = title;
+  if (maybe("promptTitle")) $("promptTitle").textContent = title;
+  renderSessionChip();
+
   const conversation = {
     id: state.sessionId,
     title,
+    customTitle: Boolean(state.customTitle),
     updatedAt: Date.now(),
     messages: state.messages.map((item) => ({ ...item })),
     timeline: state.timeline.map((item) => ({ ...item })),
@@ -2583,6 +3218,7 @@ function persistCurrentConversation(titleHint = "", force = false) {
     batches: state.batches,
     nodeStates: state.nodeStates,
   };
+
   // Update in place. Hoisting the current conversation to the front on every
   // save re-sorted the sidebar just from visiting a chat, so rows moved out
   // from under the pointer mid-click. New conversations still go on top.
@@ -2606,37 +3242,48 @@ function renderHistory() {
   state.history.forEach((item) => {
     const row = document.createElement("div");
     row.className = `history-item${item.id === state.sessionId ? " active" : ""}`;
+
     const open = document.createElement("button");
     open.type = "button";
     open.className = "history-open";
     open.title = item.title;
+
     const title = document.createElement("strong");
     title.textContent = item.title || t("Untitled chat");
+
     const meta = document.createElement("span");
     meta.textContent = formatConversationTime(item.updatedAt);
+
     open.append(title, meta);
     open.addEventListener("click", () => openConversation(item.id));
+
+    const actions = document.createElement("div");
+    actions.className = "history-actions";
+
     const rename = document.createElement("button");
     rename.type = "button";
-    rename.className = "history-rename";
+    rename.className = "history-action-btn history-rename";
     rename.title = t("Rename conversation");
     rename.setAttribute("aria-label", t("Rename {name}", { name: item.title || t("conversation") }));
-    rename.textContent = t("Rename");
+    rename.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
     rename.addEventListener("click", (event) => {
       event.stopPropagation();
       renameConversation(item.id);
     });
+
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "history-delete";
+    remove.className = "history-action-btn history-delete";
     remove.title = t("Delete conversation");
     remove.setAttribute("aria-label", t("Delete {name}", { name: item.title || t("conversation") }));
-    remove.textContent = t("Delete");
+    remove.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
       deleteConversation(item.id);
     });
-    row.append(open, rename, remove);
+
+    actions.append(rename, remove);
+    row.append(open, actions);
     root.appendChild(row);
   });
 }
@@ -2645,12 +3292,12 @@ function renameConversation(sessionId) {
   // window.prompt blocks the event loop, which would stall a live event
   // stream, so renaming waits. Say so rather than ignoring the click.
   if (state.busy) {
-    addStatusLine(t("Renaming is unavailable while a task is running."));
+    addStatusLine(t("Renaming is unavailable while a task is running."), "milestone", "Renaming is unavailable while a task is running.");
     return;
   }
   if (sessionId === state.sessionId) persistCurrentConversation("", true);
   const conversation = state.history.find((item) => item.id === sessionId);
-  const currentTitle = conversation?.title || state.sessionTitle || firstUserMessage() || t("Untitled chat");
+  const currentTitle = conversation?.title || state.sessionTitle || truncateTitle(firstUserMessage(), 24) || t("Untitled chat");
   const nextTitle = window.prompt(t("Rename session"), currentTitle);
   if (nextTitle === null) return;
   const trimmed = nextTitle.trim();
@@ -2658,12 +3305,14 @@ function renameConversation(sessionId) {
   const title = uniqueConversationTitle(trimmed, sessionId);
   if (sessionId === state.sessionId) {
     state.sessionTitle = title;
-    $("promptTitle").textContent = title;
+    state.customTitle = true;
+    if (maybe("promptTitle")) $("promptTitle").textContent = title;
     renderSessionChip();
   }
   if (conversation) {
     // Renaming must not reorder the list either -- see persistCurrentConversation.
     conversation.title = title;
+    conversation.customTitle = true;
     conversation.updatedAt = Date.now();
   } else if (sessionId === state.sessionId) {
     persistCurrentConversation(title, true);
@@ -2680,6 +3329,7 @@ function deleteConversation(sessionId) {
     rememberLastSession(state.sessionId);
     forgetActiveTurn();
     state.sessionTitle = "";
+    state.customTitle = false;
     state.messages = [];
     state.timeline = [];
     state.plan = null;
@@ -2687,7 +3337,7 @@ function deleteConversation(sessionId) {
     state.batches = [];
     state.nodeStates = {};
     state.activeAgentId = null;
-    $("promptTitle").textContent = t("What should Robonix do?");
+    if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
     renderSessionChip();
     renderMessages();
     renderTimeline();
@@ -2704,6 +3354,7 @@ function clearHistory() {
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
   state.sessionTitle = "";
+  state.customTitle = false;
   state.messages = [];
   state.timeline = [];
   state.plan = null;
@@ -2711,7 +3362,8 @@ function clearHistory() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  $("promptTitle").textContent = t("What should Robonix do?");
+  if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
+  renderSessionChip();
   renderMessages();
   renderTimeline();
   renderPlan();
@@ -2725,7 +3377,7 @@ function openConversation(sessionId) {
   // screen, so switching mid-flight would file another session's replies
   // here. Refuse, but say why -- returning silently reads as a dead list.
   if (state.busy) {
-    addStatusLine(t("A task is still running in this session. Abort it before switching conversations."));
+    addStatusLine(t("A task is still running in this session. Abort it before switching conversations."), "milestone", "A task is still running in this session. Abort it before switching conversations.");
     return;
   }
   persistCurrentConversation();
@@ -2734,6 +3386,7 @@ function openConversation(sessionId) {
   state.sessionId = conversation.id;
   rememberLastSession(conversation.id);
   state.sessionTitle = conversation.title || "";
+  state.customTitle = Boolean(conversation.customTitle);
   forgetActiveTurn();
   state.messages = (conversation.messages || []).map((item) => ({ ...item }));
   state.timeline = (conversation.timeline || []).map((item) => ({ ...item }));
@@ -2742,7 +3395,7 @@ function openConversation(sessionId) {
   state.batches = conversation.batches || [];
   state.nodeStates = conversation.nodeStates || {};
   state.activeAgentId = null;
-  $("promptTitle").textContent = conversation.title || t("What should Robonix do?");
+  if (maybe("promptTitle")) $("promptTitle").textContent = conversation.title || t("What should Robonix do?");
   renderSessionChip();
   $("taskInput").value = "";
   autoGrowInput();
@@ -3133,6 +3786,7 @@ function setTtsAura(active) {
 }
 
 function renderAudioBars() {
+  if (state.activePage !== "audio") return;
   const root = maybe("audioBars");
   if (!root) return;
   clear(root);
@@ -3158,7 +3812,15 @@ function appendAudioLog(line) {
     lines.push({ stamp, text, count: 1 });
   }
   state.audio.logLines = lines.slice(-AUDIO_LOG_MAX_LINES);
-  root.textContent = `${state.audio.logLines.map((item) => {
+  if (state.activePage === "audio") {
+    renderAudioLog();
+  }
+}
+
+function renderAudioLog() {
+  const root = maybe("audioLog");
+  if (!root) return;
+  root.textContent = `${(state.audio.logLines || []).map((item) => {
     const suffix = item.count > 1 ? ` x${item.count}` : "";
     return `[${item.stamp}] ${item.text}${suffix}`;
   }).join("\n")}\n`;
@@ -3340,7 +4002,14 @@ function setButtonLabel(node, text) {
 }
 
 function setBusy(value) {
+  const wasBusy = state.busy;
   state.busy = value;
+  // Idle is the final "reply is over" signal for streams that end without a
+  // final_text or a terminal task state.
+  if (wasBusy && !value && !state.turnReplied) {
+    state.turnReplied = true;
+    renderMessages();
+  }
   const sendBtn = maybe("sendButton");
   if (sendBtn) {
     sendBtn.classList.toggle("busy", value);
@@ -4674,12 +5343,379 @@ function redrawPerceptionCanvases() {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// Robonix Studio — Micro-Frontend Service Integrator (Dynamic Ontology Discovery)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let studioDiscoveredServices = [];
+let activeStudioPort = null;
+let studioScanning = false;
+let studioHasScanned = false;
+let studioLastScanTs = 0;
+// Generation counter plus the live controller: a forced scan supersedes the one
+// still in flight, so its late finally must not clear the newer scan's state.
+let studioScanGeneration = 0;
+let studioScanController = null;
+
+function getStudioHost() {
+  return (state && state.settings && state.settings.robotHost) || window.location.hostname || "127.0.0.1";
+}
+
+function getStudioServiceUrl(port, isExternal = false) {
+  const s = studioDiscoveredServices.find((item) => item.port === Number(port));
+  const host = getStudioHost();
+  if (s) {
+    const path = isExternal ? (s.external_path || s.path || "/") : (s.path || "/");
+    return `http://${host}:${s.port}${path}`;
+  }
+  return `http://${host}:${port}/`;
+}
+
+// Tabs are built entirely from the discovery scan. There are no shipped
+// default tabs: an empty result clears the strip and the empty state carries
+// the message, rather than showing a fixed list of services that may not exist.
+function renderStudioTabs() {
+  const nav = document.getElementById("studioServicesNav");
+  if (!nav) return;
+
+  nav.innerHTML = "";
+  if (!studioDiscoveredServices.length) return;
+
+  studioDiscoveredServices.forEach((s) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `studio-service-tab${s.port === activeStudioPort ? " active" : ""}`;
+    btn.dataset.studioPort = String(s.port);
+    // Localized here rather than via data-i18n-title: the label is composed
+    // from a discovered name and a port, so there is no fixed dictionary key.
+    // handleI18nChange() re-renders these tabs on every language switch.
+    btn.title = `${t(s.name || s.title || "")} (Port ${s.port})`;
+
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "tab-icon";
+    iconSpan.textContent = s.icon || "🌐";
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "tab-title";
+    titleSpan.setAttribute("data-i18n", s.name);
+    titleSpan.textContent = t(s.name);
+
+    const portSpan = document.createElement("span");
+    portSpan.className = "tab-port";
+    portSpan.textContent = String(s.port);
+
+    // The static tabs carry role/aria-selected, so the discovered ones have to
+    // match or a screen reader announces a tab list full of plain buttons.
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", s.port === activeStudioPort ? "true" : "false");
+    btn.setAttribute("aria-controls", "studioViewport");
+    btn.append(iconSpan, titleSpan, portSpan);
+    nav.appendChild(btn);
+  });
+}
+
+function renderStudioEmptyState(show) {
+  const vp = document.getElementById("studioViewport");
+  const frame = document.getElementById("studioFrame");
+  if (!vp) return;
+
+  // The Hub fallback card shares the studio-empty-state class (it has no rules
+  // of its own), so it has to be excluded here. Otherwise a stale hub card
+  // counts as "an empty state already exists" and the real one is never built,
+  // leaving a blank viewport with no way to retry.
+  let emptyEl = vp.querySelector(".studio-empty-state:not(.studio-hub-launch-card)");
+  if (show) {
+    const hubCard = vp.querySelector(".studio-hub-launch-card");
+    if (hubCard) hubCard.style.display = "none";
+    if (frame) frame.style.display = "none";
+    if (!emptyEl) {
+      emptyEl = document.createElement("div");
+      emptyEl.className = "studio-empty-state";
+      emptyEl.innerHTML = `
+        <div class="studio-empty-icon">📡</div>
+        <h3 data-i18n="No Web services detected on this robot">${t("No Web services detected on this robot")}</h3>
+        <p class="studio-empty-desc"><span data-i18n="Robot Host">${t("Robot Host")}</span>: <code class="studio-empty-host"></code></p>
+        <button type="button" class="studio-empty-scan-btn" id="studioEmptyScanBtn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+          <span data-i18n="Retry Scan">${t("Retry Scan")}</span>
+        </button>
+      `;
+      vp.appendChild(emptyEl);
+      // The host is user-configured, so it is written as text rather than
+      // interpolated into the markup above.
+      const hostEl = emptyEl.querySelector(".studio-empty-host");
+      if (hostEl) hostEl.textContent = getStudioHost();
+      const retryBtn = emptyEl.querySelector("#studioEmptyScanBtn");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", () => scanStudioServices(true));
+      }
+    }
+  } else {
+    if (emptyEl) emptyEl.remove();
+    // The Hub cannot be framed, so the viewport it owns is the card, not the
+    // iframe. Restore it when it is still the selected service.
+    const hubCard = vp.querySelector(".studio-hub-launch-card");
+    if (hubCard) hubCard.style.display = activeStudioPort === 4880 ? "" : "none";
+    if (frame) frame.style.display = activeStudioPort === 4880 ? "none" : "";
+  }
+}
+
+async function scanStudioServices(force = false) {
+  if (studioScanning && !force) return;
+  if (!force && studioHasScanned && Date.now() - studioLastScanTs < 12000) {
+    return;
+  }
+  // force bypasses the guard above, so N rapid clicks used to leave N probes
+  // running against 10 ports each. Abort the previous one instead of stacking.
+  if (studioScanController) studioScanController.abort();
+  const controller = new AbortController();
+  studioScanController = controller;
+  const scanToken = ++studioScanGeneration;
+  // The backend probes each candidate port, so a hung robot host would
+  // otherwise leave the badge spinning with no request to fail.
+  const scanTimeout = setTimeout(() => controller.abort(), 8000);
+
+  studioScanning = true;
+  studioHasScanned = true;
+  studioLastScanTs = Date.now();
+
+  const rescanBtn = document.getElementById("studioRescanBtn");
+  const badge = document.getElementById("studioServiceBadge");
+  const badgeText = document.getElementById("studioBadgeText");
+
+  if (rescanBtn) rescanBtn.classList.add("scanning");
+  if (badge) badge.classList.add("scanning");
+  if (badgeText) badgeText.textContent = t("Scanning services...");
+
+  try {
+    const host = getStudioHost();
+    const res = await fetch(`/api/studio/services?robot_host=${encodeURIComponent(host)}`, {
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      studioDiscoveredServices = Array.isArray(data.services) ? data.services : [];
+    } else {
+      console.warn("Studio service scan returned status:", res.status);
+    }
+  } catch (err) {
+    // A superseded scan is expected, not a failure worth reporting.
+    if (err && err.name !== "AbortError") {
+      console.warn("Studio service scan failed:", err);
+    }
+  } finally {
+    clearTimeout(scanTimeout);
+    // A newer scan owns the shared state now; touching it here would clear its
+    // spinner and let another scan start while it is still running.
+    if (scanToken === studioScanGeneration) {
+      studioScanning = false;
+      studioScanController = null;
+      if (rescanBtn) rescanBtn.classList.remove("scanning");
+      if (badge) badge.classList.remove("scanning");
+    }
+  }
+
+  // Its results were superseded, so the newer scan renders them instead.
+  if (scanToken !== studioScanGeneration) return;
+
+  if (!studioDiscoveredServices.length) {
+    // A stale port would keep the old service's name in the badge and make the
+    // next language switch skip updating it.
+    activeStudioPort = null;
+    renderStudioTabs();
+    renderStudioEmptyState(true);
+    if (badgeText) badgeText.textContent = `0 ${t("Services Online")}`;
+    return;
+  }
+
+  renderStudioEmptyState(false);
+
+  // Maintain active port if still available; otherwise select first discovered
+  const stillHasActive = studioDiscoveredServices.some((s) => s.port === activeStudioPort);
+  if (!stillHasActive || !activeStudioPort) {
+    activeStudioPort = studioDiscoveredServices[0].port;
+  }
+
+  renderStudioTabs();
+  switchStudioServiceByPort(activeStudioPort);
+}
+
+function switchStudioServiceByPort(port) {
+  const numPort = Number(port);
+  const service = studioDiscoveredServices.find((s) => s.port === numPort);
+  activeStudioPort = numPort;
+
+  // Update tabs active state
+  document.querySelectorAll(".studio-service-tab").forEach((tab) => {
+    tab.classList.toggle("active", Number(tab.dataset.studioPort) === numPort);
+  });
+
+  // Update status badge
+  const badgeText = document.getElementById("studioBadgeText");
+  if (badgeText) {
+    const sName = service ? t(service.name) : "Service";
+    badgeText.textContent = `${sName} · Port ${numPort}`;
+  }
+
+  const vp = document.getElementById("studioViewport");
+  const frame = document.getElementById("studioFrame");
+  const scrim = document.getElementById("studioLoadingScrim");
+
+  let hubCard = vp ? vp.querySelector(".studio-hub-launch-card") : null;
+
+  // Port 4880 (Robonix Console) sets X-Frame-Options: DENY, cannot be embedded inside iframe directly
+  if (numPort === 4880) {
+    if (scrim) scrim.hidden = true;
+    if (frame) frame.style.display = "none";
+    if (!hubCard && vp) {
+      hubCard = document.createElement("div");
+      hubCard.className = "studio-hub-launch-card studio-empty-state";
+      hubCard.innerHTML = `
+        <div class="studio-empty-icon">🌐</div>
+        <h3>Robonix Console</h3>
+        <p class="studio-empty-desc" data-i18n="Robonix Console runs with strict origin isolation. Click below to launch in a dedicated tab.">${t("Robonix Console runs with strict origin isolation. Click below to launch in a dedicated tab.")}</p>
+        <p class="studio-empty-desc" data-i18n="If the Console binds to the robot's loopback address, it is only reachable from the robot itself.">${t("If the Console binds to the robot's loopback address, it is only reachable from the robot itself.")}</p>
+        <button type="button" class="studio-empty-scan-btn" id="studioOpenHubDirect">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          <span data-i18n="Open in External Tab">${t("Open in External Tab")}</span>
+        </button>
+      `;
+      vp.appendChild(hubCard);
+      hubCard.querySelector("#studioOpenHubDirect")?.addEventListener("click", () => {
+        window.open(getStudioServiceUrl(4880, true), "_blank");
+      });
+    } else if (hubCard) {
+      hubCard.style.display = "";
+    }
+    return;
+  }
+
+  if (hubCard) hubCard.style.display = "none";
+  if (frame) frame.style.display = "";
+
+  if (frame) {
+    const targetUrl = getStudioServiceUrl(numPort, false);
+    // Not frame.src: the browser normalizes what it stores (host to lowercase,
+    // default port dropped), so a robotHost typed as "Tiago.local" makes
+    // frame.src read back "tiago.local" and never equal targetUrl. The frame
+    // then reloaded on every return to that service, flashing the scrim and
+    // throwing away whatever state the service held.
+    const loadedUrl = frame.dataset.studioFrameUrl || "";
+    if (loadedUrl !== targetUrl) {
+      frame.dataset.studioFrameUrl = targetUrl;
+      if (scrim) scrim.hidden = false;
+      frame.src = targetUrl;
+    }
+    frame.onload = () => {
+      if (scrim) scrim.hidden = true;
+      syncStudioFrameLang();
+    };
+    frame.onerror = () => {
+      if (scrim) scrim.hidden = true;
+    };
+    setTimeout(() => {
+      if (scrim) scrim.hidden = true;
+    }, 1500);
+  }
+}
+
+function syncStudioFrameLang() {
+  const frame = document.getElementById("studioFrame");
+  if (!frame || !frame.contentWindow) return;
+  try {
+    const curLang = (localStorage.getItem("robonix.lang") || "zh").startsWith("zh") ? "zh" : "en";
+    frame.contentWindow.postMessage({ sceneLang: curLang }, "*");
+  } catch (_) {}
+}
+
+function bindStudioControls() {
+  const nav = document.getElementById("studioServicesNav");
+  if (nav && !nav.dataset.bound) {
+    nav.dataset.bound = "1";
+    nav.addEventListener("click", (e) => {
+      const tab = e.target.closest(".studio-service-tab");
+      if (tab && tab.dataset.studioPort) {
+        switchStudioServiceByPort(Number(tab.dataset.studioPort));
+      }
+    });
+  }
+
+  const rescanBtn = document.getElementById("studioRescanBtn");
+  if (rescanBtn && !rescanBtn.dataset.bound) {
+    rescanBtn.dataset.bound = "1";
+    rescanBtn.addEventListener("click", () => {
+      scanStudioServices(true);
+    });
+  }
+
+  const reloadBtn = document.getElementById("studioReloadBtn");
+  if (reloadBtn && !reloadBtn.dataset.bound) {
+    reloadBtn.dataset.bound = "1";
+    reloadBtn.addEventListener("click", () => {
+      const frame = document.getElementById("studioFrame");
+      const scrim = document.getElementById("studioLoadingScrim");
+      if (frame && activeStudioPort) {
+        if (scrim) scrim.hidden = false;
+        // Keep the marker in step with what the frame is now showing, or the
+        // next switch back to this service would compare against an older URL.
+        frame.dataset.studioFrameUrl = getStudioServiceUrl(activeStudioPort, false);
+        frame.src = frame.dataset.studioFrameUrl;
+        setTimeout(() => { if (scrim) scrim.hidden = true; }, 1200);
+      }
+    });
+  }
+
+  const extBtn = document.getElementById("studioExternalBtn");
+  if (extBtn && !extBtn.dataset.bound) {
+    extBtn.dataset.bound = "1";
+    extBtn.addEventListener("click", () => {
+      if (!activeStudioPort) return;
+      const extUrl = getStudioServiceUrl(activeStudioPort, true);
+      if (extUrl) {
+        window.open(extUrl, "_blank");
+      }
+    });
+  }
+
+  const fsBtn = document.getElementById("studioFullscreenBtn");
+  if (fsBtn && !fsBtn.dataset.bound) {
+    fsBtn.dataset.bound = "1";
+    fsBtn.addEventListener("click", () => {
+      // The shell, not the viewport: the header holds the button that was just
+      // clicked plus the service tabs, and going fullscreen on the viewport
+      // alone hid them with no way back except Esc.
+      const shell = document.querySelector(".studio-shell");
+      if (!shell) return;
+      if (!document.fullscreenElement) {
+        shell.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+    document.addEventListener("fullscreenchange", () => {
+      const isFs = !!document.fullscreenElement;
+      const enterIcon = fsBtn.querySelector(".fs-enter-icon");
+      const exitIcon = fsBtn.querySelector(".fs-exit-icon");
+      if (enterIcon) enterIcon.style.display = isFs ? "none" : "";
+      if (exitIcon) exitIcon.style.display = isFs ? "" : "none";
+    });
+  }
+}
+
 window.addEventListener("robonix:page", (event) => {
   const name = event.detail && event.detail.name;
   if (name === "perception") {
     startPerception();
   } else {
     stopPerception();
+  }
+  if (name === "studio") {
+    if (!studioHasScanned) {
+      scanStudioServices();
+    }
+    syncStudioFrameLang();
   }
 });
 
@@ -4708,6 +5744,14 @@ function handleI18nChange() {
   renderPlan();
   renderActivePlans(state.activePlansError);
   renderHistory();
+  // The argument payload embeds a translated status, so an open node popup has
+  // to be rebuilt for the new language (renderPlan skips it on purpose).
+  if (detailSelections.live) {
+    renderExecutionDetail(detailSelections.live.node, detailSelections.live.status, detailSelections.live.nodeState);
+  }
+  if (detailSelections.history) {
+    renderHistoryExecutionDetail(detailSelections.history.node, detailSelections.history.status, detailSelections.history.nodeState);
+  }
   renderHandsfree();
   syncVoiceControls();
   setText("voiceState", state.voiceRecording ? t("recording") : t("ready"));
@@ -4716,6 +5760,14 @@ function handleI18nChange() {
   setBusy(state.busy);
   updatePerceptionEmptyDiagnostics((perception && perception.tiles) || {});
   redrawPerceptionCanvases();
+  renderStudioTabs();
+  const badgeText = document.getElementById("studioBadgeText");
+  if (badgeText && activeStudioPort) {
+    const s = studioDiscoveredServices.find((item) => item.port === activeStudioPort);
+    const sName = s ? t(s.name) : "Service";
+    badgeText.textContent = `${sName} · Port ${activeStudioPort}`;
+  }
+  syncStudioFrameLang();
 }
 
 window.addEventListener("robonix:i18n", handleI18nChange);

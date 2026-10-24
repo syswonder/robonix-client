@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261009d" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261019m" />
   </head>
   <body>
     <div class="app-shell">
@@ -17,6 +17,7 @@
           <button class="nav-item active" type="button" data-page="dashboard"><span data-i18n="Chat">Chat</span></button>
           <button class="nav-item" type="button" data-page="perception"><span data-i18n="Perception">Perception</span></button>
           <button class="nav-item" type="button" data-page="vitals"><span data-i18n="Vitals">Vitals</span></button>
+          <button class="nav-item" type="button" data-page="studio"><span data-i18n="Studio">Studio</span></button>
           <button class="nav-item" type="button" data-page="audio"><span data-i18n="Audio">Audio</span></button>
           <button class="nav-item" type="button" data-page="settings"><span data-i18n="Settings">Settings</span></button>
         </nav>
@@ -112,25 +113,37 @@
                     <h2 data-i18n="Current Goal">Current Goal</h2>
                     <span data-i18n="Current task and selected goal context.">Current task and selected goal context.</span>
                   </div>
+                  <span class="sidebar-status-chip" data-task-status-chip>
+                    <i class="status-dot"></i>
+                    <span data-current-task-label data-i18n="Current Task: idle">Current Task: idle</span>
+                  </span>
                 </div>
                 <div class="goal-line" id="goalLine" data-i18n="Goal: waiting for a task.">Goal: waiting for a task.</div>
                 <div class="goal-preview" data-goal-preview></div>
               </section>
 
-              <section class="panel rtdl-panel execution-panel">
+              <nav class="sidebar-menu" id="sidebarMenu">
+                <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl" data-i18n="RTDL Forest">RTDL Forest</button>
+                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events" data-i18n="Event Log">Event Log</button>
+                <span class="sidebar-icon-group">
+                  <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="View Fullscreen Execution Map" data-i18n-title="View Fullscreen Execution Map">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                    <span id="activeRtdlCount">0</span>
+                  </button>
+                  <button class="sidebar-icon-btn" id="openRtdlHistory" type="button" title="Execution History" data-i18n-title="Execution History">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
+                    <span id="rtdlHistoryCount">0</span>
+                  </button>
+                </span>
+              </nav>
+
+              <section class="panel rtdl-panel execution-panel" data-sidebar-panel="rtdl">
                 <div class="panel-header">
                   <div>
                     <h2 data-i18n="RTDL Forest">RTDL Forest</h2>
                     <span data-plan-summary data-i18n="waiting for real plan">waiting for real plan</span>
                   </div>
                 </div>
-                <button class="rtdl-history-launch active-rtdl-launch" id="openActiveRtdl" type="button">
-                  <span>
-                    <strong data-i18n="Active RTDL">Active RTDL</strong>
-                    <small id="activeRtdlSummary" data-i18n="Open live Executor plans">Open live Executor plans</small>
-                  </span>
-                  <span class="rtdl-history-count" id="activeRtdlCount" data-i18n="unavailable">unavailable</span>
-                </button>
                 <div class="execution-table">
                   <div class="table-head">
                     <span data-i18n="Node">Node</span>
@@ -142,31 +155,14 @@
                   </div>
                   <div class="plan-tree" data-plan-tree="full"></div>
                 </div>
-                <button class="rtdl-history-launch" id="openRtdlHistory" type="button">
-                  <span>
-                    <strong data-i18n="Execution history">Execution history</strong>
-                    <small data-i18n="Open completed RTDL plans in a full workspace">Open completed RTDL plans in a full workspace</small>
-                  </span>
-                  <span class="rtdl-history-count" id="rtdlHistoryCount">0</span>
-                </button>
-                <div class="execution-detail" id="executionDetail">
-                  <div class="detail-title" id="executionDetailTitle" data-i18n="Node detail">Node detail</div>
-                  <div class="detail-grid">
-                    <div><span data-i18n="Provider / ID">Provider / ID</span><strong id="activeProvider">-</strong></div>
-                    <div><span data-i18n="Started">Started</span><strong id="activeStarted">-</strong></div>
-                    <div><span data-i18n="Duration">Duration</span><strong id="activeDuration">-</strong></div>
-                  </div>
-                  <pre class="args" id="activeArgs">{}</pre>
-                </div>
               </section>
 
-              <section class="panel trace-panel thought-panel">
+              <section class="panel trace-panel thought-panel" data-sidebar-panel="events" hidden>
                 <div class="panel-header">
                   <div>
                     <h2 data-i18n="Event Log">Event Log</h2>
                     <span><span data-event-summary>0</span> <span data-i18n="event(s)">event(s)</span></span>
                   </div>
-                  <span data-current-task-label data-i18n="Current Task: idle">Current Task: idle</span>
                 </div>
                 <div class="event-list" data-event-list></div>
               </section>
@@ -704,6 +700,54 @@
             </section>
           </section>
         </section>
+
+        <section class="page studio-page" data-page-panel="studio" aria-labelledby="studioTitle">
+          <div class="studio-shell">
+            <header class="studio-header">
+              <div class="studio-title-group">
+                <div class="studio-title-line">
+                  <h2 id="studioTitle" data-i18n="Robonix Studio">Robonix Studio</h2>
+                  <span class="studio-tag" data-i18n="Integrated Service Cockpit">Integrated Service Cockpit</span>
+                </div>
+                <div class="studio-service-badge" id="studioServiceBadge">
+                  <span class="pulse-dot"></span>
+                  <span id="studioBadgeText">Scene Service · Port 50107</span>
+                </div>
+              </div>
+
+              <!-- Tabs are built from the discovery scan (renderStudioTabs);
+                   an empty result shows the empty state, not a fixed list. -->
+              <div class="studio-services-nav" id="studioServicesNav" role="tablist" aria-label="Studio Services" data-i18n-aria-label="Studio Services"></div>
+
+              <div class="studio-actions">
+                <button type="button" class="studio-action-btn" id="studioRescanBtn" title="Rescan Services" data-i18n-title="Rescan Services">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+                  <span data-i18n="Rescan">Rescan</span>
+                </button>
+                <button type="button" class="studio-action-btn" id="studioReloadBtn" title="Reload Service" data-i18n-title="Reload">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                  <span data-i18n="Reload">Reload</span>
+                </button>
+                <button type="button" class="studio-action-btn" id="studioExternalBtn" title="Open in External Tab" data-i18n-title="Open External">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  <span data-i18n="External">External</span>
+                </button>
+                <button type="button" class="studio-action-btn" id="studioFullscreenBtn" title="Toggle Fullscreen" data-i18n-title="Toggle Fullscreen">
+                  <svg class="fs-enter-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                  <svg class="fs-exit-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                </button>
+              </div>
+            </header>
+
+            <div class="studio-viewport" id="studioViewport" role="tabpanel" aria-label="Studio Service">
+              <div class="studio-loading-scrim" id="studioLoadingScrim" hidden>
+                <div class="studio-spinner"></div>
+                <span class="studio-loading-text" data-i18n="Connecting to service...">Connecting to service...</span>
+              </div>
+              <iframe id="studioFrame" class="studio-frame" src="about:blank"></iframe>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -803,8 +847,28 @@
       </section>
     </div>
 
-    <script src="/static/i18n.js?v=20261009d"></script>
-    <script src="/static/app.js?v=20261009d"></script>
-    <script src="/static/vitals.bundle.js?v=20261009d"></script>
+    <div class="modal-backdrop" id="nodeDetailModal" role="dialog" aria-modal="true" aria-labelledby="executionDetailTitle" hidden>
+      <section class="node-detail-modal">
+        <header class="rtdl-history-modal-header">
+          <div>
+            <h2 id="executionDetailTitle" data-i18n="Node detail">Node detail</h2>
+            <span data-i18n="Provider, timing and arguments of the selected node.">Provider, timing and arguments of the selected node.</span>
+          </div>
+          <button class="icon-button modal-close" id="closeNodeDetail" type="button" aria-label="Close node detail" data-i18n-aria-label="Close node detail">×</button>
+        </header>
+        <div class="node-detail-modal-body">
+          <div class="detail-grid">
+            <div><span data-i18n="Provider / ID">Provider / ID</span><strong id="activeProvider">-</strong></div>
+            <div><span data-i18n="Started">Started</span><strong id="activeStarted">-</strong></div>
+            <div><span data-i18n="Duration">Duration</span><strong id="activeDuration">-</strong></div>
+          </div>
+          <pre class="args" id="activeArgs">{}</pre>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/i18n.js?v=20261019j"></script>
+    <script src="/static/app.js?v=20261019j"></script>
+    <script src="/static/vitals.bundle.js?v=20261018f"></script>
   </body>
 </html>

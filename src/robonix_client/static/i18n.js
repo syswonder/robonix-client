@@ -26,6 +26,33 @@
     "Compute node telemetry from Vitals": "来自 Vitals 的计算节点遥测",
     "Audio": "音频",
     "Settings": "设置",
+    "Studio": "工作室",
+    "Robonix Studio": "Robonix 工作室",
+    "Studio Services": "服务列表",
+    "Studio Service": "服务内容",
+    "Integrated Service Cockpit": "集成服务面板",
+    "Scene Service": "场景服务",
+    "SLAM Mapping": "SLAM 建图",
+    "Robonix Console": "Robonix Console",
+    "Audio Server": "音频服务",
+    "Scene Perception Service (Port 50107)": "场景感知服务（端口 50107）",
+    "RTAB-Map Mapping (Port 8091)": "RTAB-Map 建图（端口 8091）",
+    "Robonix Console (Port 4880)": "Robonix Console（端口 4880）",
+    "Audio Device Server (Port 60001)": "音频设备服务（端口 60001）",
+    "Reload": "刷新",
+    "Open External": "外部打开",
+    "External": "外部打开",
+    "Toggle Fullscreen": "全屏切换",
+    "Connecting to service...": "正在连接微服务...",
+    "Services Online": "个服务在线",
+    "Rescan": "重新探测",
+    "Rescan Services": "重新探测本体微服务",
+    "Scanning services...": "正在嗅探服务...",
+    "No Web services detected on this robot": "当前本体未检测到任何开放的 Web 可视化服务",
+    "Retry Scan": "重新探测",
+    "Robonix Console runs with strict origin isolation. Click below to launch in a dedicated tab.": "Robonix Console 采用严格的独立窗口安全策略运行，请点击下方在专属标签页打开。",
+    "If the Console binds to the robot's loopback address, it is only reachable from the robot itself.": "若 Robonix Console 绑定在机器人本机回环地址，则仅可从机器人本机访问。",
+    "Open in External Tab": "在新标签页打开",
     "Switch language": "切换语言",
     "Robonix Client": "Robonix 客户端",
     "Session": "会话",
@@ -77,6 +104,12 @@
     "recording": "录制中",
     "ready": "就绪",
     "Show RTDL": "查看 RTDL",
+    "{count} activity events": "{count} 条活动",
+    "Expand activity": "展开活动",
+    "Collapse activity": "收起活动",
+    "Calling {names}": "调用 {names}",
+    "RTDL plan round {round}": "RTDL 计划第 {round} 轮",
+    "and {count} more": "等 {count} 个",
     "attachment": "附件",
     "Remove attachment": "移除附件",
     "added to running task": "已加入运行中的任务",
@@ -143,6 +176,8 @@
     "RTDL Forest": "RTDL 树",
     "waiting for real plan": "等待真实计划",
     "Active RTDL": "活动 RTDL",
+    "View Fullscreen Execution Map": "全屏执行拓扑",
+    "Execution History": "执行历史",
     "Open live Executor plans": "打开实时 Executor 计划",
     "unavailable": "不可用",
     "Node": "节点",
@@ -157,6 +192,10 @@
     "Select an RTDL node to inspect its arguments and result.": "选择一个 RTDL 节点以查看其参数与结果。",
     "No RTDL tree is currently executing": "当前没有正在执行的 RTDL 树",
     "No RTDL plan in this session yet.": "此会话暂无 RTDL 计划。",
+    "No RTDL tree in this session yet.": "此会话暂无 RTDL 执行树。",
+    "Latest plan {plan} (completed) · round {round} · {calls} call(s)": "最近计划 {plan} (已完成) · 第 {round} 轮 · {calls} 次调用",
+    "Close node detail": "关闭节点详情",
+    "Provider, timing and arguments of the selected node.": "所选节点的 Provider、时间与参数。",
     "Plan {id} · round {round}": "计划 {id} · 第 {round} 轮",
     "No completed RTDL trees yet.": "暂无已完成的 RTDL 树。",
     "Tree {n}: {label}": "树 {n}：{label}",
@@ -557,6 +596,22 @@
     "No scene data yet": "暂无场景数据",
   };
 
+  // Legacy status rows stored the translated text instead of the key. Build a
+  // reverse table so those rows can still follow a language switch. A Chinese
+  // string shared by several English keys cannot be reversed without guessing,
+  // so those are dropped rather than mapped to whichever key came first.
+  const zhReverse = new Map();
+  const ambiguousZh = new Set();
+  Object.entries(zhCN).forEach(([key, value]) => {
+    if (typeof value !== "string") return;
+    if (zhReverse.has(value)) {
+      ambiguousZh.add(value);
+      zhReverse.delete(value);
+      return;
+    }
+    if (!ambiguousZh.has(value)) zhReverse.set(value, key);
+  });
+
   function detectLang() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -583,6 +638,15 @@
     const has = Object.prototype.hasOwnProperty.call(zhCN, source);
     const translated = current === "zh" && has ? zhCN[source] : source;
     return interpolate(translated, params);
+  }
+
+  /// Translate a transcript row persisted before i18nKey was stored. Chinese
+  /// mode treats the text as a possible English key; English mode reverses a
+  /// known Chinese value back to its key. Unknown free text is left untouched.
+  function translateStored(text) {
+    const source = String(text ?? "");
+    if (!source) return source;
+    return current === "zh" ? t(source) : (zhReverse.get(source) || source);
   }
 
   function applyDocument() {
@@ -633,9 +697,14 @@
 
   window.RobonixI18N = {
     t,
+    translateStored,
     setLang,
     toggle: () => setLang(current === "zh" ? "en" : "zh"),
     lang: () => current,
+    // Re-walk the document for data-i18n* attributes. Callers that restore
+    // markup they had removed need it, because applyDocument() only ever sees
+    // what is in the document at the moment the language changes.
+    applyDocument,
   };
 
   document.documentElement.lang = current === "zh" ? "zh-CN" : "en";
