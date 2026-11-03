@@ -2,6 +2,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import grpc
+
 from robonix_client import transport
 
 
@@ -49,6 +51,48 @@ class ExecutorPlansTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaisesRegex(transport.RobonixApiError, "invalid"):
                 await transport.list_active_plans(settings)
+
+    async def test_tags_the_hop_that_failed(self):
+        settings = transport.ClientSettings(atlas_endpoint="robot:50051")
+        deadline = grpc.aio.AioRpcError(
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            grpc.aio.Metadata(),
+            grpc.aio.Metadata(),
+            details="Deadline Exceeded",
+        )
+        cases = [
+            # (discover_endpoint behavior, _unary_unary behavior, reason, endpoint)
+            (AsyncMock(side_effect=deadline), AsyncMock(), "atlas_unreachable", "robot:50051"),
+            (
+                AsyncMock(side_effect=transport.RobonixApiError("no provider found")),
+                AsyncMock(),
+                "executor_not_registered",
+                "robot:50051",
+            ),
+            (
+                AsyncMock(return_value="robot:50061"),
+                AsyncMock(side_effect=deadline),
+                "executor_unreachable",
+                "robot:50061",
+            ),
+            (
+                AsyncMock(return_value="robot:50061"),
+                AsyncMock(return_value=SimpleNamespace(success=False, plans_json="", error="busy")),
+                "executor_error",
+                "robot:50061",
+            ),
+        ]
+        for discover, unary, reason, endpoint in cases:
+            with self.subTest(reason=reason):
+                with (
+                    patch.object(transport, "discover_endpoint", discover),
+                    patch.object(transport, "_unary_unary", unary),
+                ):
+                    with self.assertRaises(transport.ExecutorQueryError) as caught:
+                        await transport.list_active_plans(settings)
+                self.assertEqual(caught.exception.reason, reason)
+                self.assertEqual(caught.exception.endpoint, endpoint)
+                self.assertNotIn("<AioRpcError", caught.exception.detail)
 
 
 if __name__ == "__main__":

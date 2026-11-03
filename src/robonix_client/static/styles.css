@@ -241,7 +241,6 @@ select {
 .panel-header span,
 .field span,
 .metric span,
-.goal-line,
 .detail-grid span {
   color: var(--muted);
   font-size: 12px;
@@ -755,15 +754,32 @@ h2 {
   max-height: 260px;
 }
 
-.current-goal-panel {
+.dashboard-sidebar > .current-goal-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, auto);
-  min-height: 150px;
-  /* Room for the source pill, the call name, the four call fields and the
-     args block; anything longer scrolls (the panel keeps overflow: auto from
-     .dashboard-sidebar > .panel, and the scrollbars are hidden globally). */
-  max-height: 340px;
+  grid-template-rows: 40px 116px minmax(0, 1fr);
+  height: 380px;
+  min-height: 380px;
+  max-height: 380px;
+  overflow: hidden;
 }
+
+.current-goal-panel > .task-list { grid-row: 2; }
+.current-goal-panel > .executor-panel {
+  grid-row: 3;
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--line-soft);
+}
+.executor-panel > .executor-label {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0 12px;
+}
+
 
 .execution-panel {
   grid-template-rows: auto auto minmax(140px, auto) auto auto;
@@ -1411,7 +1427,47 @@ select:focus {
 }
 
 .active-rtdl-empty.error {
-  color: var(--danger);
+  display: grid;
+  gap: 6px;
+  border-style: solid;
+  border-color: rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.active-rtdl-empty.error > strong {
+  color: var(--red);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.active-rtdl-empty.error p {
+  margin: 0;
+}
+
+.active-rtdl-empty.error details summary {
+  width: max-content;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.active-rtdl-empty.error code {
+  display: block;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(4, 9, 11, 0.6);
+  color: #d6e1e1;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.active-rtdl-empty.error .active-rtdl-error-note {
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
 }
 
 .status.ended,
@@ -1419,11 +1475,6 @@ select:focus {
   color: var(--muted);
   border-color: rgba(126, 145, 156, 0.35);
   background: rgba(126, 145, 156, 0.1);
-}
-
-.goal-line {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line-soft);
 }
 
 .execution-table {
@@ -2490,10 +2541,81 @@ select:focus {
 .goal-preview {
   padding: 10px 12px 12px;
   background: transparent;
-  /* The goal card is plain text that grows with the plan, so this box must
-     stay content-sized: a fixed height here would clip the call fields and
-     the args block instead of letting the panel scroll. */
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.goal-preview,
+.task-list {
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--line) transparent;
+}
+
+.task-list[hidden] {
+  display: none;
+}
+
+.task-list {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: 24px;
+  align-content: start;
+  gap: 4px;
+  min-height: 0;
+  max-height: 116px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+
+.task-list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 24px;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 14px;
+  text-align: left;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.task-list-row .task-list-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.task-list-row.in_progress .task-list-dot,
+.task-list-row.running .task-list-dot {
+  background: var(--amber);
+}
+
+.task-list-row.failed .task-list-dot {
+  background: var(--red);
+}
+
+.task-list-row .task-list-goal {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-list-row .task-list-status {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .goal-card {
@@ -2501,31 +2623,22 @@ select:focus {
   gap: 7px;
 }
 
+.goal-card > strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
 .goal-card strong {
-  font-size: 15px;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .goal-card span {
   color: var(--muted);
   font-size: 12px;
-}
-
-.goal-source {
-  width: max-content;
-  padding: 2px 7px;
-  border: 1px solid rgba(230, 184, 88, 0.4);
-  border-radius: 999px;
-  color: var(--amber) !important;
-  background: rgba(230, 184, 88, 0.08);
-  font-size: 10px !important;
-  font-weight: 760;
-  text-transform: uppercase;
-}
-
-.goal-source.verified {
-  border-color: rgba(111, 209, 125, 0.4);
-  color: var(--green) !important;
-  background: rgba(111, 209, 125, 0.08);
 }
 
 .goal-call-grid {
@@ -2547,17 +2660,6 @@ select:focus {
   color: #d9e6e8;
   font: 600 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   overflow-wrap: anywhere;
-}
-
-.goal-json {
-  max-height: 128px;
-  margin: 0;
-  padding: 8px;
-  overflow: auto;
-  border-radius: 6px;
-  background: rgba(4, 9, 11, 0.55);
-  color: #d6e1e1;
-  font: 11px/1.35 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .message-link {
@@ -4121,6 +4223,11 @@ select:focus {
     min-width: 0;
     width: 100%;
     max-width: none;
+  }
+
+  .icon-button.modal-close {
+    flex: 0 0 34px;
+    width: 34px;
   }
 
   .table-head,
@@ -5836,7 +5943,7 @@ select:focus {
 }
 
 /* The tree and the log panels take the column's remaining height; the goal
-   panel keeps its natural height. */
+   panel keeps its fixed height. */
 .dashboard-sidebar > .panel[data-sidebar-panel="rtdl"]:not([hidden]),
 .dashboard-sidebar > .panel[data-sidebar-panel="events"]:not([hidden]) {
   flex: 1 1 auto;
@@ -5844,7 +5951,7 @@ select:focus {
 }
 
 .dashboard-sidebar > .panel[data-sidebar-panel="rtdl"]:not([hidden]) {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 /* Filling the panel means every box between the panel and the SVG viewport
@@ -5929,57 +6036,226 @@ select:focus {
   user-select: none;
 }
 
-/* Always-visible task status chip (lives in the goal panel header, so the
-   running/idle state stays readable while the menu shows the tree or the log). */
-.panel-header .sidebar-status-chip {
-  display: inline-flex;
+.task-scope-controls {
+  display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 62%;
-  padding: 4px 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: rgba(11, 20, 24, 0.6);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
+  padding: 0;
+  margin-left: auto;
 }
-
-.panel-header .sidebar-status-chip > span {
-  color: inherit;
+.task-scope-button {
+  min-height: 24px;
+  padding: 2px 8px;
   font-size: 11px;
-  min-width: 0;
-  overflow: hidden;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.task-list-row[aria-pressed="true"] {
+  background: rgba(72, 166, 223, 0.055);
+  border-color: transparent;
+  box-shadow: inset 2px 0 var(--line);
+}
+.task-list-row:hover {
+  background: rgba(72, 166, 223, 0.12);
+}
+.task-list-row:focus-visible,
+.task-scope-button:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
+}
+.goal-call-grid strong {
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
-
-.panel-header .sidebar-status-chip .status-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dim);
+.goal-preview::-webkit-scrollbar,
+.task-list::-webkit-scrollbar {
+  display: block !important;
+  width: 5px !important;
+}
+.goal-preview::-webkit-scrollbar-thumb,
+.task-list::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
 }
 
-.panel-header .sidebar-status-chip.running {
+/* Scope controls are secondary to the selected task. */
+.task-scope-button,
+.task-scope-button[aria-pressed="true"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.task-scope-button::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  margin-right: 3px;
+}
+.task-scope-button[aria-pressed="true"]::before {
+  content: "✓";
+}
+.task-scope-button[aria-pressed="true"] { color: var(--muted); }
+.task-scope-button:hover {
   color: var(--text);
-  border-color: rgba(34, 211, 238, 0.45);
-  background: rgba(34, 211, 238, 0.1);
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.035);
 }
 
-.panel-header .sidebar-status-chip.running .status-dot {
-  background: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.16);
-  animation: status-chip-pulse 1.5s ease-in-out infinite;
+.call-detail-trigger { justify-self: start; padding: 0; font-size: 11px; }
+.call-detail-modal {
+  padding: 0;
+  color: var(--text);
+  background: var(--panel, #101c22);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.call-detail-modal:not([open]) { display: none; }
+.call-detail-modal::backdrop { background: rgba(0, 0, 0, 0.65); }
+.call-detail-body { min-height: 0; overflow: auto; padding: 16px; }
+.call-detail-body .goal-call-grid strong { white-space: normal; overflow-wrap: anywhere; }
+.call-detail-body p { color: var(--muted); font-size: 12px; }
+.call-detail-body .args { max-height: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+#openActiveRtdl { margin-left: 8px; }
+.goal-card .call-detail-trigger {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(72, 166, 223, 0.07);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.call-detail-trigger::after { content: " ↗"; margin-left: 6px; }
+.goal-card .call-detail-trigger:hover { border-color: var(--muted); background: rgba(72, 166, 223, 0.13); }
+.call-detail-trigger:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.execution-summary-status { font-size: 11px; color: var(--muted); }
+.execution-summary-status[data-status="Executing now"]::before { content: "● "; color: var(--cyan); }
+.execution-summary-status[data-status="completed"]::before { content: "✓ "; }
+
+.goal-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.goal-card > .execution-heading {
+  grid-column: 1;
+  grid-row: 1;
+}
+.goal-card > .call-detail-trigger {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  white-space: nowrap;
+}
+.goal-card > strong,
+.goal-card > .goal-call-grid,
+.goal-card > span:not(.execution-summary-status) {
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 
-@keyframes status-chip-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+.execution-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.executor-label { font-size: 14px; line-height: 1.2; font-weight: 720; letter-spacing: 0; color: var(--text); }
+
+.goal-preview > .goal-card + .goal-card { border-top: 1px solid var(--line-soft); margin-top: 14px; padding-top: 14px; }
+
+.overview-section { display: grid; gap: 10px; min-width: 0; }
+.overview-section + .overview-section { padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.overview-section-head { display: grid; gap: 2px; }
+.overview-section-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.overview-section-note { margin: 0; color: var(--muted); font-size: 11px; opacity: 0.8; }
+
+#savedRtdlList { display: grid; gap: 10px; }
+.saved-plan-task {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(91, 143, 176, 0.22);
+  border-radius: 10px;
+  background: rgba(11, 22, 27, 0.94);
+}
+.saved-plan-task h4 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-plan-empty { margin: 0; color: var(--muted); font-size: 12px; }
+.saved-plan-record { border-radius: 8px; background: rgba(7, 15, 19, 0.72); }
+.saved-plan-record > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.saved-plan-record > summary::-webkit-details-marker { display: none; }
+.saved-plan-record > summary::before {
+  content: "▸";
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.saved-plan-record[open] > summary::before { transform: rotate(90deg); }
+.saved-plan-record > summary:hover { background: rgba(72, 166, 223, 0.06); }
+.saved-plan-record > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.saved-plan-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.saved-plan-nodes { display: grid; gap: 2px; padding: 0 10px 8px 26px; }
+.saved-plan-node {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.saved-plan-node-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.saved-plan-status { font-size: 10px; }
+.saved-plan-node .call-detail-trigger {
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(72, 166, 223, 0.07);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.saved-plan-node .call-detail-trigger:hover { border-color: var(--muted); background: rgba(72, 166, 223, 0.13); }
+
+@media (max-width: 640px) {
+  .saved-plan-nodes { padding-left: 10px; }
+  .saved-plan-node { grid-template-columns: minmax(0, 1fr) auto; }
+  .saved-plan-node .call-detail-trigger { grid-column: 1 / -1; justify-self: start; }
 }

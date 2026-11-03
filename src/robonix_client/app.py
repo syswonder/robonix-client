@@ -26,6 +26,7 @@ from .vitals_api import router as vitals_router
 from .transport import (
     DEFAULT_ATLAS,
     ClientSettings,
+    ExecutorQueryError,
     abort_turn,
     discover_audio_bridge,
     enroll_voiceprint,
@@ -280,8 +281,17 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
 async def executor_active_plans(req: ClientSettingsRequest) -> dict[str, Any]:
     try:
         return await list_active_plans(ClientSettings.from_payload(req.settings))
+    except ExecutorQueryError as exc:
+        return {
+            "available": False,
+            "count": 0,
+            "plans": [],
+            "reason": exc.reason,
+            "endpoint": exc.endpoint,
+            "error": exc.detail,
+        }
     except Exception as exc:
-        return {"available": False, "count": 0, "plans": [], "error": str(exc)}
+        return {"available": False, "count": 0, "plans": [], "reason": "unknown", "error": str(exc)}
 
 
 @app.get("/api/perception/status")

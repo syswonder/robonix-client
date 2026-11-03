@@ -174,6 +174,25 @@ class RobonixApiError(RuntimeError):
     pass
 
 
+class ExecutorQueryError(RobonixApiError):
+    """Active-plan query failure tagged with the hop that failed.
+
+    ``reason`` is one of ``atlas_unreachable``, ``executor_not_registered``,
+    ``executor_unreachable`` or ``executor_error``; the browser turns it into
+    an actionable message instead of showing a raw gRPC repr.
+    """
+
+    def __init__(self, reason: str, endpoint: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.endpoint = endpoint
+        self.detail = detail
+
+
+def _rpc_detail(exc: grpc.aio.AioRpcError) -> str:
+    return f"gRPC {exc.code().name}: {exc.details() or ''}".strip()
+
+
 def normalize_grpc_target(raw: str) -> str:
     value = (raw or "").strip()
     if not value:
@@ -325,18 +344,26 @@ async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint
 
 async def list_active_plans(settings: ClientSettings) -> dict[str, Any]:
     """Read Executor's control-plane snapshot without creating an RTDL plan."""
-    endpoint = await discover_endpoint(
-        settings.atlas_endpoint,
-        CONTRACT_EXECUTOR_LIST_ACTIVE,
-    )
-    response = await _unary_unary(
-        endpoint,
-        "/robonix.contracts.RobonixSystemExecutorListActivePlans/ListActivePlans",
-        executor_pb2.ListActivePlans_Request(),
-        executor_pb2.ListActivePlans_Response,
-    )
+    atlas = normalize_grpc_target(settings.atlas_endpoint or DEFAULT_ATLAS)
+    try:
+        endpoint = await discover_endpoint(atlas, CONTRACT_EXECUTOR_LIST_ACTIVE)
+    except grpc.aio.AioRpcError as exc:
+        raise ExecutorQueryError("atlas_unreachable", atlas, _rpc_detail(exc)) from exc
+    except RobonixApiError as exc:
+        raise ExecutorQueryError("executor_not_registered", atlas, str(exc)) from exc
+    try:
+        response = await _unary_unary(
+            endpoint,
+            "/robonix.contracts.RobonixSystemExecutorListActivePlans/ListActivePlans",
+            executor_pb2.ListActivePlans_Request(),
+            executor_pb2.ListActivePlans_Response,
+        )
+    except grpc.aio.AioRpcError as exc:
+        raise ExecutorQueryError("executor_unreachable", endpoint, _rpc_detail(exc)) from exc
     if not response.success:
-        raise RobonixApiError(response.error or "Executor active-plan query failed")
+        raise ExecutorQueryError(
+            "executor_error", endpoint, response.error or "Executor active-plan query failed"
+        )
     payload = _safe_json(response.plans_json)
     if not isinstance(payload, dict) or not isinstance(payload.get("plans", []), list):
         raise RobonixApiError("Executor returned an invalid active-plan snapshot")
@@ -1063,11 +1090,25 @@ def pilot_event_to_dict(event: Any) -> dict[str, Any]:
         data["nodeState"] = node_state_to_dict(event.node_state)
     if hasattr(event, "task_state") and event.HasField("task_state"):
         data["taskState"] = {
+            "taskId": event.task_state.task_id,
             "goal": event.task_state.goal,
             "successCriterion": event.task_state.success_criterion,
             "status": event.task_state.status,
+            "tasks": [task_summary_to_dict(t) for t in event.task_state.tasks],
         }
     return data
+
+
+def task_summary_to_dict(task: Any) -> dict[str, Any]:
+    return {
+        "taskId": task.task_id,
+        "goal": task.goal,
+        "successCriterion": task.success_criterion,
+        "status": task.status,
+        "statusReason": task.status_reason,
+        "messageIds": list(task.message_ids),
+        "planIds": list(task.plan_ids),
+    }
 
 
 def voice_event_to_dict(event: Any) -> dict[str, Any]:
