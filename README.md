@@ -59,11 +59,11 @@ pip install -e ".[audio]"
 
 ## Quick Start
 
-Assume Robonix Atlas is running on `100.87.172.93:50051`:
+Replace `ROBOT_IP` with the address of the machine that runs Robonix Atlas (see [Which IP should I enter?](#which-ip-should-i-enter)):
 
 ```bash
 source .venv/bin/activate
-robonix-client --robot-host 100.87.172.93
+robonix-client --robot-host ROBOT_IP
 ```
 
 Open <http://127.0.0.1:7860/>.
@@ -71,7 +71,7 @@ Open <http://127.0.0.1:7860/>.
 The client starts its local audio service automatically. On Linux it uses the
 desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 
-1. Confirm **Robot Host** is `100.87.172.93` and **Atlas Port** is `50051`.
+1. Confirm **Robot Host** is `ROBOT_IP` and **Atlas Port** is `50051`.
 2. Click **Connect**. The status should become online.
 3. Enter a small text task and click **Send**.
 4. While a task is active, **Send** becomes **Steer** and **Stop** appears.
@@ -82,7 +82,7 @@ desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 `--host` and `--robot-host` are different:
 
 - `--host 127.0.0.1` controls where this Web UI listens.
-- `--robot-host 100.87.172.93` selects the remote Robonix machine.
+- `--robot-host ROBOT_IP` selects the remote Robonix machine.
 
 Most users only need `--robot-host`.
 
@@ -103,7 +103,7 @@ The required fields are:
 
 | Field | Value |
 |---|---|
-| Robot Host | Atlas machine IP or hostname, for example `100.87.172.93` |
+| Robot Host | Atlas machine IP or hostname |
 | Atlas Port | `50051` unless the deployment changed it |
 | Liaison Endpoint | Leave empty; the client discovers Liaison through Atlas |
 | User ID | Optional identity used by the deployment's access policy |
