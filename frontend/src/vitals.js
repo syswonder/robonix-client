@@ -32,6 +32,8 @@ const HEALTH_COLORS = {
   warn: new THREE.Color(0xd89b31),
   error: new THREE.Color(0xd94b42),
 };
+// Redraw rate of the selection pulse; see RobotViewport.setActive.
+const PULSE_FPS = 15;
 const SOURCE_LABELS = {
   soma: "Soma",
   hardware: "Hardware",
@@ -155,7 +157,10 @@ class RobotViewport {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // The light is fixed and only the model casts, so the shadow map is
+    // rebuilt when the model changes (invalidateShadows), not every frame.
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.domElement.tabIndex = 0;
     this.container.appendChild(this.renderer.domElement);
 
@@ -166,7 +171,7 @@ class RobotViewport {
     this.controls.minDistance = 0.7;
     this.controls.maxDistance = 10;
     this.controls.maxPolarAngle = Math.PI * 0.49;
-    this.controls.addEventListener("change", () => this.renderOnce());
+    this.controls.addEventListener("change", () => this.requestRender());
 
     this.scene.add(new THREE.HemisphereLight(0xd8e5e3, 0x172328, 2.2));
     const keyLight = new THREE.DirectionalLight(0xffffff, 3.3);
@@ -202,6 +207,7 @@ class RobotViewport {
     this.modelToken = 0;
     this.active = false;
     this.frame = 0;
+    this.pulseTimer = 0;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.renderer.domElement.addEventListener("pointerup", (event) => this.pick(event));
@@ -219,35 +225,63 @@ class RobotViewport {
     this.resize();
   }
 
+  /// The scene only changes on orbit, resize, model/health/selection updates
+  /// and the selection pulse, so frames are drawn on demand instead of a
+  /// permanent 60fps loop (which kept the page busy even with nothing moving).
+  /// Orbit damping keeps requesting frames until controls.update() settles;
+  /// the pulse is redrawn at PULSE_FPS, which is smooth for a 1.6s sine.
   setActive(active) {
     this.active = Boolean(active);
-    if (this.active && !this.frame) this.animate();
-    if (!this.active && this.frame) {
-      cancelAnimationFrame(this.frame);
-      this.frame = 0;
-    }
-    if (this.active) this.resize();
-  }
-
-  animate() {
     if (!this.active) {
+      if (this.frame) cancelAnimationFrame(this.frame);
+      clearTimeout(this.pulseTimer);
       this.frame = 0;
+      this.pulseTimer = 0;
       return;
     }
-    this.controls.update();
-    if (this.selectionHelper) {
-      this.updateSelectionHelper();
-      const pulse = (Math.sin(performance.now() / 260) + 1) / 2;
-      this.selectionHelper.userData.fill.material.opacity = 0.06 + pulse * 0.07;
-      this.selectionHelper.userData.edges.material.opacity = 0.72 + pulse * 0.28;
-    }
-    this.renderer.render(this.scene, this.camera);
-    this.frame = requestAnimationFrame(() => this.animate());
+    this.resize();
+    this.schedulePulse();
+  }
+
+  requestRender() {
+    if (!this.active || this.frame) return;
+    this.frame = requestAnimationFrame(() => this.tick());
+  }
+
+  tick() {
+    this.frame = 0;
+    if (!this.active) return;
+    // update() fires "change" while damping; that only re-arms requestRender.
+    const moving = this.controls.update();
+    this.drawPulse();
+    this.renderOnce();
+    if (moving) this.requestRender();
+  }
+
+  schedulePulse() {
+    if (this.pulseTimer || !this.active || !this.selectionHelper) return;
+    this.pulseTimer = setTimeout(() => {
+      this.pulseTimer = 0;
+      this.requestRender();
+      this.schedulePulse();
+    }, 1000 / PULSE_FPS);
+  }
+
+  drawPulse() {
+    if (!this.selectionHelper) return;
+    this.updateSelectionHelper();
+    const pulse = (Math.sin(performance.now() / 260) + 1) / 2;
+    this.selectionHelper.userData.fill.material.opacity = 0.06 + pulse * 0.07;
+    this.selectionHelper.userData.edges.material.opacity = 0.72 + pulse * 0.28;
   }
 
   renderOnce() {
     if (!this.container.clientWidth || !this.container.clientHeight) return;
     this.renderer.render(this.scene, this.camera);
+  }
+
+  invalidateShadows() {
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   resize() {
@@ -271,6 +305,7 @@ class RobotViewport {
       });
     }
     this.componentObjects.clear();
+    this.invalidateShadows();
   }
 
   registerComponent(componentId, object) {
@@ -432,6 +467,7 @@ class RobotViewport {
     this.fitCamera(model);
     this.setComponentHealth(this.componentHealth);
     this.selectComponent(this.selectedComponentId);
+    this.invalidateShadows();
     this.renderOnce();
     return mode;
   }
@@ -857,6 +893,7 @@ class RobotViewport {
     this.scene.add(this.selectionHelper);
     this.updateSelectionHelper();
     this.renderOnce();
+    this.schedulePulse();
   }
 
   pick(event) {
