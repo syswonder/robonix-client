@@ -236,13 +236,13 @@ async def _discover_mcp_endpoint(atlas_endpoint: str, contract_id: str) -> tuple
                 contract_id=contract_id,
                 transport=3,
             )
-            channel = grpc_channel(atlas_endpoint)
-            call = channel.unary_unary(
-                "/robonix.atlas.Atlas/ConnectCapability",
-                request_serializer=atlas_pb2.ConnectCapabilityRequest.SerializeToString,
-                response_deserializer=atlas_pb2.ConnectCapabilityResponse.FromString,
-            )
-            resp = await call(req, timeout=4.0)
+            async with grpc_channel(atlas_endpoint) as channel:
+                call = channel.unary_unary(
+                    "/robonix.atlas.Atlas/ConnectCapability",
+                    request_serializer=atlas_pb2.ConnectCapabilityRequest.SerializeToString,
+                    response_deserializer=atlas_pb2.ConnectCapabilityResponse.FromString,
+                )
+                resp = await call(req, timeout=4.0)
             return _rewrite_loopback(resp.endpoint.rstrip("/"), atlas_endpoint)
     raise RuntimeError(f"no MCP provider for {contract_id}")
 

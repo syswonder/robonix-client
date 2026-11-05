@@ -11,8 +11,9 @@ import yaml
 from .proto import module_health_client_pb2, soma_client_pb2, vitals_client_pb2
 from .transport import (
     ClientSettings,
+    _unary_unary as _shared_unary_unary,
     discover_endpoint,
-    grpc_channel,
+    stream_channel,
     system_snapshot,
 )
 from .urdf_assets import urdf_asset_store
@@ -59,13 +60,9 @@ async def _unary_unary(
     response_type: Any,
     timeout: float = 4.0,
 ) -> Any:
-    async with grpc_channel(target) as channel:
-        call = channel.unary_unary(
-            path,
-            request_serializer=request.SerializeToString,
-            response_deserializer=response_type.FromString,
-        )
-        return await call(request, timeout=timeout)
+    # Reuses the pooled per-target channel; the 2 s modules poll used to open
+    # a new connection every round.
+    return await _shared_unary_unary(target, path, request, response_type, timeout)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -640,7 +637,7 @@ async def _hardware_loop(
             )
             await _put_source(queue, "hardware", "ready")
             retry_seconds = 1.0
-            async with grpc_channel(endpoint) as channel:
+            async with stream_channel(endpoint) as channel:
                 call = channel.unary_stream(
                     VITALS_STREAM_PATH,
                     request_serializer=vitals_client_pb2.StreamVitals_Request.SerializeToString,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import struct
 import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -265,6 +267,173 @@ def _safe_json(raw: str) -> Any:
         return raw
 
 
+class _TtlCache:
+    """Per-key results that expire, with concurrent misses sharing one fetch.
+
+    Several pollers (and tabs) ask the same question at once; without the
+    shared in-flight future they would all miss together and each run the
+    full RPC chain. Failures are never stored, so an outage does not outlive
+    the request that saw it.
+    """
+
+    def __init__(self, ttl: float) -> None:
+        self.ttl = ttl
+        self._values: dict[Any, tuple[float, Any]] = {}
+        self._inflight: dict[Any, asyncio.Task] = {}
+        self._tasks: set[asyncio.Task] = set()
+
+    def get(self, key: Any) -> Any:
+        entry = self._values.get(key)
+        if entry and entry[0] > time.monotonic():
+            return entry[1]
+        self._values.pop(key, None)
+        return None
+
+    def put(self, key: Any, value: Any) -> None:
+        now = time.monotonic()
+        for expired in [k for k, (deadline, _) in self._values.items() if deadline <= now]:
+            del self._values[expired]
+        self._values.pop(key, None)
+        while len(self._values) >= 256:
+            del self._values[next(iter(self._values))]
+        self._values[key] = (now + self.ttl, value)
+
+    def evict(self, key: Any) -> None:
+        self._values.pop(key, None)
+
+    def evict_value(self, value: Any) -> None:
+        for key in [key for key, (_, item) in self._values.items() if item == value]:
+            del self._values[key]
+
+    def clear(self) -> None:
+        self._values.clear()
+        self._inflight.clear()
+
+    async def get_or_fetch(self, key: Any, fetch: Any) -> Any:
+        cached = self.get(key)
+        if cached is not None:
+            return cached
+        task = self._inflight.get(key)
+        if task is None:
+            # The fetch runs as its own task so that cancelling whichever
+            # caller started it does not cancel everyone sharing it.
+            task = asyncio.ensure_future(self._fetch(key, fetch))
+            self._inflight[key] = task
+            self._tasks.add(task)
+            task.add_done_callback(lambda done: self._settle(key, done))
+        return await asyncio.shield(task)
+
+    async def _fetch(self, key: Any, fetch: Any) -> Any:
+        value = await fetch()
+        # A clear() while this ran means the answer may already be stale.
+        if self._inflight.get(key) is asyncio.current_task():
+            self.put(key, value)
+        return value
+
+    def _settle(self, key: Any, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if self._inflight.get(key) is task:
+            del self._inflight[key]
+        # Every caller may have been cancelled; nobody else reads the error.
+        if not task.cancelled():
+            task.exception()
+
+
+# Unary calls reuse one channel per target instead of a TCP + HTTP/2
+# handshake per poll. Streams keep their own channel: their lifetime is the
+# stream's, and closing one must not cut off unrelated calls.
+_unary_channels: dict[tuple[str, asyncio.AbstractEventLoop], grpc.aio.Channel] = {}
+# Dropped channels close in the background once their in-flight calls end.
+_closing_channels: set[asyncio.Task] = set()
+_channel_users: dict[grpc.aio.Channel, int] = {}
+MAX_IDLE_CHANNELS = 32
+CHANNEL_CLOSE_GRACE_SECONDS = 5.0
+# Atlas answers change only when a provider (re)registers. Only successful
+# lookups are kept, so "not registered yet" is re-asked on every poll.
+DISCOVERY_TTL_SECONDS = 30.0
+_discovery_cache = _TtlCache(DISCOVERY_TTL_SECONDS)
+# Long enough to merge overlapping pollers, far below the 2 s UI poll.
+ACTIVE_PLANS_TTL_SECONDS = 1.0
+_active_plans_cache = _TtlCache(ACTIVE_PLANS_TTL_SECONDS)
+VOICE_FINISH_TTL_SECONDS = 30.0
+_voice_finish_cache = _TtlCache(VOICE_FINISH_TTL_SECONDS)
+
+
+def _shared_channel(target: str) -> grpc.aio.Channel:
+    key = (normalize_grpc_target(target), asyncio.get_running_loop())
+    channel = _unary_channels.get(key)
+    if channel is None:
+        channel = grpc_channel(target)
+        _unary_channels[key] = channel
+    return channel
+
+
+def _drop_shared_channel(target: str, expected: grpc.aio.Channel) -> None:
+    key = (normalize_grpc_target(target), asyncio.get_running_loop())
+    if _unary_channels.get(key) is not expected:
+        return
+    channel = _unary_channels.pop(key, None)
+    if channel is not None:
+        # Other calls may still be running on it; let them finish instead of
+        # cancelling them with the close.
+        closing = asyncio.ensure_future(channel.close(grace=CHANNEL_CLOSE_GRACE_SECONDS))
+        _closing_channels.add(closing)
+        closing.add_done_callback(_closing_channels.discard)
+
+
+async def reset_connection_caches() -> None:
+    """Close pooled channels and forget cached answers (shutdown and tests)."""
+    caches = (_discovery_cache, _active_plans_cache, _voice_finish_cache)
+    tasks = {task for cache in caches for task in cache._tasks}
+    for cache in caches:
+        cache.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    channels = list(_unary_channels.values())
+    _unary_channels.clear()
+    closing = list(_closing_channels)
+    _closing_channels.clear()
+    if closing:
+        await asyncio.gather(*closing, return_exceptions=True)
+    for channel in channels:
+        try:
+            await channel.close()
+        except Exception:
+            pass
+
+
+def _is_unavailable(exc: BaseException) -> bool:
+    return isinstance(exc, grpc.aio.AioRpcError) and exc.code() == grpc.StatusCode.UNAVAILABLE
+
+
+def _needs_rediscovery(exc: grpc.aio.AioRpcError) -> bool:
+    return exc.code() in (
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.UNIMPLEMENTED,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+    )
+
+
+def _forget_unreachable(target: str) -> None:
+    """A provider that stopped answering may have moved: rediscover it next time."""
+    _discovery_cache.evict_value(normalize_grpc_target(target))
+    _discovery_cache.evict_value(target)
+
+
+@asynccontextmanager
+async def stream_channel(target: str) -> AsyncIterator[grpc.aio.Channel]:
+    """A per-stream channel that also invalidates discovery when the peer is gone."""
+    try:
+        async with grpc_channel(target) as channel:
+            yield channel
+    except grpc.aio.AioRpcError as exc:
+        if _needs_rediscovery(exc):
+            _forget_unreachable(target)
+        raise
+
+
 async def _unary_unary(
     target: str,
     path: str,
@@ -272,13 +441,33 @@ async def _unary_unary(
     response_type: Any,
     timeout: float = 4.0,
 ) -> Any:
-    async with grpc_channel(target) as channel:
+    channel = _shared_channel(target)
+    _channel_users[channel] = _channel_users.get(channel, 0) + 1
+    try:
         call = channel.unary_unary(
             path,
             request_serializer=request.SerializeToString,
             response_deserializer=response_type.FromString,
         )
         return await call(request, timeout=timeout)
+    except grpc.aio.AioRpcError as exc:
+        # A peer that went away leaves the pooled channel in backoff; start
+        # the next call on a fresh one instead of inheriting the wait.
+        if _is_unavailable(exc):
+            _drop_shared_channel(target, channel)
+        if _needs_rediscovery(exc):
+            _forget_unreachable(target)
+        raise
+    finally:
+        remaining = _channel_users[channel] - 1
+        if remaining:
+            _channel_users[channel] = remaining
+        else:
+            del _channel_users[channel]
+        idle = [(key, item) for key, item in _unary_channels.items()
+                if key[1] is asyncio.get_running_loop() and item not in _channel_users]
+        for (address, _), item in idle[:-MAX_IDLE_CHANNELS]:
+            _drop_shared_channel(address, item)
 
 
 async def query_atlas(
@@ -325,7 +514,23 @@ async def connect_capability(
     return rewrite_remote_endpoint(resp.endpoint, atlas_endpoint)
 
 
+def _discovery_key(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> tuple[str, str, str]:
+    return (normalize_grpc_target(atlas_endpoint), contract_id, provider_hint)
+
+
+def forget_endpoint(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> None:
+    """Drop a cached discovery result, e.g. after its provider stopped answering."""
+    _discovery_cache.evict(_discovery_key(atlas_endpoint, contract_id, provider_hint))
+
+
 async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> str:
+    return await _discovery_cache.get_or_fetch(
+        _discovery_key(atlas_endpoint, contract_id, provider_hint),
+        lambda: _discover_endpoint_uncached(atlas_endpoint, contract_id, provider_hint),
+    )
+
+
+async def _discover_endpoint_uncached(atlas_endpoint: str, contract_id: str, provider_hint: str = "") -> str:
     providers = await query_atlas(
         atlas_endpoint,
         provider_id=provider_hint,
@@ -345,21 +550,40 @@ async def discover_endpoint(atlas_endpoint: str, contract_id: str, provider_hint
 async def list_active_plans(settings: ClientSettings) -> dict[str, Any]:
     """Read Executor's control-plane snapshot without creating an RTDL plan."""
     atlas = normalize_grpc_target(settings.atlas_endpoint or DEFAULT_ATLAS)
-    try:
-        endpoint = await discover_endpoint(atlas, CONTRACT_EXECUTOR_LIST_ACTIVE)
-    except grpc.aio.AioRpcError as exc:
-        raise ExecutorQueryError("atlas_unreachable", atlas, _rpc_detail(exc)) from exc
-    except RobonixApiError as exc:
-        raise ExecutorQueryError("executor_not_registered", atlas, str(exc)) from exc
-    try:
-        response = await _unary_unary(
+    return await _active_plans_cache.get_or_fetch(atlas, lambda: _list_active_plans_uncached(atlas))
+
+
+async def _list_active_plans_uncached(atlas: str) -> dict[str, Any]:
+    async def discover() -> str:
+        try:
+            return await discover_endpoint(atlas, CONTRACT_EXECUTOR_LIST_ACTIVE)
+        except grpc.aio.AioRpcError as exc:
+            raise ExecutorQueryError("atlas_unreachable", atlas, _rpc_detail(exc)) from exc
+        except RobonixApiError as exc:
+            raise ExecutorQueryError("executor_not_registered", atlas, str(exc)) from exc
+
+    async def query(endpoint: str) -> Any:
+        return await _unary_unary(
             endpoint,
             "/robonix.contracts.RobonixSystemExecutorListActivePlans/ListActivePlans",
             executor_pb2.ListActivePlans_Request(),
             executor_pb2.ListActivePlans_Response,
         )
+
+    endpoint = await discover()
+    try:
+        response = await query(endpoint)
     except grpc.aio.AioRpcError as exc:
-        raise ExecutorQueryError("executor_unreachable", endpoint, _rpc_detail(exc)) from exc
+        if not _is_unavailable(exc):
+            raise ExecutorQueryError("executor_unreachable", endpoint, _rpc_detail(exc)) from exc
+        # A cached endpoint may belong to an Executor that restarted on a new
+        # port: ask Atlas again once before reporting the hop as down.
+        forget_endpoint(atlas, CONTRACT_EXECUTOR_LIST_ACTIVE)
+        endpoint = await discover()
+        try:
+            response = await query(endpoint)
+        except grpc.aio.AioRpcError as retry_exc:
+            raise ExecutorQueryError("executor_unreachable", endpoint, _rpc_detail(retry_exc)) from retry_exc
     if not response.success:
         raise ExecutorQueryError(
             "executor_error", endpoint, response.error or "Executor active-plan query failed"
@@ -554,7 +778,7 @@ async def set_handsfree_enabled(settings: ClientSettings, enabled: bool) -> dict
 async def watch_handsfree_events(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
     """Forward the robot-local hands-free turn as the standard VoiceEvent stream."""
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_HANDSFREE_EVENTS)
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonHandsfreeEvents/WatchHandsfreeEvents",
             request_serializer=liaison_pb2.WatchHandsfreeEvents_Request.SerializeToString,
@@ -648,6 +872,8 @@ async def _submit_text_once(
     steer: bool = False,
     expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
+    # The turn changes which plans are running; do not serve a stale snapshot.
+    _active_plans_cache.clear()
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
     task = build_text_task(
         settings,
@@ -656,7 +882,7 @@ async def _submit_text_once(
         steer=steer,
         expected_turn_id=expected_turn_id,
     )
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
@@ -671,9 +897,11 @@ async def abort_turn(
     settings: ClientSettings,
     expected_turn_id: str = "",
 ) -> AsyncIterator[dict[str, Any]]:
+    # The turn changes which plans are running; do not serve a stale snapshot.
+    _active_plans_cache.clear()
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
     task = build_abort_task(settings, expected_turn_id)
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
             request_serializer=pilot_pb2.Task.SerializeToString,
@@ -704,7 +932,7 @@ async def start_voice_session(
         speaker_node_id=settings.speaker_node_id,
         context_json=json.dumps(context, ensure_ascii=False),
     )
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonVoice/StartVoiceSession",
             request_serializer=liaison_pb2.StartVoiceSession_Request.SerializeToString,
@@ -722,7 +950,20 @@ async def voice_finish_supported(settings: ClientSettings) -> bool:
     with Atlas, so absence is the normal "not upgraded yet" case, not an
     error -- callers should hide the finish-capture control rather than
     surfacing a gRPC UNIMPLEMENTED failure.
+
+    Only a positive answer is cached: support appears when Liaison is
+    upgraded, and a "no" must not hide the control for the cache lifetime.
     """
+    atlas = normalize_grpc_target(settings.atlas_endpoint or DEFAULT_ATLAS)
+    if _voice_finish_cache.get(atlas):
+        return True
+    supported = await _voice_finish_supported_uncached(settings)
+    if supported:
+        _voice_finish_cache.put(atlas, True)
+    return supported
+
+
+async def _voice_finish_supported_uncached(settings: ClientSettings) -> bool:
     try:
         providers = await query_atlas(
             settings.atlas_endpoint,
@@ -797,7 +1038,7 @@ async def enroll_voiceprint(
         encoding="pcm_s16le",
         sample_rate_hz=16000,
     )
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_unary(
             "/robonix.contracts.RobonixServiceVoiceprintEnroll/Enroll",
             request_serializer=voiceprint_pb2.Enroll_Request.SerializeToString,
@@ -831,7 +1072,7 @@ async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_MIC, settings.mic_node_id)
     deadline = time.monotonic() + seconds
     chunks: list[bytes] = []
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixPrimitiveAudioMic/Mic",
             request_serializer=Empty.SerializeToString,
@@ -891,7 +1132,7 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
         voice="",
         speed=1.0,
     )
-    async with grpc_channel(tts_endpoint) as channel:
+    async with stream_channel(tts_endpoint) as channel:
         call = channel.unary_unary(
             "/robonix.contracts.RobonixServiceSpeechTts/Synthesize",
             request_serializer=tts_pb2.Synthesize_Request.SerializeToString,
@@ -917,7 +1158,7 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
                 duration_s=len(data) / float(sample_rate * frame_bytes),
             )
 
-    async with grpc_channel(speaker_endpoint) as channel:
+    async with stream_channel(speaker_endpoint) as channel:
         call = channel.stream_unary(
             "/robonix.contracts.RobonixPrimitiveAudioSpeaker/Speaker",
             request_serializer=audio_pb2.AudioChunk.SerializeToString,
