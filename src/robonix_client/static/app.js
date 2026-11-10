@@ -14,12 +14,135 @@ const SIDEBAR_VIEWS = ["rtdl", "events"];
 const TASK_ACTIVE = ["in_progress", "running", "planning", "executing"];
 const TASK_TERMINAL = ["done", "completed", "failed", "cancelled", "canceled", "aborted", "superseded"];
 
+// Conversations used to live in one localStorage blob that was re-serialized
+// in full (30 chats, megabytes) on every streamed event. Each conversation now
+// has its own key plus an ordered index, so a save only rewrites the chats that
+// changed. The legacy blob is still read, and wins while it exists, so an older
+// build's data (or one written by hand) is migrated on the next save.
+const LEGACY_CONVERSATIONS_KEY = "robonix.conversations";
+const CONVERSATION_INDEX_KEY = "robonix.conversations.index";
+const CONVERSATION_KEY_PREFIX = "robonix.conversation.";
+const MAX_CONVERSATIONS = 30;
+const MAX_LIVE_BATCHES = 80;
+
+/// Conversation objects whose current contents are already on disk. Saving
+/// builds a fresh object for the chat on screen, so identity is the dirty bit;
+/// code that edits a stored conversation in place must call markConversationDirty.
+const savedConversations = new WeakSet();
+
+function markConversationDirty(conversation) {
+  if (conversation) savedConversations.delete(conversation);
+}
+
+/// Image attachments are base64 data URLs; a few screenshots used to push the
+/// conversation history past the ~5MB localStorage quota. Their payloads go to
+/// IndexedDB instead and the persisted message keeps only `blobKey`. Without
+/// IndexedDB (or when a write fails) the old behaviour applies: the data URL
+/// stays inline and is stripped only when the quota is hit.
+const attachmentStore = (() => {
+  let dbPromise = null;
+  let available = typeof indexedDB !== "undefined";
+  const open = () => {
+    if (!available) return Promise.reject(new Error("indexedDB unavailable"));
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open("robonix-attachments", 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("blobs");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }).catch((error) => {
+        available = false;
+        throw error;
+      });
+    }
+    return dbPromise;
+  };
+  const run = (mode, body) => open().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction("blobs", mode);
+    const result = body(tx.objectStore("blobs"));
+    tx.oncomplete = () => resolve(result?.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  }));
+  return {
+    get available() { return available; },
+    put: (key, value) => run("readwrite", (store) => store.put(packBase64(value), key)),
+    get: (key) => run("readonly", (store) => store.get(key)).then(unpackBase64),
+    // Keys are `<conversationId>/<messageId>/<n>`; "￿" closes the range.
+    deletePrefix: (prefix) => run("readwrite", (store) => store.delete(IDBKeyRange.bound(prefix, `${prefix}￿`))),
+    clear: () => run("readwrite", (store) => store.clear()),
+  };
+})();
+
+/// The stored strings are mostly base64 (an attachment's data URL, a camera
+/// frame inside a tool output). The longest base64 run is kept as a Blob, a
+/// third smaller, and get() rebuilds the exact original string. Only canonical
+/// base64 is packed so the round trip is lossless; anything else is stored as
+/// given, and records written before this are plain strings.
+const PACK_MIN_BASE64 = 4096;
+
+function packBase64(text) {
+  if (typeof text !== "string" || text.length < PACK_MIN_BASE64) return text;
+  const match = /[A-Za-z0-9+/]{4096,}={0,2}/.exec(text);
+  if (!match || match[0].length % 4) return text;
+  const b64 = match[0];
+  let binary;
+  try {
+    binary = atob(b64);
+  } catch {
+    return text;
+  }
+  if (btoa(binary) !== b64) return text;
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return {
+    packed: 1,
+    head: text.slice(0, match.index),
+    tail: text.slice(match.index + b64.length),
+    blob: new Blob([bytes]),
+  };
+}
+
+function unpackBase64(value) {
+  if (!value || typeof value !== "object" || value.packed !== 1) return value;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      resolve(value.head + url.slice(url.indexOf(",") + 1) + value.tail);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(value.blob);
+  });
+}
+
 function taskIsActive(task) {
   return TASK_ACTIVE.includes(String(task?.status || "").trim().toLowerCase());
 }
 
 function snapshotHasActiveTasks(snapshot) {
   return snapshot?.tasks?.length ? snapshot.tasks.some(taskIsActive) : taskIsActive(snapshot);
+}
+
+/// Renders requested by streamed events are coalesced into one per frame: a
+/// burst of node_state events used to rebuild every plan tree once per event.
+/// Each render function drops its own name from the set, so a direct call
+/// satisfies a pending request.
+const pendingRenders = new Set();
+let renderFrame = 0;
+
+function scheduleRender(...names) {
+  names.forEach((name) => pendingRenders.add(name));
+  if (!renderFrame) renderFrame = window.requestAnimationFrame(flushRenders);
+}
+
+function flushRenders() {
+  renderFrame = 0;
+  if (pendingRenders.has("plan")) renderPlan();
+  if (pendingRenders.has("messages")) renderMessages();
+  if (pendingRenders.has("timeline")) renderTimeline();
+  if (pendingRenders.has("history")) renderHistory();
+  pendingRenders.clear();
 }
 
 const state = {
@@ -206,8 +329,10 @@ function hasConversationContent(conversation = null) {
 }
 
 function loadConversations() {
+  const legacy = localStorage.getItem(LEGACY_CONVERSATIONS_KEY);
+  if (legacy === null) return loadIndexedConversations();
   try {
-    const raw = JSON.parse(localStorage.getItem("robonix.conversations") || "[]");
+    const raw = JSON.parse(legacy);
     if (Array.isArray(raw)) {
       return raw.filter((c) => hasConversationContent(c));
     }
@@ -236,30 +361,276 @@ function loadConversations() {
   }
 }
 
+function readConversationIndex() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(CONVERSATION_INDEX_KEY) || "[]");
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function loadIndexedConversations() {
+  const conversations = [];
+  readConversationIndex().forEach((id) => {
+    try {
+      const conversation = JSON.parse(localStorage.getItem(CONVERSATION_KEY_PREFIX + id) || "null");
+      if (!conversation || typeof conversation !== "object") return;
+      savedConversations.add(conversation);
+      conversations.push(conversation);
+    } catch (_) {
+      // One unreadable chat must not take the rest of the sidebar with it.
+    }
+  });
+  return conversations.filter((c) => hasConversationContent(c));
+}
+
+/// Move one conversation's image payloads out of the JSON that goes to
+/// localStorage. The in-memory attachment keeps its data URL (it is on screen)
+/// and gains a `blobKey`; the stored copy keeps only the key. A failed write
+/// drops the key again so the next save falls back to inlining the image.
+const storedBlobKeys = new Set();
+const pendingBlobKeys = new Set();
+const failedBlobKeys = new Set();
+
+// Persistence replaces conversation snapshots. Invalidate the current history
+// entry by id, not the snapshot captured when the asynchronous write started.
+function payloadWriteSettled(conversation) {
+  const current = state.history.find((item) => item.id === conversation.id);
+  if (!current) return;
+  markConversationDirty(current);
+  schedulePersist();
+}
+
+function conversationForStorage(conversation, stripPayloads) {
+  const messages = (conversation.messages || []).map((message, messageIndex) => {
+    if (!message?.attachments?.length) return message;
+    const attachments = message.attachments.map((item, itemIndex) => {
+      if (!item || typeof item !== "object") return item;
+      const key = item.blobKey || `${conversation.id}/${message.id || messageIndex}/${itemIndex}`;
+      if (item.dataUrl && attachmentStore.available && !failedBlobKeys.has(key)
+          && !storedBlobKeys.has(key) && !pendingBlobKeys.has(key)) {
+        pendingBlobKeys.add(key);
+        attachmentStore.put(key, item.dataUrl).then(() => {
+          storedBlobKeys.add(key);
+          item.blobKey = key;
+        }).catch(() => {
+          failedBlobKeys.add(key);
+          if (item.blobKey === key) delete item.blobKey;
+        }).finally(() => {
+          pendingBlobKeys.delete(key);
+          payloadWriteSettled(conversation);
+        });
+      }
+      if (!item.dataUrl) return item;
+      // A pending transaction is not a durable copy, including during unload.
+      if (storedBlobKeys.has(key)) {
+        const { dataUrl, ...meta } = item;
+        return { ...meta, blobKey: key };
+      }
+      const { blobKey, ...inline } = item;
+      if (!stripPayloads) return inline;
+      const { dataUrl, ...meta } = inline;
+      return meta;
+    });
+    return { ...message, attachments };
+  });
+  const results = (list) => (Array.isArray(list) ? list.map((r) => resultForStorage(conversation, r, stripPayloads)) : list);
+  const nodeStates = (map) => {
+    if (!map || typeof map !== "object") return map;
+    const out = {};
+    Object.entries(map).forEach(([key, r]) => { out[key] = resultForStorage(conversation, r, stripPayloads); });
+    return out;
+  };
+  const batches = (list) => (Array.isArray(list)
+    ? list.map((b) => (b && Array.isArray(b.results) ? { ...b, results: results(b.results) } : b))
+    : list);
+  const planRecords = Array.isArray(conversation.planRecords)
+    ? conversation.planRecords.map((record) => (record && typeof record === "object"
+      ? { ...record, nodeStates: nodeStates(record.nodeStates), batches: batches(record.batches) }
+      : record))
+    : conversation.planRecords;
+  return {
+    ...conversation,
+    messages,
+    planRecords,
+    nodeStates: nodeStates(conversation.nodeStates),
+    batches: batches(conversation.batches),
+  };
+}
+
+/// Tool outputs (a camera frame comes back as a ~60KB string) are the other
+/// bulk: the same result is referenced from the live nodeStates, the live
+/// batches and the plan record's copies of both, so one call was written to
+/// localStorage four times. The payload goes to IndexedDB once per call and the
+/// stored leafResult keeps `outputRef`; the detail view loads it on demand
+/// (see leafResultForDisplay). Same fallbacks as attachments: inline without
+/// IndexedDB or after a failed write, dropped only when the quota is hit.
+const LARGE_OUTPUT_CHARS = 4096;
+const storedOutputKeys = new Set();
+const pendingOutputKeys = new Set();
+const failedOutputKeys = new Set();
+
+function outputKeyFor(conversation, result) {
+  const leaf = result.leafResult;
+  const id = leaf.callId || `${result.planId || "plan"}:${result.nodeIndex ?? "node"}`;
+  return `${conversation.id}/out/${id}`;
+}
+
+function resultForStorage(conversation, result, stripPayloads) {
+  const leaf = result?.leafResult;
+  if (!leaf || typeof leaf !== "object") return result;
+  const output = leaf.output;
+  if (typeof output !== "string" || output.length <= LARGE_OUTPUT_CHARS) {
+    // Restored and not opened since: the ref is all there is to keep.
+    return result;
+  }
+  const key = leaf.outputRef || outputKeyFor(conversation, result);
+  if (attachmentStore.available && !failedOutputKeys.has(key)) {
+    if (!storedOutputKeys.has(key) && !pendingOutputKeys.has(key)) {
+      pendingOutputKeys.add(key);
+      attachmentStore.put(key, output).then(() => {
+        storedOutputKeys.add(key);
+      }).catch(() => {
+        failedOutputKeys.add(key);
+      }).finally(() => {
+        pendingOutputKeys.delete(key);
+        payloadWriteSettled(conversation);
+      });
+    }
+    if (storedOutputKeys.has(key)) {
+      const { output: _omit, ...meta } = leaf;
+      return { ...result, leafResult: { ...meta, outputRef: key, outputChars: output.length } };
+    }
+  }
+  if (!stripPayloads) return result;
+  const { output: _omit, ...meta } = leaf;
+  return { ...result, leafResult: { ...meta, outputOmitted: true, outputChars: output.length } };
+}
+
+/// The leafResult to show in a detail pane. A restored result carries only
+/// `outputRef`; fetch it once, keep it on the object, and redraw whichever
+/// pane is still showing that node.
+const loadingOutputs = new WeakSet();
+// Kept apart from the leaf so the placeholder text is never persisted over the ref.
+const missingOutputs = new WeakSet();
+
+function leafResultForDisplay(leaf) {
+  if (!leaf || typeof leaf !== "object" || leaf.output !== undefined) return leaf;
+  if (leaf.outputOmitted) return { ...leaf, output: t("[output not kept: browser storage was full]") };
+  if (!leaf.outputRef) return leaf;
+  if (missingOutputs.has(leaf)) return { ...leaf, output: t("[output unavailable]") };
+  if (!loadingOutputs.has(leaf)) {
+    loadingOutputs.add(leaf);
+    attachmentStore.get(leaf.outputRef).then((output) => {
+      if (typeof output !== "string") throw new Error("missing");
+      leaf.output = output;
+      storedOutputKeys.add(leaf.outputRef);
+    }).catch(() => {
+      missingOutputs.add(leaf);
+    }).then(() => {
+      const live = detailSelections.live;
+      if (live?.nodeState?.leafResult === leaf) renderExecutionDetail(live.node, live.status, live.nodeState);
+      const history = detailSelections.history;
+      if (history?.nodeState?.leafResult === leaf) renderHistoryExecutionDetail(history.node, history.status, history.nodeState);
+      const call = detailSelections.call;
+      if (call?.leaf === leaf && maybe("callDetailModal")?.open) showCallDetails(call.context);
+    });
+  }
+  return { ...leaf, output: t("[loading output…]") };
+}
+
+/// A camera capability answers with a sensor_msgs/Image as JSON whose `data`
+/// is a base64 JPEG/PNG. Shown as text that is tens of thousands of
+/// characters nobody can read, so the detail views draw the picture instead
+/// and replace `data` with a one-line note. Parsed once per leaf.
+const IMAGE_ENCODINGS = { jpeg: "jpeg", jpg: "jpeg", png: "png", webp: "webp", gif: "gif" };
+const leafImages = new WeakMap();
+
+function leafOutputImage(leaf) {
+  const output = leaf?.output;
+  if (typeof output !== "string" || output.length <= LARGE_OUTPUT_CHARS) return null;
+  const cached = leafImages.get(leaf);
+  if (cached && cached.output === output) return cached.image;
+  let image = null;
+  try {
+    const parsed = JSON.parse(output);
+    const format = IMAGE_ENCODINGS[String(parsed?.encoding || parsed?.format || "").toLowerCase()];
+    if (format && typeof parsed.data === "string" && /^[A-Za-z0-9+/]+={0,2}$/.test(parsed.data)) {
+      image = {
+        parsed,
+        format,
+        src: `data:image/${format};base64,${parsed.data}`,
+        width: Number(parsed.width) || 0,
+        height: Number(parsed.height) || 0,
+        bytes: Math.floor((parsed.data.length * 3) / 4),
+      };
+    }
+  } catch {
+    // Not JSON: plain text output, shown as is.
+  }
+  leafImages.set(leaf, { output, image });
+  return image;
+}
+
+function imageNote(image) {
+  const size = image.width && image.height ? ` ${image.width}×${image.height}` : "";
+  return t("[{format} image{size}, {kb} KB, shown above]", {
+    format: image.format.toUpperCase(),
+    size,
+    kb: (image.bytes / 1024).toFixed(1),
+  });
+}
+
+/// The leaf as the detail text shows it: an image output becomes the parsed
+/// object with `data` swapped for the note.
+function leafForDetailText(leaf, image) {
+  if (!image) return leaf;
+  return { ...leaf, output: { ...image.parsed, data: imageNote(image) } };
+}
+
+/// Draw (or remove) the output picture just above a detail view's text.
+function renderDetailImage(pre, image) {
+  let figure = pre.previousElementSibling?.classList.contains("detail-image") ? pre.previousElementSibling : null;
+  if (!image) {
+    figure?.remove();
+    return;
+  }
+  if (!figure) {
+    figure = document.createElement("figure");
+    figure.className = "detail-image";
+    const img = document.createElement("img");
+    img.onerror = () => { figure.hidden = true; };
+    const caption = document.createElement("figcaption");
+    figure.append(img, caption);
+    pre.before(figure);
+  }
+  const img = figure.querySelector("img");
+  if (img.getAttribute("src") !== image.src) {
+    figure.hidden = false;
+    img.setAttribute("src", image.src);
+  }
+  img.alt = t("Tool output image");
+  const caption = image.width && image.height ? `${image.width}×${image.height} · ` : "";
+  figure.querySelector("figcaption").textContent = `${caption}${image.format.toUpperCase()} · ${(image.bytes / 1024).toFixed(1)} KB`;
+}
+
 /// Persist the conversation list, shedding load until it fits.
 ///
-/// Attachments are base64 data URLs, so a couple of screenshots can carry a
-/// 30-conversation history past localStorage's ~5MB quota. setItem then
-/// throws, which used to propagate out of persistCurrentConversation and
-/// skip the renderHistory() below it -- the sidebar entry vanished and the
-/// write never landed, so a reload came back to an older snapshot.
+/// Only conversations changed since their last save are serialized (see
+/// savedConversations); the index records the sidebar order. setItem throwing
+/// on quota used to propagate out of persistCurrentConversation and skip the
+/// renderHistory() below it -- the sidebar entry vanished and the write never
+/// landed, so a reload came back to an older snapshot.
 ///
-/// Drop attachment payloads first (the transcript text is what the user came
-/// back for), then the oldest conversations, and only give up once a single
-/// conversation still will not fit.
+/// When the quota is hit, drop inline attachment payloads first (the
+/// transcript text is what the user came back for), then the oldest
+/// conversations, and only give up once a single conversation still will not
+/// fit.
 function saveConversations() {
-  const stripAttachments = (conversations) =>
-    conversations.map((conversation) => ({
-      ...conversation,
-      messages: (conversation.messages || []).map(({ attachments, ...rest }) => ({
-        ...rest,
-        attachments: (attachments || []).map(({ dataUrl, ...meta }) => meta),
-      })),
-    }));
-
-  const fits = (conversations) => {
+  const trySet = (key, value) => {
     try {
-      localStorage.setItem("robonix.conversations", JSON.stringify(conversations));
+      localStorage.setItem(key, value);
       return true;
     } catch (error) {
       if (error?.name !== "QuotaExceededError") throw error;
@@ -267,14 +638,91 @@ function saveConversations() {
     }
   };
 
-  const capped = state.history.slice(0, 30);
-  if (fits(capped)) return;
-  // Attachment payloads are the bulk of the data and the least missed.
-  let candidates = stripAttachments(capped);
-  // history is newest-first, so trimming the tail sheds the oldest chats.
+  const previousIds = readConversationIndex();
+  const indexed = new Set(previousIds);
+  const legacyPresent = localStorage.getItem(LEGACY_CONVERSATIONS_KEY) !== null;
+  const pendingIds = new Set();
+  const overwritten = new Map();
+  const write = (conversations, { strip = false, all = false } = {}) => {
+    // Strip indexed chats first: shrinking their existing records can free
+    // space for a new chat without deleting anything the old index needs.
+    const ordered = strip
+      ? [...conversations].sort((a, b) => Number(indexed.has(b.id)) - Number(indexed.has(a.id)))
+      : conversations;
+    for (const conversation of ordered) {
+      if (!all && savedConversations.has(conversation)) continue;
+      const key = CONVERSATION_KEY_PREFIX + conversation.id;
+      const payload = JSON.stringify(conversationForStorage(conversation, strip));
+      if (indexed.has(conversation.id) && !overwritten.has(key)) {
+        overwritten.set(key, localStorage.getItem(key));
+      }
+      if (!trySet(key, payload)) return false;
+      if (!indexed.has(conversation.id)) pendingIds.add(conversation.id);
+      savedConversations.add(conversation);
+    }
+    return trySet(CONVERSATION_INDEX_KEY, JSON.stringify(conversations.map((c) => c.id)));
+  };
+  const forgetDropped = (keptIds) => {
+    const kept = new Set(keptIds);
+    for (const id of new Set([...previousIds, ...pendingIds])) {
+      if (kept.has(id)) continue;
+      localStorage.removeItem(CONVERSATION_KEY_PREFIX + id);
+      if (indexed.has(id)) attachmentStore.deletePrefix(`${id}/`).catch(() => {});
+    }
+  };
+  const commit = (conversations) => {
+    forgetDropped(conversations.map((c) => c.id));
+    if (legacyPresent) localStorage.removeItem(LEGACY_CONVERSATIONS_KEY);
+  };
+
+  let candidates = state.history.slice(0, MAX_CONVERSATIONS);
+  // The legacy blob remains the recovery copy until every chat has been
+  // written and the new index has committed. It wins on reload until then.
+  if (legacyPresent) candidates.forEach(markConversationDirty);
+  if (write(candidates)) {
+    commit(candidates);
+    return;
+  }
+  // Try smaller records before dropping any conversation. Never drop an
+  // indexed chat (or one still in the legacy blob) merely to satisfy quota:
+  // its old copy must remain reachable if a later write fails.
   while (candidates.length) {
-    if (fits(candidates)) return;
-    candidates = candidates.slice(0, candidates.length - 1);
+    if (write(candidates, { strip: true, all: true })) {
+      commit(candidates);
+      return;
+    }
+    if (legacyPresent || candidates.length <= 1 || indexed.has(candidates.at(-1).id)) break;
+    const dropped = candidates.pop();
+    if (pendingIds.delete(dropped.id)) localStorage.removeItem(CONVERSATION_KEY_PREFIX + dropped.id);
+  }
+  // Remove unindexed writes before restoring indexed records. Undo growth
+  // before undoing shrinkage, so the original records still fit the quota.
+  pendingIds.forEach((id) => localStorage.removeItem(CONVERSATION_KEY_PREFIX + id));
+  const changed = [...overwritten].filter(([key, original]) => localStorage.getItem(key) !== original);
+  changed.sort(([a, oldA], [b, oldB]) =>
+    ((localStorage.getItem(b)?.length || 0) - (oldB?.length || 0))
+    - ((localStorage.getItem(a)?.length || 0) - (oldA?.length || 0)));
+  for (const [key, original] of changed) {
+    if (original === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, original);
+  }
+  state.history.forEach(markConversationDirty);
+  // Replace the legacy key atomically, but never remove indexed recovery
+  // copies to make room. A reload must remain safe even between operations.
+  const fallback = state.history.slice(0, MAX_CONVERSATIONS);
+  while (fallback.length) {
+    const payload = JSON.stringify(fallback.map((item) => conversationForStorage(item, true)));
+    if (trySet(LEGACY_CONVERSATIONS_KEY, payload)) {
+      // The loader prefers the committed legacy copy, so cleanup is now safe.
+      localStorage.removeItem(CONVERSATION_INDEX_KEY);
+      const kept = new Set(fallback.map((item) => item.id));
+      previousIds.forEach((id) => {
+        localStorage.removeItem(CONVERSATION_KEY_PREFIX + id);
+        if (!kept.has(id)) attachmentStore.deletePrefix(`${id}/`).catch(() => {});
+      });
+      return;
+    }
+    fallback.pop();
   }
   // Never addStatusLine() here: it appends a message, which persists, which
   // lands back in this function.
@@ -388,8 +836,14 @@ async function init() {
     }
   });
 
+  // Saves are batched (see schedulePersist); land the last batch before the
+  // page goes away or into the background, where timers may never fire.
+  window.addEventListener("pagehide", flushPersist);
+  window.addEventListener("beforeunload", flushPersist);
+
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      flushPersist();
       if (perception.polling) {
         stopPerception();
         perception.pausedByVisibility = true;
@@ -689,6 +1143,9 @@ function openRtdlHistory() {
   const modal = maybe("rtdlHistoryModal");
   if (!modal) return;
   modal.hidden = false;
+  // While hidden the modal only carries labels (see renderPlanHistory); draw
+  // the trees now that they have somewhere to be laid out.
+  renderPlan();
   maybe("closeRtdlHistory")?.focus();
 }
 
@@ -1084,7 +1541,8 @@ async function sendTask() {
   socket.onopen = () => {
     socket.send(JSON.stringify({
       text,
-      attachments,
+      // blobKey is a client-side storage detail; the server never sees it.
+      attachments: attachments.map(({ blobKey, ...item }) => item),
       settings: interactionSettings(wasBusy),
       steer: wasBusy,
       interactionMode: wasBusy ? "steer" : "task",
@@ -1272,11 +1730,15 @@ function handlePilotEvent(event) {
     upsertPlanRecord(event.plan);
     announcePlan(event.plan);
     addTimeline("plan", t("live round {round}: {count} call(s)", { round: event.plan.round, count: planCalls(event.plan).length }));
-    renderPlan();
-    persistCurrentConversation();
+    scheduleRender("plan");
+    schedulePersist();
     refreshActivePlans();
   } else if (event.kind === "batch_result" && event.batchResult) {
     state.batches.unshift(event.batchResult);
+    // The live list only feeds the current round's view; per-plan history
+    // lives in planRecords. Uncapped, a long session serialized every batch
+    // ever received on each save.
+    if (state.batches.length > MAX_LIVE_BATCHES) state.batches.length = MAX_LIVE_BATCHES;
     (event.batchResult.results || []).forEach((result) => {
       if (Number.isFinite(Number(result.nodeIndex))) state.nodeStates[String(result.nodeIndex)] = result;
     });
@@ -1287,16 +1749,16 @@ function handlePilotEvent(event) {
       });
     });
     addTimeline(event.batchResult.anyFailed ? "error" : "result", t("round {round} result", { round: event.batchResult.round }));
-    renderPlan();
-    persistCurrentConversation();
+    scheduleRender("plan");
+    schedulePersist();
   } else if (event.kind === "node_state" && event.nodeState) {
     state.nodeStates[String(event.nodeState.nodeIndex)] = event.nodeState;
     updatePlanRecordResult(event.nodeState.planId, (record) => {
       saveNodeResult(record, event.nodeState);
     });
     addTimeline(event.nodeState.state === "FAILED" ? "error" : "status", `${event.nodeState.opId || t("node {index}", { index: event.nodeState.nodeIndex })} ${t(event.nodeState.state)}`);
-    renderPlan();
-    persistCurrentConversation();
+    scheduleRender("plan");
+    schedulePersist();
   } else if (event.kind === "task_state" && event.taskState) {
     state.taskState = event.taskState;
     state.taskStateStale = false;
@@ -1325,9 +1787,9 @@ function handlePilotEvent(event) {
       addStatusLine(t(taskText), "activity", taskText);
     }
     // Dedupe can swallow the line above; the fold still has to happen.
-    if (state.turnReplied) renderMessages();
-    renderPlan();
-    persistCurrentConversation();
+    if (state.turnReplied) scheduleRender("messages");
+    scheduleRender("plan");
+    schedulePersist();
   } else if (event.kind === "status" && event.status) {
     const turnMatch = String(event.status.message || "").match(/^turn_id=(.+)$/);
     if (turnMatch) {
@@ -1482,9 +1944,16 @@ function addMessage(role, text, meta = "", attachments = [], extra = {}) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   state.messages.push({ at: Date.now(), ...extra, id, role, text, meta, attachments });
   if (role !== "agent") state.activeAgentId = null;
-  renderMessages();
   renderSceneAssets();
-  persistCurrentConversation(role === "user" ? text : "");
+  // The user's own message is rendered and saved at once; robot-side status
+  // and replies arrive in bursts and are coalesced to one frame / one write.
+  if (role === "user") {
+    renderMessages();
+    persistCurrentConversation(text);
+  } else {
+    scheduleRender("messages");
+    schedulePersist();
+  }
   return id;
 }
 
@@ -1527,18 +1996,34 @@ function announcePlan(plan) {
   );
 }
 
-// Streamed chunks are persisted on a short delay: writing localStorage on every
-// chunk is wasteful, but never writing it loses the reply already on screen
-// when the socket drops or the page is reloaded mid-stream.
-let agentPersistTimer = 0;
-const AGENT_PERSIST_DELAY_MS = 500;
+// Streamed chunks, status lines and node events are persisted on a short
+// delay: writing localStorage on every event serialized the whole conversation
+// dozens of times a second, but never writing it loses what is already on
+// screen when the socket drops or the page is reloaded mid-stream. The max
+// wait bounds how stale the saved copy can get during a steady stream, and
+// pagehide/visibilitychange flush the rest.
+let persistTimer = 0;
+let persistDeadline = 0;
+const PERSIST_DELAY_MS = 400;
+const PERSIST_MAX_WAIT_MS = 2000;
 
-function scheduleAgentPersist() {
-  if (agentPersistTimer) window.clearTimeout(agentPersistTimer);
-  agentPersistTimer = window.setTimeout(() => {
-    agentPersistTimer = 0;
-    persistCurrentConversation();
-  }, AGENT_PERSIST_DELAY_MS);
+function schedulePersist() {
+  const now = Date.now();
+  if (!persistDeadline) persistDeadline = now + PERSIST_MAX_WAIT_MS;
+  if (persistTimer) window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(flushPersist, Math.max(0, Math.min(PERSIST_DELAY_MS, persistDeadline - now)));
+}
+
+function cancelPendingPersist() {
+  if (persistTimer) window.clearTimeout(persistTimer);
+  persistTimer = 0;
+  persistDeadline = 0;
+}
+
+function flushPersist() {
+  if (!persistTimer && !persistDeadline) return;
+  cancelPendingPersist();
+  persistCurrentConversation();
 }
 
 function appendAgent(text) {
@@ -1549,16 +2034,25 @@ function appendAgent(text) {
   }
   const msg = state.messages.find((item) => item.id === state.activeAgentId);
   if (msg) msg.text += text;
-  scheduleAgentPersist();
+  schedulePersist();
+  // Chunks arrive faster than frames; re-parse the markdown once per frame.
+  if (!streamingFrame) streamingFrame = window.requestAnimationFrame(renderStreamingAgent);
+}
 
+let streamingFrame = 0;
+
+function renderStreamingAgent() {
+  streamingFrame = 0;
+  const msg = state.messages.find((item) => item.id === state.activeAgentId);
   const root = $("messages");
-  if (!root) return;
-  const existingEl = root.querySelector(`[data-message-id="${state.activeAgentId}"]`);
-  if (!existingEl) {
+  if (!msg || !root) return;
+  // A pending full render (e.g. the bubble was just added) builds it anyway.
+  if (pendingRenders.has("messages")) {
     renderMessages();
     return;
   }
-  let body = existingEl.querySelector(".agent-markdown-body");
+  const existingEl = root.querySelector(`[data-message-id="${msg.id}"]`);
+  const body = existingEl?.querySelector(".agent-markdown-body");
   if (!body) {
     renderMessages();
     return;
@@ -1566,6 +2060,10 @@ function appendAgent(text) {
   const isNearBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
   clear(body);
   appendAgentMarkdown(body, msg);
+  // Keep the keyed transcript in step so the next renderMessages() does not
+  // rebuild a bubble that is already current.
+  const block = renderedMessageBlocks.find((item) => item.el === existingEl);
+  if (block) block.key = messageBlockKey({ message: msg }, false);
   if (isNearBottom) {
     root.scrollTop = root.scrollHeight;
   }
@@ -1951,7 +2449,17 @@ function renderMessageElement(message) {
     images.className = "message-images";
     message.attachments.forEach((item) => {
       const img = document.createElement("img");
-      img.src = item.dataUrl;
+      if (item.dataUrl) {
+        img.src = item.dataUrl;
+      } else if (item.blobKey) {
+        // Restored from storage: the payload lives in IndexedDB.
+        attachmentStore.get(item.blobKey).then((dataUrl) => {
+          if (!dataUrl) return;
+          item.dataUrl = dataUrl;
+          storedBlobKeys.add(item.blobKey);
+          img.src = dataUrl;
+        }).catch(() => {});
+      }
       img.alt = item.name || t("attachment");
       images.appendChild(img);
     });
@@ -1960,19 +2468,32 @@ function renderMessageElement(message) {
   return el;
 }
 
+/// Elements renderMessages() put on screen last time, one per block, with the
+/// key they were built from. A status burst used to tear down and rebuild the
+/// whole transcript (markdown included) per event; now only blocks whose key
+/// changed are rebuilt and the rest stay in place.
+let renderedMessageBlocks = [];
+
+function messageBlockKey(block, live) {
+  const lang = window.RobonixI18N?.lang?.() || "";
+  if (block.activity) {
+    const entries = block.activity;
+    const first = entries[0].id;
+    const expanded = state.expandedActivities.get(first);
+    return `a|${lang}|${live}|${expanded}|${entries.map((entry) => entry.id).join(",")}`;
+  }
+  const message = block.message;
+  const attachments = (message.attachments || []).map((item) => (item?.dataUrl ? "d" : "k")).join("");
+  return `m|${lang}|${message.id}|${message.role}|${message.statusKind || ""}|${message.meta || ""}|${attachments}|${String(message.text || "").length}|${message.text}`;
+}
+
 function renderMessages() {
+  pendingRenders.delete("messages");
   const root = $("messages");
   if (!root) return;
   // Only follow the tail when the reader is already there; status bursts must
   // not yank the view away from history the user is reading.
   const stick = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
-  clear(root);
-  if (state.messages.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty-chat";
-    empty.textContent = t("Ready");
-    root.appendChild(empty);
-  }
 
   const blocks = [];
   let run = [];
@@ -1991,21 +2512,45 @@ function renderMessages() {
   });
   flushRun();
 
-  blocks.forEach((block, index) => {
-    if (block.activity) {
-      const live = index === blocks.length - 1
-        && !state.turnReplied
-        && (state.busy || state.taskRunning);
-      const el = renderActivityRun(block.activity, live);
-      root.appendChild(el);
-      if (live) {
-        const body = el.querySelector(".activity-body");
-        if (body && !body.hidden) body.scrollTop = body.scrollHeight;
-      }
-      return;
+  // Something else replaced the transcript's children (or this is the first
+  // render): rebuild from scratch rather than diff against stale bookkeeping.
+  const expected = renderedMessageBlocks.length || (root.firstChild ? -1 : 0);
+  if (expected !== root.childElementCount || renderedMessageBlocks.some((item) => item.el.parentNode !== root)) {
+    clear(root);
+    renderedMessageBlocks = [];
+  }
+  if (state.messages.length === 0) {
+    clear(root);
+    renderedMessageBlocks = [];
+    const empty = document.createElement("div");
+    empty.className = "empty-chat";
+    empty.textContent = t("Ready");
+    root.appendChild(empty);
+    if (stick) root.scrollTop = root.scrollHeight;
+    return;
+  }
+
+  const next = blocks.map((block, index) => {
+    const live = Boolean(block.activity)
+      && index === blocks.length - 1
+      && !state.turnReplied
+      && (state.busy || state.taskRunning);
+    const key = messageBlockKey(block, live);
+    const previous = renderedMessageBlocks[index];
+    if (previous && previous.key === key) return previous;
+    const el = block.activity
+      ? renderActivityRun(block.activity, live)
+      : renderMessageElement(block.message);
+    if (previous) root.replaceChild(el, previous.el);
+    else root.appendChild(el);
+    if (live) {
+      const body = el.querySelector(".activity-body");
+      if (body && !body.hidden) body.scrollTop = body.scrollHeight;
     }
-    root.appendChild(renderMessageElement(block.message));
+    return { key, el };
   });
+  renderedMessageBlocks.slice(next.length).forEach((item) => item.el.remove());
+  renderedMessageBlocks = next;
 
   if (stick) root.scrollTop = root.scrollHeight;
 }
@@ -2013,11 +2558,12 @@ function renderMessages() {
 function addTimeline(kind, text) {
   state.timeline.unshift({ kind, text, at: new Date().toLocaleTimeString() });
   state.timeline = state.timeline.slice(0, 80);
-  renderTimeline();
-  persistCurrentConversation();
+  scheduleRender("timeline");
+  schedulePersist();
 }
 
 function renderTimeline() {
+  pendingRenders.delete("timeline");
   setTextAll("[data-event-summary]", String(state.timeline.length));
   const rows = state.timeline;
   document.querySelectorAll("[data-event-list]").forEach((root) => {
@@ -2090,6 +2636,7 @@ function scopedPlanEmptyText() {
 }
 
 function renderPlan() {
+  pendingRenders.delete("plan");
   const roots = document.querySelectorAll("[data-plan-tree]");
   roots.forEach((root) => clear(root));
   treeLiveKeys = new Set();
@@ -2154,12 +2701,8 @@ function planRecordStatus(record, maps = buildResultMaps(record)) {
 function renderPlanRecord(root, record, onSelect = renderExecutionDetail) {
   const wrapper = document.createElement("section");
   wrapper.className = "plan-record";
-  const label = document.createElement("div");
-  label.className = "plan-record-label";
   const maps = buildResultMaps(record);
-  const planStatus = planRecordStatus(record, maps);
-  label.textContent = t("Plan {id} · round {round} · {calls} call(s)", { id: record.plan.planId || "-", round: record.plan.round, calls: planCalls(record.plan).length }) + " · " + t(planStatus);
-  wrapper.appendChild(label);
+  wrapper.appendChild(planRecordLabel(record, maps));
   const runningIndex = recordIsActive(record)
     ? pickRunningIndex(record.plan, maps.byIndex)
     : null;
@@ -2167,11 +2710,34 @@ function renderPlanRecord(root, record, onSelect = renderExecutionDetail) {
   root.appendChild(wrapper);
 }
 
+function planRecordLabel(record, maps = buildResultMaps(record)) {
+  const label = document.createElement("div");
+  label.className = "plan-record-label";
+  const planStatus = planRecordStatus(record, maps);
+  label.textContent = t("Plan {id} · round {round} · {calls} call(s)", { id: record.plan.planId || "-", round: record.plan.round, calls: planCalls(record.plan).length }) + " · " + t(planStatus);
+  return label;
+}
+
+/// The history modal is hidden almost all the time, and a tree drawn into a
+/// hidden container never gets a size: its fit-to-view kept rescheduling
+/// itself every frame and pinned each discarded SVG in memory, so a long
+/// node_state burst ran the renderer out of memory. Hidden, it gets labels
+/// only; openRtdlHistory() re-renders with full trees.
 function renderPlanHistory(records) {
   const root = maybe("rtdlHistoryTrees");
   if (!root) return;
   clear(root);
-  records.forEach((record) => renderPlanRecord(root, record, renderHistoryExecutionDetail));
+  const visible = maybe("rtdlHistoryModal")?.hidden === false;
+  records.forEach((record) => {
+    if (visible) {
+      renderPlanRecord(root, record, renderHistoryExecutionDetail);
+      return;
+    }
+    const wrapper = document.createElement("section");
+    wrapper.className = "plan-record";
+    wrapper.appendChild(planRecordLabel(record));
+    root.appendChild(wrapper);
+  });
   if (!records.length) {
     const empty = document.createElement("div");
     empty.className = "plan-empty";
@@ -2201,6 +2767,27 @@ function pruneTreeObservers() {
   treeViewStates.forEach((_, key) => {
     const retained = records.some(record => key.startsWith(`plan:${record.plan.planId}:`));
     if (!treeLiveKeys.has(key) && !retained) treeViewStates.delete(key);
+  });
+}
+
+/// Pending fit-to-view callbacks, at most one per tree. A tree in a hidden
+/// panel never measures, so it is never marked fitted and used to queue a
+/// fresh requestAnimationFrame on every render; each queued closure kept its
+/// already-replaced SVG alive. The newest render's callback replaces the old
+/// one and a single frame runs them all; replaced viewports are skipped.
+const pendingTreeFits = new Map();
+let treeFitFrame = 0;
+
+function scheduleTreeFit(key, viewport, fit) {
+  pendingTreeFits.set(key, { viewport, fit });
+  if (treeFitFrame) return;
+  treeFitFrame = requestAnimationFrame(() => {
+    treeFitFrame = 0;
+    const fits = [...pendingTreeFits.values()];
+    pendingTreeFits.clear();
+    fits.forEach((entry) => {
+      if (entry.viewport.isConnected) entry.fit();
+    });
   });
 }
 
@@ -2286,13 +2873,13 @@ function enableTreePanZoom(planId, viewport, svg) {
 
   if (view) {
     apply();
-    if (!view.fitted) requestAnimationFrame(fitView);
+    if (!view.fitted) scheduleTreeFit(planId, viewport, fitView);
   } else {
     view = { scale: 1, x: 0, y: 0, fitted: false, touched: false };
     treeViewStates.set(planId, view);
     apply();
     // First render only: measure once the viewport is in the document.
-    requestAnimationFrame(fitView);
+    scheduleTreeFit(planId, viewport, fitView);
   }
 
   // The panel is still settling on the first frame (and changes size when it is
@@ -2602,10 +3189,15 @@ function formatArgs(value) {
 
 function computeNodeDepths(plan) {
   const depths = new Map();
+  // First node per raw index, matching the strict-equality find() this replaces.
+  const byIndex = new Map();
+  plan.nodes.forEach((item) => {
+    if (!byIndex.has(item.index) && item.index === item.index) byIndex.set(item.index, item);
+  });
   const visit = (index, depth) => {
     if (depths.has(index) && depths.get(index) <= depth) return;
     depths.set(index, depth);
-    const node = plan.nodes.find((item) => item.index === index);
+    const node = byIndex.get(index);
     (node?.children || []).forEach((child) => visit(child, depth + 1));
   };
   visit(Number(plan.rootIndex || 0), 0);
@@ -2632,7 +3224,37 @@ function planForestNodes(plan) {
   return out;
 }
 
+/// Per-render memo for aggregateNodeStatus, keyed by the result maps object
+/// (buildResultMaps() returns a fresh one per render). The tree draws every
+/// node and each one recursed through its whole subtree with a linear child
+/// lookup, so a big plan cost O(n^2) or worse per frame.
+const nodeStatusMemo = new WeakMap();
+
+function nodeStatusCache(plan, resultMaps, runningIndex) {
+  if (!resultMaps || typeof resultMaps !== "object") return null;
+  let cache = nodeStatusMemo.get(resultMaps);
+  if (!cache || cache.plan !== plan || cache.runningIndex !== runningIndex) {
+    const byIndex = new Map();
+    (plan?.nodes || []).forEach((item) => {
+      const key = Number(item.index);
+      // NaN never matched the Number(...) === Number(...) lookup; keep it that way.
+      if (!Number.isNaN(key) && !byIndex.has(key)) byIndex.set(key, item);
+    });
+    cache = { plan, runningIndex, byIndex, status: new Map() };
+    nodeStatusMemo.set(resultMaps, cache);
+  }
+  return cache;
+}
+
 function aggregateNodeStatus(node, plan, resultMaps, runningIndex) {
+  const cache = nodeStatusCache(plan, resultMaps, runningIndex);
+  if (cache && node && cache.status.has(node)) return cache.status.get(node);
+  const status = computeAggregateNodeStatus(node, plan, resultMaps, runningIndex, cache);
+  if (cache && node) cache.status.set(node, status);
+  return status;
+}
+
+function computeAggregateNodeStatus(node, plan, resultMaps, runningIndex, cache) {
   const own = resultForNode(node, resultMaps);
   if (own?.state) {
     if (String(own.state).toUpperCase() === "RUNNING" && runningIndex === null) return "ENDED";
@@ -2640,7 +3262,9 @@ function aggregateNodeStatus(node, plan, resultMaps, runningIndex) {
   }
   if (isRunningNode(node, runningIndex)) return "RUNNING";
   const children = (node?.children || [])
-    .map((idx) => (plan?.nodes || []).find((item) => Number(item.index) === Number(idx)))
+    .map((idx) => (cache
+      ? cache.byIndex.get(Number(idx))
+      : (plan?.nodes || []).find((item) => Number(item.index) === Number(idx))))
     .filter(Boolean);
   if (!children.length) return "PENDING";
   const childStatuses = children.map((child) => statusKey(aggregateNodeStatus(child, plan, resultMaps, runningIndex)));
@@ -2752,6 +3376,7 @@ async function refreshActivePlans() {
   });
   if (!result.available) {
     state.executorPlansReady = false;
+    lastActivePlansSignature = "";
     renderGoalPanel();
     renderActivePlans({
       reason: result.reason || "unknown",
@@ -2771,11 +3396,30 @@ async function refreshActivePlans() {
     }
     state.executorMissingPolls.set(planId, Number(state.executorMissingPolls.get(planId) || 0) + 1);
   });
-  if (state.activePage === "dashboard") {
-    renderActivePlans();
-    renderPlan();
+  if (state.activePage !== "dashboard") {
+    lastActivePlansSignature = "";
+    return;
   }
+  // The 2 s poll used to rebuild every tree even when nothing moved. Skip
+  // the render when the executor snapshot and everything the poll feeds into
+  // recordIsActive() (missing-poll counts saturate at 2) are unchanged;
+  // events and user actions render on their own.
+  const signature = JSON.stringify([
+    state.executorPlans,
+    normalizedPlanRecords().map((record) => {
+      const planId = String(record.plan?.planId || "");
+      return [planId, Math.min(2, Number(state.executorMissingPolls.get(planId) || 0))];
+    }),
+    state.selectedTaskId,
+    state.followLatestTask,
+  ]);
+  if (signature === lastActivePlansSignature) return;
+  lastActivePlansSignature = signature;
+  renderActivePlans();
+  renderPlan();
 }
+
+let lastActivePlansSignature = "";
 
 function savedPlanStatusPill(status) {
   const pill = document.createElement("span");
@@ -3021,7 +3665,7 @@ function displayStatus(status) {
 // Last node shown in each detail pane. The args payload embeds translated
 // status text, so an open popup has to be re-rendered after a language switch;
 // renderPlan() intentionally leaves the live popup untouched in the meantime.
-const detailSelections = { live: null, history: null };
+const detailSelections = { live: null, history: null, call: null };
 
 function renderExecutionDetail(node, status, nodeState = null) {
   if (!maybe("activeProvider")) return;
@@ -3030,13 +3674,21 @@ function renderExecutionDetail(node, status, nodeState = null) {
     $("activeProvider").textContent = "-";
     $("activeStarted").textContent = "-";
     $("activeDuration").textContent = "-";
+    renderDetailImage($("activeArgs"), null);
     $("activeArgs").textContent = t("Select an RTDL node to inspect its arguments and result.");
     return;
   }
   $("activeProvider").textContent = detailProvider(node);
   $("activeStarted").textContent = node ? startedForNode(node, status) : "-";
   $("activeDuration").textContent = node ? durationForNode(node, status) : "-";
-  $("activeArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
+  renderDetailArgs($("activeArgs"), node, status, nodeState);
+}
+
+function renderDetailArgs(pre, node, status, nodeState) {
+  const leaf = node?.call ? leafResultForDisplay(nodeState?.leafResult) : null;
+  const image = leafOutputImage(leaf);
+  renderDetailImage(pre, image);
+  pre.textContent = formatArgs(detailPayload(node, status, nodeState, leafForDetailText(leaf, image)));
 }
 
 function renderHistoryExecutionDetail(node, status, nodeState = null) {
@@ -3049,13 +3701,14 @@ function renderHistoryExecutionDetail(node, status, nodeState = null) {
     $("historyActiveProvider").textContent = "-";
     $("historyActiveStarted").textContent = "-";
     $("historyActiveDuration").textContent = "-";
+    renderDetailImage($("historyActiveArgs"), null);
     $("historyActiveArgs").textContent = t("Select an RTDL node to inspect its arguments and result.");
     return;
   }
   $("historyActiveProvider").textContent = detailProvider(node);
   $("historyActiveStarted").textContent = startedForNode(node, status);
   $("historyActiveDuration").textContent = durationForNode(node, status);
-  $("historyActiveArgs").textContent = formatArgs(detailPayload(node, status, nodeState));
+  renderDetailArgs($("historyActiveArgs"), node, status, nodeState);
 }
 
 function buildResultMaps(record = null) {
@@ -3094,7 +3747,7 @@ function detailProvider(node) {
   return node.call.providerId || node.call.contractId || node.call.name || "call";
 }
 
-function detailPayload(node, status, nodeState) {
+function detailPayload(node, status, nodeState, leaf = leafResultForDisplay(nodeState?.leafResult)) {
   if (!node) return {};
   if (!node.call) {
     return {
@@ -3113,7 +3766,7 @@ function detailPayload(node, status, nodeState) {
       name: node.call.name || "",
       args: node.call.args || {},
     },
-    result: nodeState?.leafResult || null,
+    result: leaf || null,
     state: nodeState?.state || displayStatus(status),
   };
 }
@@ -3243,12 +3896,17 @@ function showCallDetails(context) {
   const payload = document.createElement("pre");
   payload.className = "args";
   const record = context.record || normalizedPlanRecords().find(item => item.plan.planId === context.plan?.planId);
+  const result = context.node && record ? resultForNode(context.node, buildResultMaps(record)) : null;
+  detailSelections.call = result?.leafResult ? { context, leaf: result.leafResult } : null;
+  const leaf = leafResultForDisplay(result?.leafResult);
+  const image = leafOutputImage(leaf);
   payload.textContent = JSON.stringify({
     call: context.node?.call || context.op || null,
-    result: context.node && record ? resultForNode(context.node, buildResultMaps(record)) : null,
+    result: result ? { ...result, leafResult: leafForDetailText(leaf, image) ?? result.leafResult } : null,
     plan: context.plan?.planId || null,
   }, null, 2);
   root.append(fields, source, payload);
+  renderDetailImage(payload, image);
   if (!$("callDetailModal").open) $("callDetailModal").showModal();
 }
 
@@ -3384,16 +4042,24 @@ function renderGoalPanel() {
   });
 }
 
+let voiceFinishSupportedFor = "";
+
 async function refreshVoiceFinishSupport() {
   // Older liaisons never registered robonix/system/liaison/voice/finish, so
   // absence just means "not upgraded yet" -- keep the button hidden rather
   // than let a click fail with a raw gRPC UNIMPLEMENTED error.
+  const settings = collectSettings();
+  const key = JSON.stringify(settings);
+  // Support does not go away while the settings stay the same; only keep
+  // probing (every 7 s) until it shows up or the target changes.
+  if (state.voiceFinishSupported && key === voiceFinishSupportedFor) return;
   const result = await fetch("/api/voice/finish-supported", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings: collectSettings() }),
+    body: JSON.stringify({ settings }),
   }).then((r) => r.json()).catch(() => ({ supported: false }));
   state.voiceFinishSupported = Boolean(result.supported);
+  voiceFinishSupportedFor = state.voiceFinishSupported ? key : "";
   syncVoiceControls();
 }
 
@@ -3601,6 +4267,8 @@ function uniqueConversationTitle(base, selfId) {
 }
 
 function persistCurrentConversation(titleHint = "", force = false) {
+  // This write covers whatever a scheduled one would have saved.
+  cancelPendingPersist();
   const hasContent = hasConversationContent(state);
   if (!hasContent && !force) return;
   const existingIndex = state.history.findIndex((item) => item.id === state.sessionId);
@@ -3649,14 +4317,26 @@ function persistCurrentConversation(titleHint = "", force = false) {
   // save re-sorted the sidebar just from visiting a chat, so rows moved out
   // from under the pointer mid-click. New conversations still go on top.
   if (existingIndex >= 0) state.history[existingIndex] = conversation;
-  else state.history = [conversation, ...state.history].slice(0, 30);
+  else state.history = [conversation, ...state.history].slice(0, MAX_CONVERSATIONS);
   saveConversations();
   renderHistory();
 }
 
+let renderedHistorySignature = "";
+
 function renderHistory() {
+  pendingRenders.delete("history");
   const root = $("historyList");
   if (!root) return;
+  // Every save re-rendered the sidebar; with saves per event that rebuilt 30
+  // rows (and their SVG icons) dozens of times a second for no visible change.
+  const signature = JSON.stringify([
+    window.RobonixI18N?.lang?.() || "",
+    state.sessionId,
+    state.history.map((item) => [item.id, item.title, formatConversationTime(item.updatedAt)]),
+  ]);
+  if (signature === renderedHistorySignature && root.childElementCount) return;
+  renderedHistorySignature = signature;
   clear(root);
   if (!state.history.length) {
     const empty = document.createElement("div");
@@ -3740,6 +4420,7 @@ function renameConversation(sessionId) {
     conversation.title = title;
     conversation.customTitle = true;
     conversation.updatedAt = Date.now();
+    markConversationDirty(conversation);
   } else if (sessionId === state.sessionId) {
     persistCurrentConversation(title, true);
   }
@@ -3748,6 +4429,9 @@ function renameConversation(sessionId) {
 }
 
 function deleteConversation(sessionId) {
+  // A scheduled save of the chat being deleted would bring it straight back.
+  if (sessionId === state.sessionId) cancelPendingPersist();
+  else flushPersist();
   state.history = state.history.filter((item) => item.id !== sessionId);
   saveConversations();
   if (sessionId === state.sessionId) {
@@ -3774,8 +4458,10 @@ function deleteConversation(sessionId) {
 }
 
 function clearHistory() {
+  cancelPendingPersist();
   state.history = [];
   saveConversations();
+  attachmentStore.clear().catch(() => {});
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();

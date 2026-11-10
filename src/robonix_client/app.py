@@ -24,6 +24,7 @@ from .audio_reverse_bridge import AudioReverseBridge
 from .health_api import router as health_router
 from .vitals_api import router as vitals_router
 from .transport import (
+    reset_connection_caches,
     DEFAULT_ATLAS,
     ClientSettings,
     ExecutorQueryError,
@@ -187,6 +188,7 @@ async def stop_client_audio() -> None:
     finally:
         _reverse_audio = None
         audio_server_control.stop()
+        await reset_connection_caches()
 
 
 @app.get("/")

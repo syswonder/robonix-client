@@ -19,7 +19,7 @@ import grpc
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .proto import vitals_client_pb2
-from .transport import ClientSettings, discover_endpoint, grpc_channel
+from .transport import ClientSettings, discover_endpoint, stream_channel
 from .vitals_transport import CONTRACT_VITALS_STREAM, VITALS_STREAM_PATH
 
 router = APIRouter()
@@ -71,7 +71,7 @@ async def _stream_vitals(
 ) -> AsyncIterator[dict[str, Any]]:
     """Relay live compute-node readings from the Vitals snapshot stream."""
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_VITALS_STREAM)
-    async with grpc_channel(endpoint) as channel:
+    async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             VITALS_STREAM_PATH,
             request_serializer=vitals_client_pb2.StreamVitals_Request.SerializeToString,
