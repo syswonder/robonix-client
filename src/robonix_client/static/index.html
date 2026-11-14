@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261108a" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261114-n8n" />
   </head>
   <body>
     <div class="app-shell">
@@ -80,8 +80,9 @@
               <div class="messages" id="messages"></div>
             </div>
             <form class="composer" id="composer">
+              <div id="attachmentStrip" class="attachment-strip"></div>
+              <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
               <div class="composer-row">
-                <textarea id="taskInput" rows="1" placeholder="Type a message..." data-i18n-placeholder="Type a message..."></textarea>
                 <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)">
                   <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                   <span class="btn-label" data-i18n="Start recording">Start recording</span>

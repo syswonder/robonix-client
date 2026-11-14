@@ -2218,12 +2218,36 @@ function markdownNodes(text) {
         i += 1;
       }
       if (i < lines.length) i += 1; // consume the closing fence when present
+      const snippet = document.createElement("div");
+      snippet.className = "code-snippet";
+      const header = document.createElement("header");
+      header.className = "code-snippet-header";
+      const langSpan = document.createElement("span");
+      langSpan.className = "code-lang";
+      langSpan.textContent = fence[1] || "code";
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "code-copy-btn";
+      copyBtn.title = t("Copy code");
+      copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-text">${t("Copy")}</span>`;
+      const codeText = body.join("\n");
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard?.writeText(codeText).then(() => {
+          const span = copyBtn.querySelector(".copy-text");
+          if (span) span.textContent = t("Copied!");
+          setTimeout(() => {
+            if (span) span.textContent = t("Copy");
+          }, 2000);
+        }).catch(() => {});
+      });
+      header.append(langSpan, copyBtn);
       const pre = document.createElement("pre");
       const code = document.createElement("code");
       if (fence[1]) code.className = `language-${fence[1]}`;
-      code.textContent = body.join("\n");
+      code.textContent = codeText;
       pre.appendChild(code);
-      nodes.push(pre);
+      snippet.append(header, pre);
+      nodes.push(snippet);
       continue;
     }
     if (!line.trim()) {
@@ -2481,10 +2505,41 @@ function renderMessageElement(message) {
     el.appendChild(meta);
   }
   if (message.role === "agent") {
+    const header = document.createElement("div");
+    header.className = "assistant-header";
+    const avatar = document.createElement("div");
+    avatar.className = "assistant-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>`;
+    const name = document.createElement("span");
+    name.className = "assistant-name";
+    name.textContent = t("Robonix Embodied Agent");
+    header.append(avatar, name);
+    el.appendChild(header);
+
     const body = document.createElement("div");
     body.className = "agent-markdown-body";
     appendAgentMarkdown(body, message);
     el.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "assistant-actions";
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "assistant-action-btn copy-msg-btn";
+    copyBtn.title = t("Copy response");
+    copyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>${t("Copy")}</span>`;
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard?.writeText(String(message.text || "")).then(() => {
+        const span = copyBtn.querySelector("span");
+        if (span) span.textContent = t("Copied!");
+        setTimeout(() => {
+          if (span) span.textContent = t("Copy");
+        }, 2000);
+      }).catch(() => {});
+    });
+    actions.appendChild(copyBtn);
+    el.appendChild(actions);
   } else {
     el.appendChild(document.createTextNode(message.text));
   }
@@ -2567,8 +2622,46 @@ function renderMessages() {
     clear(root);
     renderedMessageBlocks = [];
     const empty = document.createElement("div");
-    empty.className = "empty-chat";
-    empty.textContent = t("Ready");
+    empty.className = "empty-chat-hero";
+    empty.innerHTML = `
+      <div class="empty-chat-avatar" aria-hidden="true">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+        </svg>
+      </div>
+      <h3 class="empty-chat-title">${t("Robonix Embodied Agent")}</h3>
+      <p class="empty-chat-subtitle">${t("Perception, planning, and real-time physical action execution")}</p>
+      <div class="empty-chat-suggestions">
+        <button type="button" class="suggestion-chip" data-prompt="${t("Run behavior tree manipulation demo in Webots")}">
+          <span class="suggestion-icon">🤖</span>
+          <span class="suggestion-text">${t("Run manipulation demo in Webots")}</span>
+        </button>
+        <button type="button" class="suggestion-chip" data-prompt="${t("Inspect robot arm joints and soma hardware vitals")}">
+          <span class="suggestion-icon">🦾</span>
+          <span class="suggestion-text">${t("Inspect joints & hardware vitals")}</span>
+        </button>
+        <button type="button" class="suggestion-chip" data-prompt="${t("Explain the active RTDL plan structure and node status")}">
+          <span class="suggestion-icon">🌲</span>
+          <span class="suggestion-text">${t("Explain active RTDL plan")}</span>
+        </button>
+        <button type="button" class="suggestion-chip" data-prompt="${t("Inspect spatial perception and 3D camera sensor feeds")}">
+          <span class="suggestion-icon">👁️</span>
+          <span class="suggestion-text">${t("Inspect spatial perception")}</span>
+        </button>
+      </div>
+    `;
+    empty.querySelectorAll(".suggestion-chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const prompt = btn.getAttribute("data-prompt");
+        const input = $("taskInput");
+        if (input) {
+          input.value = prompt;
+          autoGrowInput();
+          input.focus();
+        }
+      });
+    });
     root.appendChild(empty);
     if (stick) root.scrollTop = root.scrollHeight;
     return;

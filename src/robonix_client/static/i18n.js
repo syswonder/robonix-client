@@ -646,6 +646,23 @@
     "Track Robot Center": "跟随机器人居中",
     "Map North (+Y)": "地图北向 (+Y)",
     "No scene data yet": "暂无场景数据",
+    "Robonix Assistant": "Robonix 具身助手",
+    "Robonix Embodied Agent": "Robonix 具身智能体",
+    "Robonix AI Assistant": "Robonix 具身智能体",
+    "Perception, planning, and real-time physical action execution": "空间感知 · 行为树规划 · 实体动作执行",
+    "Command Robonix or press F2 for voice...": "下达机器人任务，或按 F2 语音指令...",
+    "Run behavior tree manipulation demo in Webots": "在 Webots 中运行机械臂行为树演示",
+    "Inspect robot arm joints and soma hardware vitals": "检查机器人全部关节与硬件体征",
+    "Explain the active RTDL plan structure and node status": "解析当前 RTDL 计划结构与执行状态",
+    "Inspect spatial perception and 3D camera sensor feeds": "查看空间环境感知与 3D 传感器数据",
+    "Run manipulation demo in Webots": "Webots 机械臂行为树演示",
+    "Inspect joints & hardware vitals": "检查关节与硬件体征",
+    "Explain active RTDL plan": "解析当前 RTDL 计划",
+    "Inspect spatial perception": "查看空间感知数据",
+    "Copy response": "复制回答",
+    "Copy code": "复制代码",
+    "Copy": "复制",
+    "Copied!": "已复制！",
   };
 
   // Legacy status rows stored the translated text instead of the key. Build a
