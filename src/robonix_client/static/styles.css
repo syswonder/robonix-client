@@ -755,29 +755,25 @@ h2 {
 }
 
 .dashboard-sidebar > .current-goal-panel {
-  display: grid;
-  grid-template-rows: 40px 116px minmax(0, 1fr);
-  height: 380px;
-  min-height: 380px;
-  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: 180px;
   overflow: hidden;
 }
 
-.current-goal-panel > .task-list { grid-row: 2; }
-.current-goal-panel > .executor-panel {
-  grid-row: 3;
-  display: grid;
-  grid-template-rows: 40px minmax(0, 1fr);
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  border-top: 1px solid var(--line-soft);
+.current-goal-panel > .task-list {
+  flex: 0 1 auto;
+  max-height: 116px;
 }
+
+.executor-panel > .panel-header .executor-label,
 .executor-panel > .executor-label {
   display: flex;
   align-items: center;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 2px;
 }
 
 
@@ -6462,15 +6458,40 @@ select:focus {
 
 /* display:grid on the panels would otherwise beat the UA's [hidden] rule. */
 .dashboard-sidebar > .panel[data-sidebar-panel][hidden] {
-  display: none;
+  display: none !important;
 }
 
-/* The tree and the log panels take the column's remaining height; the goal
-   panel keeps its fixed height. */
+/* The tree, executor, and log panels take the column's full remaining height. */
 .dashboard-sidebar > .panel[data-sidebar-panel="rtdl"]:not([hidden]),
+.dashboard-sidebar > .panel[data-sidebar-panel="executor"]:not([hidden]),
 .dashboard-sidebar > .panel[data-sidebar-panel="events"]:not([hidden]) {
   flex: 1 1 auto;
   max-height: none;
+  min-height: 0;
+}
+
+.dashboard-sidebar > .panel[data-sidebar-panel="executor"]:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dashboard-sidebar > .panel[data-sidebar-panel="executor"]:not([hidden]) .goal-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.dashboard-sidebar > .panel[data-sidebar-panel="events"]:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dashboard-sidebar > .panel[data-sidebar-panel="events"]:not([hidden]) .event-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 .dashboard-sidebar > .panel[data-sidebar-panel="rtdl"]:not([hidden]) {

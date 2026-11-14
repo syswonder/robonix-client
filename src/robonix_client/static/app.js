@@ -10,7 +10,7 @@ const t = (key, params) => (window.RobonixI18N
     params && params[name] !== undefined && params[name] !== null ? String(params[name]) : whole
   )));
 
-const SIDEBAR_VIEWS = ["rtdl", "events"];
+const SIDEBAR_VIEWS = ["rtdl", "executor", "events"];
 const TASK_ACTIVE = ["in_progress", "running", "planning", "executing"];
 const TASK_TERMINAL = ["done", "completed", "failed", "cancelled", "canceled", "aborted", "superseded"];
 

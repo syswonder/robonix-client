@@ -199,6 +199,7 @@
 
     // Current Goal panel
     "waiting for task": "等待任务",
+    "Executor": "Executor",
     "Executor verified": "Executor 已确认",
     "Executor plan verified": "Executor 计划已确认",
     "Pilot stream estimate": "Pilot 数据流估计",

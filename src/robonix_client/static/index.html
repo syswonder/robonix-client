@@ -107,20 +107,17 @@
             </section>
 
             <section class="dashboard-sidebar" id="dashboardSidebar">
-              <section class="panel current-goal-panel" aria-label="Task and Executor" data-i18n-aria-label="Task and Executor">
+              <section class="panel current-goal-panel" aria-label="Task execution" data-i18n-aria-label="Task execution">
                 <div class="panel-header compact">
                   <h2 data-i18n="Task execution">Task execution</h2>
                   <div class="task-scope-controls" id="taskScopeControls"></div>
                 </div>
                 <div class="task-list" id="taskList" hidden></div>
-                <section class="executor-panel" aria-labelledby="executorHeading">
-                  <h2 class="executor-label" id="executorHeading">Executor</h2>
-                  <div class="goal-preview" data-goal-preview></div>
-                </section>
               </section>
 
               <nav class="sidebar-menu" id="sidebarMenu">
                 <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl" data-i18n="RTDL Forest">RTDL Forest</button>
+                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="executor" data-i18n="Executor">Executor</button>
                 <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events" data-i18n="Event Log">Event Log</button>
                 <span class="sidebar-icon-group">
                   <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="Plan overview" data-i18n-title="Plan overview">
@@ -146,6 +143,13 @@
                   </div>
                   <div class="plan-tree" data-plan-tree="full"></div>
                 </div>
+              </section>
+
+              <section class="panel executor-panel" data-sidebar-panel="executor" aria-labelledby="executorHeading" hidden>
+                <div class="panel-header compact">
+                  <h2 class="executor-label" id="executorHeading" data-i18n="Executor">Executor</h2>
+                </div>
+                <div class="goal-preview" data-goal-preview></div>
               </section>
 
               <section class="panel trace-panel thought-panel" data-sidebar-panel="events" hidden>
