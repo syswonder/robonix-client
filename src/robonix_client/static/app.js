@@ -804,6 +804,7 @@ async function init() {
   bindSettings();
   bindEvents();
   bindSceneLayers();
+  refreshVoiceprintUsers();
   bindSceneView();
   bindPerceptionControls();
   bindStudioControls();
@@ -1425,6 +1426,21 @@ function forgetActiveTurn() {
   state.expandedActivities.clear();
 }
 
+/// Pilot compacts a conversation's memory only when it receives an explicit
+/// `session_end`; switching to another session id alone leaves the previous
+/// conversation uncompacted. Fire and forget: the switch must not wait on it.
+function notifySessionEnd() {
+  if (!state.messages.length && !state.timeline.length) return;
+  const settings = collectSettings();
+  if (!settings.sessionId) return;
+  fetch("/api/session/end", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ settings }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 function newSession() {
   if (state.busy) {
     pendingNewSessionTitle = null;
@@ -1439,6 +1455,7 @@ function newSession() {
   pendingNewSessionTitle = null;
   const requestedTitle = typedTitle && typedTitle !== state.sessionTitle ? typedTitle : "";
   persistCurrentConversation();
+  notifySessionEnd();
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
@@ -1549,7 +1566,26 @@ async function sendTask() {
       expectedTurnId: wasBusy ? state.activeTurnId : "",
     }));
   };
-  wireStream(socket, () => endStream(socket));
+  wireStream(socket, () => {
+    endStream(socket);
+    settleTurnAfterStream(socket);
+  });
+}
+
+/// A SubmitTask stream ends when its turn is over. The terminal status event
+/// normally clears these pointers, but a dropped frame (proxy restart, older
+/// Pilot) left `activeTurnId`/`taskRunning` set forever, so every later
+/// instruction was labelled as a steer into a turn that had already ended.
+function settleTurnAfterStream(socket) {
+  if (state.activeStreams > 0) return;
+  if (!socket.robonixDone && snapshotHasActiveTasks(state.taskState)) return;
+  if (!state.activeTurnId && !state.taskRunning) return;
+  state.activeTurnId = "";
+  state.activePilotSessionId = "";
+  state.taskRunning = false;
+  state.turnReplied = true;
+  setBusy(false);
+  scheduleRender("messages");
 }
 
 function stopCurrentTask() {
@@ -1560,7 +1596,7 @@ function stopCurrentTask() {
   setButtonLabel(button, t("Aborting"));
   // Everything after this point is teardown; keep the transcript folded.
   state.turnReplied = true;
-  addStatusLine(t("Abort requested; canceling every running task and any robot motion."), "milestone", "Abort requested; canceling every running task and any robot motion.");
+  addStatusLine(t("Abort requested; stopping this session's running task."), "milestone", "Abort requested; stopping this session's running task.");
   addTimeline("cancel", state.activeTurnId
     ? t("abort requested for {turn}", { turn: state.activeTurnId })
     : t("abort requested"));
@@ -1570,7 +1606,6 @@ function stopCurrentTask() {
   const socket = new WebSocket(wsUrl("/ws/abort"));
   socket.onopen = () => socket.send(JSON.stringify({
     settings: interactionSettings(true),
-    expectedTurnId: state.activeTurnId,
   }));
   wireStream(socket, () => (socket.robonixDone ? completeStopState() : resetStopState()));
   socket.addEventListener("message", (event) => {
@@ -1583,7 +1618,7 @@ function stopCurrentTask() {
 function resetStopState() {
   state.stopInFlight = false;
   $("stopButton").disabled = false;
-  setButtonLabel($("stopButton"), t("Abort all tasks"));
+  setButtonLabel($("stopButton"), t("Stop task"));
 }
 
 function completeStopState() {
@@ -1807,6 +1842,13 @@ function handlePilotEvent(event) {
       // The turn is over even if the socket lingers for TTS: fold the run.
       state.turnReplied = true;
       setBusy(state.activeStreams > 0);
+      // Completed/Failed usually arrive without a message. Without this line
+      // the activity group kept previewing the last "in_progress" status and
+      // looked like it was still running after the answer.
+      if (!event.status.message) {
+        const doneKey = Number(event.status.state) === 1 ? "done" : "failed";
+        addStatusLine(t(doneKey), "activity", doneKey);
+      }
     }
     addTimeline(
       "status",
@@ -2433,7 +2475,9 @@ function renderMessageElement(message) {
   if (message.meta && message.role !== "status") {
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = message.meta;
+    // Stored rows keep the translated label, so a wording change only reaches
+    // new messages. Reverse-map known values back through the i18n table.
+    meta.textContent = window.RobonixI18N?.translateStored?.(message.meta) || message.meta;
     el.appendChild(meta);
   }
   if (message.role === "agent") {
@@ -3121,7 +3165,9 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect 
     meta.setAttribute("x", String(nodeW / 2));
     meta.setAttribute("y", "30");
     meta.setAttribute("text-anchor", "middle");
-    meta.textContent = node.call ? ellipsize(compactProvider(node.call), 17) : displayStatus(status);
+    meta.textContent = node.call
+      ? ellipsize(compactProvider(node.call), 17)
+      : ellipsize(nodeControlMeta(node) || displayStatus(status), 17);
     g.append(title, rect, accent, text, meta);
     g.addEventListener("click", () => onSelect(node, status, resultForNode(node, resultMaps)));
     svg.appendChild(g);
@@ -3151,7 +3197,8 @@ function makePlanRow(node, status, depth, runningIndex) {
   const meta = document.createElement("div");
   meta.className = "node-meta";
   const type = document.createElement("span");
-  type.textContent = `#${node.index} · ${node.kind || "op"}`;
+  const control = nodeControlMeta(node);
+  type.textContent = `#${node.index} · ${node.kind || "op"}${control ? ` · ${control}` : ""}`;
   const provider = document.createElement("span");
   provider.textContent = capabilityLabel(node);
   meta.append(type, provider);
@@ -3159,6 +3206,18 @@ function makePlanRow(node, status, depth, runningIndex) {
   row.append(rail, body);
   row.addEventListener("click", () => showNodeDetail(node, status));
   return row;
+}
+
+// Repeat count, while cap, do-node binding, or a one-line condition. Empty for
+// plain sequence/parallel nodes so their meta line stays as it was.
+function nodeControlMeta(node) {
+  if (!node) return "";
+  if (node.repeatCount) return `×${node.repeatCount}`;
+  if (node.maxIterations) return `≤${node.maxIterations}`;
+  if (node.bind) return `→ ${node.bind}`;
+  const condition = node.condition ?? node.conditionJson;
+  if (condition === undefined || condition === "") return "";
+  return typeof condition === "string" ? condition : JSON.stringify(condition);
 }
 
 function nodeLabel(node) {
@@ -3750,13 +3809,19 @@ function detailProvider(node) {
 function detailPayload(node, status, nodeState, leaf = leafResultForDisplay(nodeState?.leafResult)) {
   if (!node) return {};
   if (!node.call) {
-    return {
+    const payload = {
       kind: node.kind || "op",
       opId: node.opId || "",
       description: node.description || "",
       status: displayStatus(status),
-      children: node.children || [],
+      children: childRoles(node),
     };
+    if (node.condition !== undefined) payload.condition = node.condition;
+    else if (node.conditionJson) payload.condition = node.conditionJson;
+    if (node.repeatCount) payload.repeatCount = node.repeatCount;
+    if (node.maxIterations) payload.maxIterations = node.maxIterations;
+    if (node.bind) payload.bind = node.bind;
+    return payload;
   }
   return {
     call: {
@@ -3769,6 +3834,19 @@ function detailPayload(node, status, nodeState, leaf = leafResultForDisplay(node
     result: leaf || null,
     state: nodeState?.state || displayStatus(status),
   };
+}
+
+// if: [then, optional else]; repeat/while: [body]. Other kinds have no roles,
+// so their children stay a plain index list.
+function childRoles(node) {
+  const children = node.children || [];
+  if (node.kind === "if") {
+    return children.map((index, i) => ({ role: i === 0 ? "then" : "else", index }));
+  }
+  if ((node.kind === "repeat" || node.kind === "while") && children.length) {
+    return [{ role: "body", index: children[0] }];
+  }
+  return children;
 }
 
 function planCalls(plan) {
@@ -4495,6 +4573,7 @@ function openConversation(sessionId) {
   persistCurrentConversation();
   const conversation = state.history.find((item) => item.id === sessionId);
   if (!conversation) return;
+  notifySessionEnd();
   state.sessionId = conversation.id;
   rememberLastSession(conversation.id);
   state.sessionTitle = conversation.title || "";
@@ -4987,6 +5066,7 @@ async function enrollVoice() {
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   $("enrollVoice").classList.remove("busy");
   renderEnroll(result);
+  refreshVoiceprintUsers();
 }
 
 async function testSpeaker() {
@@ -5002,7 +5082,8 @@ async function testSpeaker() {
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   $("testSpeaker").classList.remove("busy");
   const text = result.ok
-    ? t("speaker ok: played {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint })
+    ? t("speaker ok: played {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint }) +
+      (result.streamed ? ` · ${t("streamed audio")}` : "")
     : t("speaker failed: {error}", { error: result.error });
   const status = $("audioTestStatus");
   status.textContent = text;
@@ -5059,6 +5140,71 @@ function renderEnroll(result) {
     note.className = "small";
     note.textContent = result.message;
     root.appendChild(note);
+  }
+}
+
+async function refreshVoiceprintUsers() {
+  const el = $("voiceprintUsers");
+  if (!el) return;
+  try {
+    const result = await fetch("/api/voiceprint/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings() }),
+    }).then((r) => r.json());
+    clear(el);
+    if (!result.ok) {
+      el.textContent = t("voiceprint users unavailable: {error}", { error: result.error || "" });
+      return;
+    }
+    const users = result.users || [];
+    if (!users.length) {
+      el.textContent = t("No enrolled users. If the voiceprint model changed, existing records were skipped and must be re-enrolled.");
+      return;
+    }
+    const summary = document.createElement("div");
+    summary.textContent = t("{count} enrolled:", { count: result.count ?? users.length });
+    el.appendChild(summary);
+    users.forEach((user) => {
+      const row = document.createElement("div");
+      row.className = "voiceprint-user-row";
+      const name = document.createElement("span");
+      name.textContent = user.user_name || user.user_id;
+      name.title = user.user_id || "";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button form-button";
+      remove.textContent = t("Delete");
+      remove.title = t("Remove this enrolled speaker");
+      remove.addEventListener("click", () => deleteVoiceprintUser(user, remove));
+      row.append(name, remove);
+      el.appendChild(row);
+    });
+  } catch (error) {
+    el.textContent = t("voiceprint users unavailable: {error}", { error: String(error) });
+  }
+}
+
+async function deleteVoiceprintUser(user, button) {
+  const userId = user.user_id || "";
+  if (!userId) return;
+  button.disabled = true;
+  try {
+    const result = await fetch("/api/voiceprint/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings(), userId }),
+    }).then((r) => r.json());
+    if (!result.ok) {
+      addTimeline("error", t("delete voiceprint failed: {error}", { error: result.error || "" }));
+      button.disabled = false;
+      return;
+    }
+    addTimeline("voiceprint", t("removed voiceprint user {userId}", { userId }));
+    await refreshVoiceprintUsers();
+  } catch (error) {
+    addTimeline("error", t("delete voiceprint failed: {error}", { error: String(error) }));
+    button.disabled = false;
   }
 }
 
@@ -5494,7 +5640,13 @@ function regionPolygons(regions) {
       poly.push(p);
     }
     if (ok && poly.length >= 3) {
-      out.push({ name: r.name || r.id || "room", kind: r.kind || "room", poly });
+      out.push({
+        name: r.name || r.id || "room",
+        kind: r.kind || "room",
+        poly,
+        stale: Boolean(r.stale),
+        staleReason: r.stale_reason || "",
+      });
     }
   }
   return out;
@@ -5599,6 +5751,45 @@ function drawScaleBar(ctx, w, h, scale) {
   ctx.fillText(`${metres} m`, x0, y0 - 8);
 }
 
+// Scene labels sit on top of an arbitrary map image. A translucent plate keeps
+// the text readable over light floors as well as dark ones, and gives hovered
+// labels (which carry the freshness details) a clear focus state.
+function drawSceneLabel(ctx, text, x, y, options = {}) {
+  const {
+    font = "11px system-ui",
+    color = "#e8eef8",
+    background = "rgba(7, 11, 18, 0.68)",
+    border = "",
+    padX = 4,
+    padY = 2,
+    alpha = 1,
+  } = options;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const width = ctx.measureText(text).width;
+  const boxW = width + padX * 2;
+  const boxH = 14 + padY * 2;
+  const x0 = x - boxW / 2;
+  const y0 = y - boxH / 2;
+  const rounded = typeof ctx.roundRect === "function";
+  ctx.fillStyle = background;
+  ctx.beginPath();
+  if (rounded) ctx.roundRect(x0, y0, boxW, boxH, 4);
+  else ctx.rect(x0, y0, boxW, boxH);
+  ctx.fill();
+  if (border) {
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
 // Object labels, largest box first, skipping any that would land on a label
 // already placed. A dense scene then reads as a map instead of a wall of text;
 // whatever gets skipped is still reachable by hovering it (which always wins).
@@ -5622,8 +5813,8 @@ function drawObjectLabels(ctx, candidates) {
       if (c.minExtent < 26) continue;
       if (budget <= 0) continue;
     }
-    const half = ctx.measureText(c.text).width / 2 + 2;
-    const box = { x0: c.x - half, x1: c.x + half, y0: c.y - 10, y1: c.y + 3 };
+    const half = ctx.measureText(c.text).width / 2 + 5;
+    const box = { x0: c.x - half, x1: c.x + half, y0: c.y - 10, y1: c.y + 10 };
     if (!c.force && placed.some((p) => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) {
       continue;
     }
@@ -5633,8 +5824,9 @@ function drawObjectLabels(ctx, candidates) {
   }
   candidates.forEach((c, i) => {
     if (!visible[i]) return;
-    ctx.fillStyle = c.force ? "#ffffff" : "#dfe6f5";
-    ctx.fillText(c.text, c.x, c.y);
+    drawSceneLabel(ctx, c.text, c.x, c.y, c.force
+      ? { font: "12px system-ui", color: "#ffffff", background: "rgba(5, 8, 14, 0.92)", border: "rgba(255, 255, 255, 0.5)" }
+      : { color: "#dfe6f5", alpha: c.alpha != null ? c.alpha : 1 });
   });
 }
 
@@ -5706,6 +5898,18 @@ function drawSceneStandby(canvas) {
   ctx.fillText(t("Spatial context inactive"), cx, cy + 34);
 }
 
+function sceneObjectAgeSeconds(obj) {
+  const seen = Number(obj?.last_seen_unix);
+  if (!Number.isFinite(seen) || seen <= 0) return null;
+  return Math.max(0, Date.now() / 1000 - seen);
+}
+
+function formatSceneAge(seconds) {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 function drawScene(canvas, scene) {
   const { ctx, w, h } = fitCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
@@ -5724,7 +5928,7 @@ function drawScene(canvas, scene) {
     const p = scenePoint(o.x, o.y);
     if (p) pts.push(p);
   }
-  const rp = scenePoint(robot.x, robot.y);
+  const rp = robot.pose_known === false ? null : scenePoint(robot.x, robot.y);
   if (rp) pts.push(rp);
   for (const poly of polys) pts.push(...poly.poly);
 
@@ -5791,9 +5995,14 @@ function drawScene(canvas, scene) {
     ctx.stroke();
   }
 
+  const deferredRegionLabels = [];
+  const objectLabels = [];
+
   if (layers.regions !== false) {
     polys.forEach((r, i) => {
-      const color = regionColor(i);
+      const color = r.stale
+        ? { fill: "rgba(154,169,173,0.08)", stroke: "#9aa9ad" }
+        : regionColor(i);
       ctx.beginPath();
       r.poly.forEach((p, j) => {
         const x = toX(p.x);
@@ -5806,19 +6015,23 @@ function drawScene(canvas, scene) {
       ctx.fill();
       ctx.strokeStyle = color.stroke;
       ctx.lineWidth = 1.5;
+      ctx.setLineDash(r.stale ? [6, 4] : []);
       ctx.stroke();
+      ctx.setLineDash([]);
       const cx = r.poly.reduce((s, p) => s + p.x, 0) / r.poly.length;
       const cy = r.poly.reduce((s, p) => s + p.y, 0) / r.poly.length;
-      ctx.fillStyle = color.stroke;
-      ctx.font = "11px system-ui";
-      ctx.textAlign = "center";
-      ctx.fillText(r.name, toX(cx), toY(cy));
+      deferredRegionLabels.push({
+        text: r.stale ? `${r.name} · ${t("stale")}` : r.name,
+        x: toX(cx),
+        y: toY(cy),
+        options: { color: r.stale ? "#c3ccd4" : "#e8eef8" },
+      });
     });
   }
 
   if (layers.objects !== false) {
     const palette = ["#5b8def", "#35e0a0", "#ffd166", "#f2726f", "#c58bf2", "#5ad1e6"];
-    const labels = [];
+    const labels = objectLabels;
     objects.forEach((o, i) => {
       if ((o.label || "") === "robot") return;
       const p = scenePoint(o.x, o.y);
@@ -5837,6 +6050,7 @@ function drawScene(canvas, scene) {
       const hitIndex = perception.sceneHit.length;
       perception.sceneHit.push({ x, y, w: bw, h: bh, label: o.label || "object" });
       const hovered = hitIndex === perception.sceneHover;
+      const age = sceneObjectAgeSeconds(o);
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(-yaw);
@@ -5848,16 +6062,23 @@ function drawScene(canvas, scene) {
       ctx.lineWidth = hovered ? 2 : 1;
       ctx.strokeRect(-ow / 2, -oh / 2, ow, oh);
       ctx.restore();
+      let text = o.label || "object";
+      if (hovered) {
+        const details = [];
+        if (age != null) details.push(t("seen {age} ago", { age: formatSceneAge(age) }));
+        if (Number(o.observation_count) > 0) details.push(t("{count} observations", { count: o.observation_count }));
+        if (o.frame_id) details.push(o.frame_id);
+        if (details.length) text = `${o.label || "object"} · ${details.join(" · ")}`;
+      }
       labels.push({
         x,
         y: y + oh / 2 + 12,
-        text: o.label || "object",
+        text,
         area: bw * bh,
         minExtent: Math.min(bw, bh),
         force: hovered,
       });
     });
-    drawObjectLabels(ctx, labels);
   }
   if (perception.sceneHover >= perception.sceneHit.length) perception.sceneHover = -1;
 
@@ -5924,11 +6145,15 @@ function drawScene(canvas, scene) {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-    ctx.fillStyle = "#ffd166";
-    ctx.font = "11px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText("robot", x, y + 18);
+    drawSceneLabel(ctx, "robot", x, y + 20, { color: "#ffd166" });
   }
+
+  // Labels are an overlay: draw them last so lidar rays and the robot arrow
+  // never cut through region names or the hovered object's freshness details.
+  deferredRegionLabels.forEach((label) => {
+    drawSceneLabel(ctx, label.text, label.x, label.y, label.options);
+  });
+  drawObjectLabels(ctx, objectLabels);
 
   // Update HUD compass needle if available
   const compassNeedle = document.getElementById("sceneCompassNeedle");
@@ -5963,11 +6188,14 @@ async function perceptionPollScene() {
   perception.lastScene = data.scene;
 
   // The base map is fetched if available. Never wipe lastMap on transient poll failures!
+  let mapError = "";
   if (perception.mapAvailable && perception.sceneLayers.map !== false) {
     try {
       const mapData = await perceptionFetch("map");
       if (mapData && mapData.ok && mapData.occupancy) {
         perception.lastMap = mapData.occupancy;
+      } else if (!perception.lastMap) {
+        mapError = (mapData && mapData.error) || t("Map service unreachable");
       }
     } catch (_) {
       // Retain last known valid map to prevent flashing/flickering
@@ -5991,10 +6219,14 @@ async function perceptionPollScene() {
 
   const objects = (data.scene.objects && data.scene.objects.objects) || [];
   const regions = (data.scene.regions && data.scene.regions.regions) || [];
-  const room = (data.scene.robot && data.scene.robot.room_name) || "";
+  const robot = data.scene.robot || {};
+  const room = robot.region_name || "";
   const parts = [`${objects.length} objects`];
   if (regions.length) parts.push(`${regions.length} regions`);
   if (room) parts.push(room);
+  if (robot.pose_known === false) parts.push(t("pose unknown"));
+  if (robot.stale) parts.push(t("stale"));
+  if (mapError) parts.push(mapError);
   perceptionMeta("scene", parts.join(" · "));
 }
 

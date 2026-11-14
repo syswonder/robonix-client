@@ -1,7 +1,15 @@
 import unittest
+import json
 from unittest import mock
 
-from robonix_client.transport import GRPC_CHANNEL_OPTIONS, build_voice_context, grpc_channel
+from robonix_client.transport import (
+    GRPC_CHANNEL_OPTIONS,
+    ClientSettings,
+    build_abort_task,
+    build_text_task,
+    build_voice_context,
+    grpc_channel,
+)
 
 
 class GrpcChannelTest(unittest.TestCase):
@@ -44,6 +52,25 @@ class GrpcChannelTest(unittest.TestCase):
                 "expected_turn_id": "turn-7",
             },
         )
+
+
+class TaskIdentityTest(unittest.TestCase):
+    def test_task_omits_user_id_so_liaison_can_fill_it(self):
+        task = build_text_task(ClientSettings(), "hello")
+        context = json.loads(task.context_json)
+        self.assertNotIn("user_id", context)
+
+    def test_task_keeps_explicit_user_id(self):
+        task = build_text_task(ClientSettings(user_id="alice"), "hello")
+        self.assertEqual(json.loads(task.context_json)["user_id"], "alice")
+
+    def test_abort_task_does_not_carry_expected_turn_id(self):
+        # Liaison aborts by session; `expected_turn_id` is only honoured on the
+        # steer path, so advertising it in an abort would be a false promise.
+        task = build_abort_task(ClientSettings())
+        context = json.loads(task.context_json)
+        self.assertNotIn("expected_turn_id", context)
+        self.assertTrue(context["abort_turn"])
 
 
 if __name__ == "__main__":

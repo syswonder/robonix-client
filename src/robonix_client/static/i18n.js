@@ -81,7 +81,6 @@
     "Scene Perception Service (Port 50107)": "场景感知服务（端口 50107）",
     "RTAB-Map Mapping (Port 8091)": "RTAB-Map 建图（端口 8091）",
     "Robonix Console (Port 4880)": "Robonix Console（端口 4880）",
-    "Audio Device Server (Port 60001)": "音频设备服务（端口 60001）",
     "Reload": "刷新",
     "Open External": "外部打开",
     "External": "外部打开",
@@ -155,16 +154,17 @@
     "and {count} more": "等 {count} 个",
     "attachment": "附件",
     "Remove attachment": "移除附件",
-    "added to running task": "已加入运行中的任务",
+    "added to running task": "已追加到当时运行中的任务",
     "{count} image": "{count} 张图片",
     "Sent to the running task; waiting for Pilot to react.": "已发送到运行中的任务；等待 Pilot 响应。",
     "Submitted task; waiting for Pilot stream.": "任务已提交；等待 Pilot 数据流。",
     "added: {text}": "追加：{text}",
     "task: {text}": "任务：{text}",
-    "Abort all tasks": "中止全部任务",
+    "Stop task": "停止任务",
     "Aborting": "正在中止…",
     "Reconnect compute-node stream": "重新连接计算节点流",
-    "Abort requested; canceling every running task and any robot motion.": "已请求中止；正在取消所有运行中的任务及机器人动作。",
+    "Stop this session's running task. Does not cancel other sessions or stop voice recording.": "停止本会话运行中的任务；不会取消其他会话，也不会停止录音。",
+    "Abort requested; stopping this session's running task.": "已请求中止；正在停止本会话运行中的任务。",
     "abort requested": "已请求中止",
     "abort requested for {turn}": "已请求中止 {turn}",
     "Abort the running task before starting a new session.": "请先中止运行中的任务，再新建会话。",
@@ -282,6 +282,8 @@
     "0 modules": "0 个模块",
     "procedural model": "程序化模型",
     "{mode} model": "{mode} 模型",
+    "URDF assets missing": "URDF 资源缺失（仅文本模型）",
+    "URDF unavailable": "URDF 不可用",
     "Selected component": "已选组件",
     "Robot digital twin": "机器人数字孪生",
     "Selected component details": "已选组件详情",
@@ -310,6 +312,16 @@
     "Open alert center": "打开告警中心",
     "ok": "正常",
     "stale": "数据过期",
+    "pose unknown": "未定位",
+    "seen {age} ago": "最近观测于 {age} 前",
+    "{count} observations": "{count} 次观测",
+    "not observed recently": "较久未观测",
+    "{count} objects not observed recently": "{count} 个物体较久未观测",
+    "LLM": "LLM",
+    "LLM callable": "LLM 可调用",
+    "cross-namespace": "跨命名空间",
+    "namespace mismatch": "命名空间不一致",
+    "Map service unreachable": "地图服务不可达",
     "warn": "警告",
     "error": "错误",
     "Soma": "Soma",
@@ -365,6 +377,11 @@
     "Capabilities": "能力",
     "No module health reports": "暂无模块健康报告",
     "No Atlas providers": "暂无 Atlas 提供者",
+    "Provider details": "Provider 详情",
+    "Contract description": "契约说明",
+    "No description": "无说明",
+    "Show more": "展开",
+    "Show less": "收起",
     "procedural": "程序化",
     "urdf": "URDF",
     "asset": "模型文件",
@@ -440,6 +457,12 @@
     "log stream error": "日志流错误",
     "raw RMS {value}": "原始 RMS {value}",
     "Voice ID is required": "必须提供语音 ID",
+    "{count} enrolled:": "已录入 {count} 人：",
+    "Remove this enrolled speaker": "删除这位已录入用户",
+    "streamed audio": "流式播放",
+    "removed voiceprint user {userId}": "已删除声纹用户 {userId}",
+    "No enrolled users. If the voiceprint model changed, existing records were skipped and must be re-enrolled.": "暂无可用声纹用户。若声纹模型已更换，旧记录会被跳过，需要重新录入。",
+    "voiceprint users unavailable: {error}": "声纹用户列表不可用：{error}",
     "recording {seconds}s": "录音 {seconds} 秒",
     "recording {seconds}s for {userId}": "为 {userId} 录音 {seconds} 秒",
     "enrolled": "已录入",
@@ -639,6 +662,11 @@
     }
     if (!ambiguousZh.has(value)) zhReverse.set(value, key);
   });
+  // Values this build renamed. Without these aliases, transcripts written by
+  // an older build keep the old wording forever.
+  const legacyZh = new Map([
+    ["已加入运行中的任务", "added to running task"],
+  ]);
 
   function detectLang() {
     try {
@@ -674,7 +702,11 @@
   function translateStored(text) {
     const source = String(text ?? "");
     if (!source) return source;
-    return current === "zh" ? t(source) : (zhReverse.get(source) || source);
+    // Chinese values stored by an older build would otherwise never match a
+    // key again; map them back to the English key first so wording changes
+    // still reach existing transcripts. Free text is left untouched.
+    const key = legacyZh.get(source) || zhReverse.get(source) || source;
+    return current === "zh" ? t(key) : key;
   }
 
   function applyDocument() {

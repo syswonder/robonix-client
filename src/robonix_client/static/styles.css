@@ -2771,6 +2771,27 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
+.voiceprint-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.voiceprint-user-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceprint-user-row .button {
+  min-height: 28px;
+  padding: 0 10px;
+  flex: none;
+}
+
 .toggle {
   min-height: 54px;
   display: flex;
@@ -3728,6 +3749,325 @@ select:focus {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+}
+
+.vitals-software-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vitals-software-name > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e0e7e7;
+  font-weight: 640;
+}
+
+.vitals-info-button {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #2c4149;
+  border-radius: 50%;
+  background: transparent;
+  color: #7fa0aa;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: normal;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+}
+
+.vitals-info-button:hover,
+.vitals-info-button:focus-visible,
+.vitals-info-button[aria-expanded="true"] {
+  border-color: #4a6a76;
+  background: #14242b;
+  color: #cfe4ea;
+  outline: none;
+}
+
+.vitals-provider-card {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(66vh, 480px);
+  overflow: hidden;
+  border: 1px solid #223a43;
+  border-radius: 12px;
+  background: #0d181d;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+  color: #cdd6d6;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.vitals-provider-card[hidden] {
+  display: none;
+}
+
+.vitals-provider-card-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px 10px;
+  border-bottom: 1px solid #1b2e35;
+  background: #111f26;
+}
+
+.vitals-provider-card-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vitals-provider-card-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e6efef;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.vitals-provider-card-kind {
+  color: #6f8b93;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vitals-provider-card-close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #7f98a1;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.vitals-provider-card-close:hover,
+.vitals-provider-card-close:focus-visible {
+  background: #17282f;
+  color: #d8e5e8;
+  outline: none;
+}
+
+.vitals-provider-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  padding: 12px 14px 14px;
+}
+
+.vitals-provider-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  color: #8fa8ae;
+  font-size: 10px;
+}
+
+.vitals-provider-card-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-provider-card-meta span + span::before {
+  content: "·";
+  margin: 0 8px;
+  color: #3f5a62;
+}
+
+.vitals-provider-card-field {
+  display: grid;
+  gap: 3px;
+}
+
+.vitals-provider-card-field-label {
+  color: #5f7b84;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vitals-provider-card-field-value {
+  min-width: 0;
+  color: #d3dede;
+  overflow-wrap: anywhere;
+}
+
+.vitals-provider-card-code {
+  color: #9fd4c4;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+}
+
+.vitals-provider-card-section {
+  display: grid;
+  gap: 6px;
+}
+
+.vitals-provider-card-section-title {
+  color: #5f7b84;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vitals-provider-card-md,
+.vitals-provider-card-cap-desc,
+.vitals-provider-card-cap-bind {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vitals-provider-card-md {
+  color: #b9c9cd;
+  font-size: 11px;
+}
+
+.vitals-provider-card-cap-desc {
+  color: #a8bcc1;
+  font-size: 10px;
+}
+
+.vitals-provider-card-cap-bind {
+  color: #5f7b84;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+}
+
+.vitals-provider-card-md.vitals-card-clamp,
+.vitals-provider-card-cap-desc.vitals-card-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vitals-provider-card-md.vitals-card-clamp {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.vitals-provider-card-cap-desc.vitals-card-clamp {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.vitals-provider-card-cap-bind.vitals-card-clamp {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vitals-provider-card-more {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6ea7b8;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.vitals-provider-card-more:hover,
+.vitals-provider-card-more:focus-visible {
+  color: #a5d3df;
+  text-decoration: underline;
+  outline: none;
+}
+
+.vitals-provider-card-empty {
+  margin: 0;
+  color: #5f7b84;
+  font-size: 10px;
+}
+
+.vitals-provider-card-caps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vitals-provider-card-caps li {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid #1b2e35;
+  border-radius: 7px;
+  background: #101f25;
+}
+
+.vitals-provider-card-caps li.is-mismatch {
+  border-color: #5b4a24;
+  background: #1d1a10;
+}
+
+.vitals-provider-card-cap-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vitals-provider-card-cap-head code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c6dbdf;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+}
+
+.vitals-provider-card-tag {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #172a31;
+  color: #7fa0aa;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vitals-provider-card-cap-flags {
+  color: #9a7d43;
+  font-size: 9px;
 }
 
 .vitals-alert-layer,
