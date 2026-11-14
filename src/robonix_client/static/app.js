@@ -2842,9 +2842,11 @@ function enableTreePanZoom(planId, viewport, svg) {
   if (!svg) return;
   treeLiveKeys.add(planId);
 
-  // Read dimensions from viewBox instead of width/height attributes
+  const canvas = svg.querySelector(".bt-canvas") || svg;
   const viewBox = svg.getAttribute("viewBox");
-  const [, , svgWidth, svgHeight] = viewBox ? viewBox.split(/\s+/).map(Number) : [0, 0, 1, 1];
+  const [, , vbWidth, vbHeight] = viewBox ? viewBox.split(/\s+/).map(Number) : [0, 0, 1, 1];
+  const svgWidth = parseFloat(svg.dataset?.contentWidth) || vbWidth || 1;
+  const svgHeight = parseFloat(svg.dataset?.contentHeight) || vbHeight || 1;
   let view = treeViewStates.get(planId);
   let dragging = false;
   let dragDistance = 0;
@@ -2896,7 +2898,12 @@ function enableTreePanZoom(planId, viewport, svg) {
 
   const apply = () => {
     clampView();
-    svg.style.transform = `translate(${Math.round(view.x)}px, ${Math.round(view.y)}px) scale(${view.scale})`;
+    if (canvas && canvas !== svg) {
+      canvas.setAttribute("transform", `translate(${view.x.toFixed(2)}, ${view.y.toFixed(2)}) scale(${view.scale.toFixed(4)})`);
+      svg.style.transform = "";
+    } else {
+      svg.style.transform = `translate(${Math.round(view.x)}px, ${Math.round(view.y)}px) scale(${view.scale})`;
+    }
   };
 
   const fitView = () => {
@@ -3058,119 +3065,592 @@ function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = ren
   });
 }
 
+function nodeKindMeta(node) {
+  const isLeaf = Boolean(node?.call?.name);
+  if (isLeaf) return { kind: "leaf", tag: "ACT", icon: "⚡" };
+  const rawKind = String(node?.kind || (node?.children?.length ? "sequence" : "leaf")).toLowerCase();
+  if (rawKind === "parallel") return { kind: "parallel", tag: "PAR", icon: "⇉" };
+  if (rawKind === "if") return { kind: "if", tag: "IF", icon: "◇" };
+  if (rawKind === "repeat") return { kind: "repeat", tag: "↺ LOOP", icon: "↺" };
+  if (rawKind === "while") return { kind: "while", tag: "↻ WHILE", icon: "↻" };
+  if (rawKind === "do") return { kind: "do", tag: "DO", icon: "▶" };
+  return { kind: "sequence", tag: "SEQ", icon: "→" };
+}
+
+function findSkippedNodeIndices(plan, resultMaps, runningIndex) {
+  const skipped = new Set();
+  const byIndex = new Map((plan?.nodes || []).map((n) => [Number(n.index), n]));
+  (plan?.nodes || []).forEach((node) => {
+    const k = String(node?.kind || "").toLowerCase();
+    if (k === "if") {
+      const children = (node.children || []).map((idx) => byIndex.get(Number(idx))).filter(Boolean);
+      if (children.length >= 2) {
+        const s0 = statusKey(aggregateNodeStatus(children[0], plan, resultMaps, runningIndex));
+        const s1 = statusKey(aggregateNodeStatus(children[1], plan, resultMaps, runningIndex));
+        if ((s0 === "success" || s0 === "running") && s1 === "pending") {
+          markSubtreeSkipped(children[1]);
+        } else if ((s1 === "success" || s1 === "running") && s0 === "pending") {
+          markSubtreeSkipped(children[0]);
+        }
+      }
+    } else if (k === "repeat" || k === "while") {
+      const parentStatus = statusKey(aggregateNodeStatus(node, plan, resultMaps, runningIndex));
+      if (parentStatus === "success") {
+        (node.children || []).forEach((cIdx) => {
+          const child = byIndex.get(Number(cIdx));
+          if (child && statusKey(aggregateNodeStatus(child, plan, resultMaps, runningIndex)) === "pending") {
+            markSubtreeSkipped(child);
+          }
+        });
+      }
+    }
+  });
+
+  function markSubtreeSkipped(subRoot) {
+    if (!subRoot || skipped.has(Number(subRoot.index))) return;
+    skipped.add(Number(subRoot.index));
+    (subRoot.children || []).forEach((cIdx) => markSubtreeSkipped(byIndex.get(Number(cIdx))));
+  }
+
+  return skipped;
+}
+
+function nodeCardLabels(node, status, kindMeta) {
+  const isLeaf = kindMeta.kind === "leaf";
+  let title = "";
+  let meta = "";
+  if (isLeaf) {
+    title = node.call?.name || node.opId || "action";
+    meta = node.call ? compactProvider(node.call) : (node.description || displayStatus(status));
+  } else if (kindMeta.kind === "sequence") {
+    title = node.description || "Sequence";
+    const count = (node.children || []).length;
+    meta = count ? `${count} steps` : "Sequence";
+  } else if (kindMeta.kind === "parallel") {
+    title = node.description || "Parallel";
+    const count = (node.children || []).length;
+    meta = count ? `${count} concurrent` : "Parallel";
+  } else if (kindMeta.kind === "if") {
+    title = "If Branch";
+    meta = nodeControlMeta(node) || node.description || "Condition";
+  } else if (kindMeta.kind === "repeat") {
+    title = node.repeatCount ? `Repeat ×${node.repeatCount}` : "Repeat";
+    meta = node.description || (node.repeatCount ? `${node.repeatCount} iterations` : "Loop");
+  } else if (kindMeta.kind === "while") {
+    title = node.maxIterations ? `While ≤${node.maxIterations}` : "While";
+    meta = nodeControlMeta(node) || node.description || "Condition loop";
+  } else {
+    title = nodeLabel(node);
+    meta = nodeControlMeta(node) || displayStatus(status);
+  }
+  return { title, meta };
+}
+
+function fitTextToWidth(text, maxPx, fontPx = 9) {
+  const str = String(text || "");
+  if (!str) return "";
+  let curWidth = 0;
+  const ellipsisWidth = fontPx * 0.9;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    const code = ch.charCodeAt(0);
+    const charW = (code >= 0x4e00 && code <= 0x9fff || code >= 0x3000 && code <= 0x303f || code >= 0xff00 && code <= 0xffef)
+      ? fontPx * 1.05
+      : (/[A-Z]/.test(ch) ? fontPx * 0.72 : (/[0-9_a-z]/.test(ch) ? fontPx * 0.58 : fontPx * 0.45));
+    curWidth += charW;
+  }
+  if (curWidth <= maxPx) return str;
+
+  curWidth = 0;
+  let result = "";
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    const code = ch.charCodeAt(0);
+    const charW = (code >= 0x4e00 && code <= 0x9fff || code >= 0x3000 && code <= 0x303f || code >= 0xff00 && code <= 0xffef)
+      ? fontPx * 1.05
+      : (/[A-Z]/.test(ch) ? fontPx * 0.72 : (/[0-9_a-z]/.test(ch) ? fontPx * 0.58 : fontPx * 0.45));
+    if (curWidth + charW + ellipsisWidth > maxPx) {
+      return result ? `${result}…` : "…";
+    }
+    curWidth += charW;
+    result += ch;
+  }
+  return result ? `${result}…` : str;
+}
+
 function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
   const nodes = plan?.nodes || [];
   const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
-  const nodeStateByIndex = resultMaps.byIndex;
-  const nodeW = 104;
-  const nodeH = 38;
-  const leafGap = 22;
-  const levelGap = 72;
+  const skippedIndices = findSkippedNodeIndices(plan, resultMaps, runningIndex);
+  const nodeW = 126;
+  const nodeH = 42;
+  const gapY = 32;
+  const gapX = 32;
   const topPad = 18;
-  const sidePad = 18;
-  const laid = [];
-  let cursor = sidePad;
+  const sidePad = 36;
+  const railMargin = 28;
+  const loopRailWidth = 60;
 
-  const layout = (node, depth) => {
-    const children = (node.children || []).map((child) => byIndex.get(Number(child))).filter(Boolean);
-    if (!children.length) {
-      const pos = { node, depth, x: cursor + nodeW / 2, y: topPad + depth * levelGap };
-      cursor += nodeW + leafGap;
-      laid.push(pos);
-      return pos;
+  const laidNodes = [];
+  const laidEdges = [];
+  const visited = new Set();
+
+  function layoutSubtree(node) {
+    if (!node || visited.has(Number(node.index))) {
+      return { w: nodeW, h: nodeH, entryX: nodeW / 2, exitX: nodeW / 2, exitY: nodeH, render: () => {} };
     }
-    const childPos = children.map((child) => layout(child, depth + 1));
-    const x = (childPos[0].x + childPos[childPos.length - 1].x) / 2;
-    const pos = { node, depth, x, y: topPad + depth * levelGap };
-    laid.push(pos);
-    return pos;
-  };
+    visited.add(Number(node.index));
 
-  layout(treeRoot, 0);
-  const maxDepth = laid.reduce((m, item) => Math.max(m, item.depth), 0);
-  const width = Math.max(220, cursor + sidePad);
-  const height = Math.max(88, topPad * 2 + nodeH + maxDepth * levelGap);
+    const kind = String(node.kind || (node.children?.length ? "sequence" : "leaf")).toLowerCase();
+    const children = (node.children || []).map((idx) => byIndex.get(Number(idx))).filter(Boolean);
+
+    if (!children.length) {
+      return {
+        w: nodeW,
+        h: nodeH,
+        entryX: nodeW / 2,
+        exitX: nodeW / 2,
+        exitY: nodeH,
+        render: (ox, oy) => {
+          laidNodes.push({ node, kind: "leaf", x: ox, y: oy, w: nodeW, h: nodeH });
+        },
+      };
+    }
+
+    if (kind === "parallel") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const totalChildrenW = childLayouts.reduce((sum, c) => sum + c.w, 0) + (children.length - 1) * gapX;
+      const maxChildH = Math.max(...childLayouts.map((c) => c.h));
+      const w = Math.max(nodeW, totalChildrenW);
+      const parentX = (w - nodeW) / 2;
+      const forkY = nodeH + 14;
+      const childrenY = forkY + 16;
+      const joinY = childrenY + maxChildH + 14;
+      const totalH = joinY + 16;
+
+      return {
+        w,
+        h: totalH,
+        entryX: w / 2,
+        exitX: w / 2,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind: "parallel", x: px, y: py, w: nodeW, h: nodeH });
+
+          let curX = ox + (w - totalChildrenW) / 2;
+          const childEntries = [];
+          const childExits = [];
+
+          childLayouts.forEach((cl) => {
+            const cx = curX;
+            const cy = oy + childrenY;
+            cl.render(cx, cy);
+            childEntries.push({ x: cx + cl.entryX, y: cy });
+            childExits.push({ x: cx + cl.exitX, y: cy + cl.exitY });
+            curX += cl.w + gapX;
+          });
+
+          laidEdges.push({
+            type: "parallel-fork",
+            parentPoint: { x: ox + w / 2, y: oy + nodeH },
+            forkY: oy + forkY,
+            minX: childEntries[0].x,
+            maxX: childEntries[childEntries.length - 1].x,
+            children: childEntries,
+          });
+
+          laidEdges.push({
+            type: "parallel-join",
+            joinY: oy + joinY,
+            minX: childExits[0].x,
+            maxX: childExits[childExits.length - 1].x,
+            children: childExits,
+            exitPoint: { x: ox + w / 2, y: oy + totalH },
+          });
+        },
+      };
+    }
+
+    if (kind === "if") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const totalChildrenW = childLayouts.reduce((sum, c) => sum + c.w, 0) + (children.length - 1) * gapX;
+      const maxChildH = Math.max(...childLayouts.map((c) => c.h));
+      const w = Math.max(nodeW, totalChildrenW);
+      const parentX = (w - nodeW) / 2;
+      const branchGap = 32;
+      const joinY = nodeH + branchGap + maxChildH + 14;
+      const totalH = joinY + 14;
+
+      return {
+        w,
+        h: totalH,
+        entryX: w / 2,
+        exitX: w / 2,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind: "if", x: px, y: py, w: nodeW, h: nodeH });
+
+          let curX = ox + (w - totalChildrenW) / 2;
+          const childExits = [];
+          childLayouts.forEach((cl, i) => {
+            const cx = curX;
+            const cy = oy + nodeH + branchGap;
+            cl.render(cx, cy);
+            const isSkipped = children[i] && skippedIndices.has(Number(children[i].index));
+            laidEdges.push({
+              type: i === 0 ? "if-true" : "if-false",
+              from: { x: ox + w / 2, y: oy + nodeH },
+              to: { x: cx + cl.entryX, y: cy },
+              label: i === 0 ? "✓ True" : "✗ False",
+              isSkipped,
+            });
+            childExits.push({ x: cx + cl.exitX, y: cy + cl.exitY });
+            curX += cl.w + gapX;
+          });
+
+          const minExitX = Math.min(...childExits.map((c) => c.x));
+          const maxExitX = Math.max(...childExits.map((c) => c.x));
+          laidEdges.push({
+            type: "if-join",
+            joinY: oy + joinY,
+            minX: minExitX,
+            maxX: maxExitX,
+            children: childExits,
+            exitPoint: { x: ox + w / 2, y: oy + totalH },
+            skippedChildren: children.map((c) => c && skippedIndices.has(Number(c.index))),
+          });
+        },
+      };
+    }
+
+    if (kind === "repeat" || kind === "while") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const leftW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.entryX));
+      const rightW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.w - c.entryX));
+      const axisX = leftW;
+      const w = leftW + rightW + loopRailWidth;
+      const parentX = axisX - nodeW / 2;
+      const childTotalH = childLayouts.reduce((sum, c) => sum + c.h, 0) + (children.length - 1) * gapY;
+      const loopMarginBottom = 16;
+      const totalH = nodeH + gapY + childTotalH + loopMarginBottom;
+
+      return {
+        w,
+        h: totalH,
+        entryX: axisX,
+        exitX: axisX,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind, x: px, y: py, w: nodeW, h: nodeH });
+
+          let curY = oy + nodeH + gapY;
+          let lastExit = { x: ox + axisX, y: py + nodeH };
+          const loopBadgeText = node.repeatCount
+            ? `×${node.repeatCount}`
+            : (node.maxIterations ? `≤${node.maxIterations}` : "↺");
+
+          childLayouts.forEach((cl, i) => {
+            const cx = ox + axisX - cl.entryX;
+            const cy = curY;
+            cl.render(cx, cy);
+            laidEdges.push({
+              type: i === 0 ? "loop-entry" : "sequence-step",
+              from: lastExit,
+              to: { x: ox + axisX, y: cy },
+            });
+            lastExit = { x: cx + cl.exitX, y: cy + cl.exitY };
+            curY += cl.h + gapY;
+          });
+
+          // Loopback from exit of loop body back up to Repeat/While card
+          const railX = ox + axisX + rightW + railMargin;
+          laidEdges.push({
+            type: "loopback",
+            kind,
+            nodeIndex: node.index,
+            from: lastExit,
+            to: { x: px + nodeW, y: py + nodeH / 2 },
+            railX,
+            badge: loopBadgeText,
+          });
+        },
+      };
+    }
+
+    // Default: Sequence (Cascade Vertically)
+    const childLayouts = children.map((c) => layoutSubtree(c));
+    const leftW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.entryX));
+    const rightW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.w - c.entryX));
+    const axisX = leftW;
+    const w = leftW + rightW;
+    const parentX = axisX - nodeW / 2;
+    const childTotalH = childLayouts.reduce((sum, c) => sum + c.h, 0) + (children.length - 1) * gapY;
+    const totalH = nodeH + gapY + childTotalH;
+
+    return {
+      w,
+      h: totalH,
+      entryX: axisX,
+      exitX: axisX,
+      exitY: totalH,
+      render: (ox, oy) => {
+        const px = ox + parentX;
+        const py = oy;
+        laidNodes.push({ node, kind: "sequence", x: px, y: py, w: nodeW, h: nodeH });
+
+        let curY = oy + nodeH + gapY;
+        let lastExit = { x: ox + axisX, y: py + nodeH };
+
+        childLayouts.forEach((cl) => {
+          const cx = ox + axisX - cl.entryX;
+          const cy = curY;
+          cl.render(cx, cy);
+          laidEdges.push({
+            type: "sequence-step",
+            from: lastExit,
+            to: { x: ox + axisX, y: cy },
+          });
+          lastExit = { x: cx + cl.exitX, y: cy + cl.exitY };
+          curY += cl.h + gapY;
+        });
+      },
+    };
+  }
+
+  const rootLayout = layoutSubtree(treeRoot);
+  rootLayout.render(sidePad, topPad);
+
+  const width = Math.max(220, rootLayout.w + sidePad * 2);
+  const height = Math.max(88, rootLayout.h + topPad * 2);
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("class", "bt-svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  // Size the element like the drawing itself. Without this the SVG stretches to
-  // the panel, the browser fits the viewBox inside it, and the pan/zoom
-  // transform ends up scaling a box that no longer matches the tree.
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
+  svg.dataset.contentWidth = String(width);
+  svg.dataset.contentHeight = String(height);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
 
-  const posByIndex = new Map(laid.map((item) => [Number(item.node.index), item]));
-  laid.forEach(({ node, x, y }) => {
-    const childPositions = (node.children || [])
-      .map((child) => posByIndex.get(Number(child)))
-      .filter(Boolean);
-    if (!childPositions.length) return;
-    const y1 = y + nodeH;
-    const y2 = childPositions[0].y;
-    const branchY = y1 + (y2 - y1) / 2;
-    const minX = Math.min(...childPositions.map((child) => child.x));
-    const maxX = Math.max(...childPositions.map((child) => child.x));
-    const path = document.createElementNS(ns, "path");
-    const segments = [`M ${x} ${y1} V ${branchY}`];
-    if (childPositions.length > 1) segments.push(`M ${minX} ${branchY} H ${maxX}`);
-    childPositions.forEach((child) => segments.push(`M ${child.x} ${branchY} V ${child.y}`));
-    path.setAttribute("class", "bt-edge");
-    path.setAttribute("d", segments.join(" "));
-    svg.appendChild(path);
-  });
+  const canvas = document.createElementNS(ns, "g");
+  canvas.setAttribute("class", "bt-canvas");
+  canvas.setAttribute("transform", "translate(0, 0) scale(1)");
+  svg.appendChild(canvas);
 
-  const rootPos = posByIndex.get(Number(treeRoot?.index));
-  if (rootPos) {
-    const entry = document.createElementNS(ns, "circle");
-    entry.setAttribute("class", "bt-entry");
-    entry.setAttribute("cx", String(rootPos.x));
-    entry.setAttribute("cy", "8");
-    entry.setAttribute("r", "3");
-    svg.appendChild(entry);
-    const line = document.createElementNS(ns, "path");
-    line.setAttribute("class", "bt-edge");
-    line.setAttribute("d", `M ${rootPos.x} 11 L ${rootPos.x} ${rootPos.y}`);
-    svg.appendChild(line);
+  function createSvgPath(d, className) {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("class", className);
+    p.setAttribute("d", d);
+    return p;
   }
 
-  laid.forEach(({ node, x, y }) => {
+  function createSvgRect(x, y, w, h, rx, className) {
+    const r = document.createElementNS(ns, "rect");
+    r.setAttribute("class", className);
+    r.setAttribute("x", String(x));
+    r.setAttribute("y", String(y));
+    r.setAttribute("width", String(w));
+    r.setAttribute("height", String(h));
+    r.setAttribute("rx", String(rx));
+    return r;
+  }
+
+  function createSvgText(x, y, text, className) {
+    const t = document.createElementNS(ns, "text");
+    t.setAttribute("class", className);
+    t.setAttribute("x", String(x));
+    t.setAttribute("y", String(y));
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = text;
+    return t;
+  }
+
+  function createSvgArrow(x, y, dir = "down") {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("class", "bt-arrow");
+    if (dir === "left") {
+      p.setAttribute("d", `M ${x + 4.5} ${y - 3} L ${x} ${y} L ${x + 4.5} ${y + 3} Z`);
+    } else {
+      p.setAttribute("d", `M ${x - 3} ${y - 4.5} L ${x} ${y} L ${x + 3} ${y - 4.5} Z`);
+    }
+    return p;
+  }
+
+  // Draw Edges first (rendered underneath cards)
+  laidEdges.forEach((e) => {
+    if (e.type === "parallel-fork") {
+      canvas.appendChild(createSvgPath(`M ${e.parentPoint.x} ${e.parentPoint.y} V ${e.forkY}`, "bt-edge"));
+      canvas.appendChild(createSvgPath(`M ${e.minX} ${e.forkY} H ${e.maxX}`, "bt-edge-bus"));
+      const badgeW = 50;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(e.parentPoint.x - badgeW / 2, e.forkY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
+      canvas.appendChild(createSvgText(e.parentPoint.x, e.forkY + 3.2, "PARALLEL", "bt-bus-text"));
+      e.children.forEach((ch) => {
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${e.forkY} V ${ch.y}`, "bt-edge"));
+        canvas.appendChild(createSvgArrow(ch.x, ch.y, "down"));
+      });
+    } else if (e.type === "parallel-join") {
+      e.children.forEach((ch) => {
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${ch.y} V ${e.joinY}`, "bt-edge"));
+      });
+      canvas.appendChild(createSvgPath(`M ${e.minX} ${e.joinY} H ${e.maxX}`, "bt-edge-bus"));
+      const badgeW = 36;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(e.exitPoint.x - badgeW / 2, e.joinY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
+      canvas.appendChild(createSvgText(e.exitPoint.x, e.joinY + 3.2, "JOIN", "bt-bus-text"));
+      canvas.appendChild(createSvgPath(`M ${e.exitPoint.x} ${e.joinY} V ${e.exitPoint.y}`, "bt-edge"));
+    } else if (e.type === "if-join") {
+      e.children.forEach((ch, idx) => {
+        const isSkipped = Boolean(e.skippedChildren && e.skippedChildren[idx]);
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${ch.y} V ${e.joinY}`, `bt-edge ${isSkipped ? "bt-edge-skipped" : ""}`));
+      });
+      if (Math.abs(e.minX - e.maxX) > 1) {
+        canvas.appendChild(createSvgPath(`M ${e.minX} ${e.joinY} H ${e.maxX}`, "bt-edge bt-edge-if-bus"));
+      }
+      canvas.appendChild(createSvgPath(`M ${e.exitPoint.x} ${e.joinY} V ${e.exitPoint.y}`, "bt-edge"));
+    } else if (e.type === "sequence-step") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const d = Math.abs(e.from.x - e.to.x) < 2
+        ? `M ${e.from.x} ${e.from.y} V ${e.to.y}`
+        : `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      canvas.appendChild(createSvgPath(d, "bt-edge"));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+    } else if (e.type === "if-true" || e.type === "if-false") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const midX = (e.from.x + e.to.x) / 2;
+      const d = `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      const isTrue = e.type === "if-true";
+      canvas.appendChild(createSvgPath(d, `bt-edge ${e.isSkipped ? "bt-edge-skipped" : ""}`));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+      const badgeW = isTrue ? 40 : 42;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH, 3.5, `bt-branch-badge branch-${isTrue ? "true" : "false"}`));
+      canvas.appendChild(createSvgText(midX, midY + 3.2, e.label, `bt-branch-text branch-${isTrue ? "true" : "false"}-text`));
+    } else if (e.type === "loop-entry") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const d = Math.abs(e.from.x - e.to.x) < 2
+        ? `M ${e.from.x} ${e.from.y} V ${e.to.y}`
+        : `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      canvas.appendChild(createSvgPath(d, "bt-edge bt-edge-loop-entry"));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+    } else if (e.type === "loopback") {
+      const centerX = e.from.x;
+      const exitY = e.from.y;
+      const splitY = exitY + 10;
+      const targetX = e.to.x;
+      const targetY = e.to.y;
+      const railX = e.railX;
+
+      const d = `M ${centerX} ${exitY} V ${splitY} C ${centerX} ${splitY + 8}, ${centerX + 6} ${splitY + 12}, ${centerX + 14} ${splitY + 12} H ${railX - 14} C ${railX - 6} ${splitY + 12}, ${railX} ${splitY + 8}, ${railX} ${splitY} V ${targetY + 12} C ${railX} ${targetY + 4}, ${railX - 6} ${targetY}, ${railX - 14} ${targetY} H ${targetX + 5}`;
+
+      canvas.appendChild(createSvgPath(d, "bt-edge bt-edge-loop"));
+
+      const arrow = document.createElementNS(ns, "polygon");
+      arrow.setAttribute("class", "bt-loop-arrow");
+      arrow.setAttribute("points", `${targetX + 6},${targetY - 3.5} ${targetX},${targetY} ${targetX + 6},${targetY + 3.5}`);
+      canvas.appendChild(arrow);
+
+      if (e.badge) {
+        const midY = (splitY + targetY) / 2;
+        const icon = e.kind === "while" ? "↻" : "↺";
+        const textStr = `${icon} ${e.badge}`;
+        const badgeW = Math.max(34, textStr.length * 6.5 + 12);
+        const badgeH = 14;
+        canvas.appendChild(createSvgRect(railX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH, 7, "bt-loop-badge"));
+        canvas.appendChild(createSvgText(railX, midY + 3.2, textStr, "bt-loop-text"));
+      }
+    }
+  });
+
+  // Entry marker at the top of root
+  const rootNodeItem = laidNodes.find((item) => Number(item.node.index) === Number(treeRoot?.index));
+  if (rootNodeItem) {
+    const rx = rootNodeItem.x + rootNodeItem.w / 2;
+    const ry = rootNodeItem.y;
+    const entry = document.createElementNS(ns, "circle");
+    entry.setAttribute("class", "bt-entry");
+    entry.setAttribute("cx", String(rx));
+    entry.setAttribute("cy", String(Math.max(4, ry - 8)));
+    entry.setAttribute("r", "3");
+    canvas.appendChild(entry);
+    if (ry > 10) {
+      canvas.appendChild(createSvgPath(`M ${rx} ${Math.max(6, ry - 6)} L ${rx} ${ry}`, "bt-edge"));
+    }
+  }
+
+  // Draw Nodes on top of Edges
+  laidNodes.forEach(({ node, x, y, w, h }) => {
     const status = aggregateNodeStatus(node, plan, resultMaps, runningIndex);
     const key = statusKey(status);
+    const isRunning = isRunningNode(node, runningIndex);
+    const isSkipped = skippedIndices.has(Number(node.index));
+    const kindMeta = nodeKindMeta(node);
+    const { title: titleText, meta: metaText } = nodeCardLabels(node, status, kindMeta);
+
     const g = document.createElementNS(ns, "g");
-    g.setAttribute("class", `bt-node status-${key}${isRunningNode(node, runningIndex) ? " active" : ""}`);
-    g.setAttribute("transform", `translate(${x - nodeW / 2}, ${y})`);
+    g.setAttribute("class", `bt-node status-${key} kind-${kindMeta.kind}${isRunning ? " active" : ""}${isSkipped ? " status-skipped" : ""}`);
+    g.setAttribute("transform", `translate(${x}, ${y})`);
     g.setAttribute("role", "button");
     g.style.cursor = "pointer";
+
     const title = document.createElementNS(ns, "title");
     title.textContent = `${nodeLabel(node)} · ${capabilityLabel(node)} · ${displayStatus(status)}`;
+
     const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("width", String(nodeW));
-    rect.setAttribute("height", String(nodeH));
-    rect.setAttribute("rx", "5");
+    rect.setAttribute("class", "bt-node-box");
+    rect.setAttribute("width", String(w));
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("rx", "6");
+
     const accent = document.createElementNS(ns, "rect");
     accent.setAttribute("class", "bt-node-accent");
     accent.setAttribute("x", "0");
     accent.setAttribute("y", "4");
     accent.setAttribute("width", "2.5");
-    accent.setAttribute("height", String(nodeH - 8));
+    accent.setAttribute("height", String(h - 8));
     accent.setAttribute("rx", "1.25");
-    const text = document.createElementNS(ns, "text");
-    text.setAttribute("x", String(nodeW / 2));
-    text.setAttribute("y", "16");
-    text.setAttribute("text-anchor", "middle");
-    text.textContent = ellipsize(nodeLabel(node), 15);
-    const meta = document.createElementNS(ns, "text");
-    meta.setAttribute("class", "bt-node-meta");
-    meta.setAttribute("x", String(nodeW / 2));
-    meta.setAttribute("y", "30");
-    meta.setAttribute("text-anchor", "middle");
-    meta.textContent = node.call
-      ? ellipsize(compactProvider(node.call), 17)
-      : ellipsize(nodeControlMeta(node) || displayStatus(status), 17);
-    g.append(title, rect, accent, text, meta);
+
+    const badgeW = kindMeta.tag.length >= 6 ? 36 : kindMeta.tag.length >= 4 ? 26 : 22;
+    const kindBadge = document.createElementNS(ns, "rect");
+    kindBadge.setAttribute("class", "bt-node-kind-badge");
+    kindBadge.setAttribute("x", "6");
+    kindBadge.setAttribute("y", "5.5");
+    kindBadge.setAttribute("width", String(badgeW));
+    kindBadge.setAttribute("height", "11.5");
+    kindBadge.setAttribute("rx", "2.5");
+
+    const kindText = document.createElementNS(ns, "text");
+    kindText.setAttribute("class", "bt-node-kind-text");
+    kindText.setAttribute("x", String(6 + badgeW / 2));
+    kindText.setAttribute("y", "13.8");
+    kindText.setAttribute("text-anchor", "middle");
+    kindText.textContent = kindMeta.tag;
+
+    const titleX = 6 + badgeW + 5;
+    const maxTitlePx = Math.max(20, w - titleX - 8);
+    const nodeTitle = document.createElementNS(ns, "text");
+    nodeTitle.setAttribute("class", "bt-node-title");
+    nodeTitle.setAttribute("x", String(titleX));
+    nodeTitle.setAttribute("y", "14.5");
+    nodeTitle.setAttribute("text-anchor", "start");
+    nodeTitle.textContent = fitTextToWidth(titleText, maxTitlePx, 9);
+
+    const maxMetaPx = Math.max(20, w - 8 - 8);
+    const nodeMeta = document.createElementNS(ns, "text");
+    nodeMeta.setAttribute("class", "bt-node-meta");
+    nodeMeta.setAttribute("x", "8");
+    nodeMeta.setAttribute("y", "31");
+    nodeMeta.setAttribute("text-anchor", "start");
+    nodeMeta.textContent = fitTextToWidth(metaText, maxMetaPx, 7.5);
+
+    g.append(title, rect, accent, kindBadge, kindText, nodeTitle, nodeMeta);
     g.addEventListener("click", () => onSelect(node, status, resultForNode(node, resultMaps)));
-    svg.appendChild(g);
+    canvas.appendChild(g);
   });
 
   return svg;
@@ -3198,7 +3678,11 @@ function makePlanRow(node, status, depth, runningIndex) {
   meta.className = "node-meta";
   const type = document.createElement("span");
   const control = nodeControlMeta(node);
-  type.textContent = `#${node.index} · ${node.kind || "op"}${control ? ` · ${control}` : ""}`;
+  const kindMeta = nodeKindMeta(node);
+  const kindBadge = document.createElement("span");
+  kindBadge.className = `kind-tag kind-${kindMeta.kind}`;
+  kindBadge.textContent = kindMeta.tag;
+  type.append(kindBadge, document.createTextNode(`#${node.index} · ${node.kind || "op"}${control ? ` · ${control}` : ""}`));
   const provider = document.createElement("span");
   provider.textContent = capabilityLabel(node);
   meta.append(type, provider);

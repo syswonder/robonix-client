@@ -1524,18 +1524,13 @@ select:focus {
 
 .bt-svg {
   display: block;
-  /* The SVG declares its own width/height attributes; sizing it to the panel
-     would make the browser rescale the viewBox underneath the pan/zoom
-     transform, so the tree is laid out at drawing size and fitted by
-     enableTreePanZoom instead. */
-  width: auto;
-  max-width: none;
-  height: auto;
-  flex: 0 0 auto;
+  width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
   margin: 0;
   min-width: 0;
   color: var(--text);
-  overflow: visible;
+  overflow: hidden;
 }
 
 .bt-tree-card {
@@ -1572,10 +1567,12 @@ select:focus {
 .bt-tree-viewport {
   min-width: 0;
   overflow: hidden;
+  height: 220px;
   max-height: 220px;
   padding: 8px;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 160px;
+  position: relative;
 }
 
 .bt-entry {
@@ -1584,36 +1581,210 @@ select:focus {
 
 .bt-edge {
   fill: none;
-  stroke: rgba(70, 96, 108, 0.72);
-  stroke-width: 1.2;
+  stroke: rgba(72, 100, 112, 0.75);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bt-edge-bus {
+  fill: none;
+  stroke: rgba(142, 118, 222, 0.85);
+  stroke-width: 2.5;
   stroke-linecap: round;
 }
 
-.bt-node rect {
+.bt-edge-loop-entry {
+  stroke: rgba(53, 186, 166, 0.85);
+  stroke-width: 1.6;
+}
+
+.bt-edge-loop {
+  fill: none;
+  stroke: rgba(53, 186, 166, 0.85);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bt-loop-arrow {
+  fill: rgba(53, 186, 166, 0.95);
+  stroke: none;
+}
+
+.bt-edge-skipped {
+  stroke: rgba(80, 95, 102, 0.35) !important;
+  stroke-dasharray: 4 3;
+}
+
+.bt-arrow {
+  fill: rgba(72, 100, 112, 0.9);
+  stroke: none;
+}
+
+.bt-edge-if-bus {
+  stroke: rgba(98, 120, 130, 0.7);
+  stroke-width: 1.4;
+}
+
+.bt-bus-badge {
+  fill: #141324;
+  stroke: rgba(142, 118, 222, 0.85);
+  stroke-width: 1.1;
+}
+
+.bt-bus-text {
+  fill: #c6b5f7;
+  font: 800 7.5px/1 var(--mono, ui-monospace, SFMono-Regular, monospace);
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.bt-branch-badge.branch-true {
+  fill: #0d211b;
+  stroke: rgba(53, 224, 160, 0.7);
+  stroke-width: 1.1;
+}
+
+.bt-branch-text.branch-true-text {
+  fill: #3eeaa7;
+  font: 700 8px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.bt-branch-badge.branch-false {
+  fill: #1d1b18;
+  stroke: rgba(170, 140, 90, 0.65);
+  stroke-width: 1.1;
+}
+
+.bt-branch-text.branch-false-text {
+  fill: #d4b584;
+  font: 700 8px/1 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.bt-loop-badge {
+  fill: #09201b;
+  stroke: rgba(53, 186, 166, 0.85);
+  stroke-width: 1.2;
+}
+
+.bt-loop-text {
+  fill: #4ae0c7;
+  font: 750 8.5px/1 var(--mono, ui-monospace, SFMono-Regular, monospace);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.bt-node rect.bt-node-box {
   fill: #0d181d;
   stroke: rgba(80, 102, 111, 0.82);
-  stroke-width: 1.1;
+  stroke-width: 1.2;
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.22));
+  transition: stroke 140ms ease, fill 140ms ease;
+}
+
+.bt-node.kind-sequence rect.bt-node-box {
+  stroke: rgba(70, 120, 135, 0.8);
+}
+.bt-node.kind-parallel rect.bt-node-box {
+  stroke: rgba(135, 110, 215, 0.8);
+}
+.bt-node.kind-if rect.bt-node-box {
+  stroke: rgba(205, 160, 60, 0.8);
+}
+.bt-node.kind-repeat rect.bt-node-box,
+.bt-node.kind-while rect.bt-node-box {
+  stroke: rgba(50, 165, 148, 0.8);
 }
 
 .bt-node .bt-node-accent {
   fill: #7f9198;
-  stroke: none;
-  filter: none;
+  stroke: none !important;
+  filter: none !important;
+  animation: none !important;
 }
+
+.bt-node.kind-sequence .bt-node-accent { fill: #4ea8b6; }
+.bt-node.kind-parallel .bt-node-accent { fill: #9d7fe6; }
+.bt-node.kind-if .bt-node-accent { fill: #e5ad38; }
+.bt-node.kind-repeat .bt-node-accent,
+.bt-node.kind-while .bt-node-accent { fill: #3fc1a0; }
+.bt-node.kind-leaf .bt-node-accent { fill: #5897c9; }
+
+.bt-node .bt-node-kind-badge {
+  filter: none !important;
+  animation: none !important;
+}
+.bt-node.kind-sequence .bt-node-kind-badge { fill: #162a31; stroke: #3a7282; stroke-width: 1; }
+.bt-node.kind-parallel .bt-node-kind-badge { fill: #241d3a; stroke: #6852aa; stroke-width: 1; }
+.bt-node.kind-if .bt-node-kind-badge { fill: #332712; stroke: #997327; stroke-width: 1; }
+.bt-node.kind-repeat .bt-node-kind-badge,
+.bt-node.kind-while .bt-node-kind-badge { fill: #112e27; stroke: #2a7c6c; stroke-width: 1; }
+.bt-node.kind-leaf .bt-node-kind-badge { fill: #17242c; stroke: #3e5a66; stroke-width: 1; }
+
+.bt-node .bt-node-kind-text {
+  font: 800 7px/1 var(--mono, ui-monospace, SFMono-Regular, monospace);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+.bt-node.kind-sequence .bt-node-kind-text { fill: #65cde2; }
+.bt-node.kind-parallel .bt-node-kind-text { fill: #bfa8f5; }
+.bt-node.kind-if .bt-node-kind-text { fill: #f0c359; }
+.bt-node.kind-repeat .bt-node-kind-text,
+.bt-node.kind-while .bt-node-kind-text { fill: #48dec3; }
+.bt-node.kind-leaf .bt-node-kind-text { fill: #8faec0; }
 
 .bt-node text {
   fill: #e7eeee;
   font: 650 9px/1.05 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   pointer-events: none;
+  user-select: none;
+}
+
+.bt-node .bt-node-title {
+  fill: #e7eeee;
+  font: 650 9px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.01em;
 }
 
 .bt-node .bt-node-meta {
-  fill: #a8b5b8;
-  font-size: 7px;
-  font-weight: 720;
+  fill: #9daeb3;
+  font-size: 7.5px;
+  font-weight: 650;
   letter-spacing: 0.01em;
 }
+
+.bt-node.status-skipped {
+  opacity: 0.36;
+}
+.bt-node.status-skipped rect.bt-node-box {
+  stroke-dasharray: 4 3;
+  stroke: rgba(120, 135, 142, 0.5) !important;
+}
+.bt-node.status-skipped text {
+  fill: #7d8c91 !important;
+}
+
+.kind-tag {
+  display: inline-block;
+  padding: 1px 4px;
+  margin-right: 4px;
+  border-radius: 3px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 8px;
+  font-weight: 750;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.kind-tag.kind-sequence { background: #162a31; color: #65cde2; border: 1px solid #3a7282; }
+.kind-tag.kind-parallel { background: #241d3a; color: #bfa8f5; border: 1px solid #6852aa; }
+.kind-tag.kind-if { background: #332712; color: #f0c359; border: 1px solid #997327; }
+.kind-tag.kind-repeat,
+.kind-tag.kind-while { background: #112e27; color: #48dec3; border: 1px solid #2a7c6c; }
+.kind-tag.kind-leaf { background: #17242c; color: #8faec0; border: 1px solid #3e5a66; }
 
 .history-plan-tree {
   min-width: 0;
@@ -1634,7 +1805,9 @@ select:focus {
 }
 
 .history-plan-tree .bt-tree-viewport {
+  height: 480px;
   max-height: none;
+  min-height: 240px;
   padding: 14px;
 }
 
@@ -1792,7 +1965,7 @@ select:focus {
   font: 600 11px/1.2 "JetBrains Mono", ui-monospace, monospace;
 }
 
-.bt-node.status-success rect {
+.bt-node.status-success rect.bt-node-box {
   fill: #0d181d;
   stroke: rgba(105, 151, 122, 0.78);
 }
@@ -1809,9 +1982,10 @@ select:focus {
   fill: #9fc9aa;
 }
 
-.bt-node.status-running rect {
-  fill: #11191b;
+.bt-node.status-running rect.bt-node-box {
+  fill: #111a1d;
   stroke: rgba(230, 184, 88, 0.96);
+  stroke-width: 1.5;
 }
 
 .bt-node.status-running .bt-node-accent {
@@ -1826,11 +2000,12 @@ select:focus {
   fill: #e9c974;
 }
 
-.bt-node.status-running.active rect {
-  animation: btRunningPulse 1.25s ease-in-out infinite;
+.bt-node.status-running.active rect.bt-node-box {
+  animation: btRunningPulse 1.6s ease-in-out infinite;
+  transition: none !important;
 }
 
-.bt-node.status-failed rect {
+.bt-node.status-failed rect.bt-node-box {
   fill: #161617;
   stroke: rgba(237, 97, 83, 0.96);
 }
@@ -1847,7 +2022,7 @@ select:focus {
   fill: #f28a7f;
 }
 
-.bt-node.status-pending rect {
+.bt-node.status-pending rect.bt-node-box {
   fill: #0c1519;
   stroke: rgba(98, 115, 122, 0.72);
 }
@@ -1865,8 +2040,16 @@ select:focus {
 }
 
 @keyframes btRunningPulse {
-  0%, 100% { stroke-width: 1.1; filter: drop-shadow(0 3px 8px rgba(241, 186, 79, 0.14)); }
-  50% { stroke-width: 2.2; filter: drop-shadow(0 0 14px rgba(241, 186, 79, 0.48)); }
+  0%, 100% {
+    stroke-width: 1.5;
+    stroke: rgba(230, 184, 88, 0.72);
+    filter: drop-shadow(0 1px 4px rgba(241, 186, 79, 0.22));
+  }
+  50% {
+    stroke-width: 1.5;
+    stroke: rgba(255, 222, 120, 1);
+    filter: drop-shadow(0 0 10px rgba(241, 186, 79, 0.65));
+  }
 }
 
 .snapshot-more {
@@ -6318,7 +6501,9 @@ select:focus {
 }
 
 .dashboard-sidebar > .panel[data-sidebar-panel="rtdl"]:not([hidden]) .bt-tree-viewport {
+  height: 100%;
   max-height: none;
+  min-height: 200px;
 }
 
 /* Node detail popup: opened by clicking a node in the execution tree. */
@@ -6392,7 +6577,6 @@ select:focus {
 
 .bt-tree-viewport .bt-svg {
   transform-origin: 0 0;
-  will-change: transform;
 }
 
 .bt-tree-viewport .bt-svg text {
