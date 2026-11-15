@@ -175,9 +175,14 @@ select {
   overflow: hidden;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
+  transition: grid-template-columns 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   background:
     radial-gradient(circle at 70% 12%, rgba(44, 126, 132, 0.14), transparent 28%),
     linear-gradient(180deg, #081014, #071012 45%, #080d0f);
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .nav-rail {
@@ -195,6 +200,11 @@ select {
   -webkit-user-select: none;
   position: relative;
   z-index: 40;
+  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nav-rail.collapsed {
+  width: 56px;
 }
 
 .sidebar-top {
@@ -484,6 +494,32 @@ select {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sidebar-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sidebar-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .brand-title {
@@ -552,7 +588,6 @@ select {
   color: #aa7bec;
 }
 
-.nav-item,
 .ghost-button,
 .icon-button,
 .tool-button,
@@ -569,19 +604,119 @@ select {
   cursor: pointer;
 }
 
-.nav-item {
-  text-align: left;
-  padding: 10px 12px;
-  color: #d4dcde;
-  background: transparent;
-  border-color: transparent;
+/* n8n-style Collapsed Sidebar (Slim Icon Rail) */
+.nav-rail.collapsed .sidebar-top {
+  padding: 12px 6px 10px;
+  align-items: center;
 }
 
-.nav-item:hover,
-.nav-item.active {
-  background: linear-gradient(135deg, rgba(46, 127, 186, 0.3), rgba(42, 81, 95, 0.32));
-  border-color: #22465f;
-  color: #d9f3ff;
+.nav-rail.collapsed .brand {
+  padding: 2px 0 10px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.nav-rail.collapsed .brand-text {
+  display: none !important;
+}
+
+.nav-rail.collapsed .brand-logo-wrap {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+}
+
+.nav-rail.collapsed .sidebar-collapse-btn {
+  margin: 0 auto;
+  width: 32px;
+  height: 26px;
+}
+
+.nav-rail.collapsed .sidebar-collapse-btn .collapse-icon-left {
+  display: none !important;
+}
+
+.nav-rail.collapsed .sidebar-collapse-btn .collapse-icon-right {
+  display: block !important;
+}
+
+.nav-rail.collapsed .sidebar-primary-nav {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-rail.collapsed .nav-item {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+  margin: 0 auto;
+  border-radius: 9px;
+}
+
+.nav-rail.collapsed .nav-item span {
+  display: none !important;
+}
+
+.nav-rail.collapsed .nav-item .nav-icon {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  opacity: 0.85;
+}
+
+.nav-rail.collapsed .sidebar-history-section {
+  display: none !important;
+}
+
+.nav-rail.collapsed .sidebar-bottom {
+  padding: 10px 6px 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.nav-rail.collapsed .settings-trigger-btn {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  justify-content: center;
+  margin: 0 auto;
+  border-radius: 9px;
+}
+
+.nav-rail.collapsed .settings-trigger-main {
+  justify-content: center;
+  gap: 0;
+}
+
+.nav-rail.collapsed .settings-trigger-label,
+.nav-rail.collapsed .settings-trigger-arrow {
+  display: none !important;
+}
+
+.nav-rail.collapsed .settings-trigger-icon {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.nav-rail.collapsed .settings-menu-popover {
+  left: calc(100% + 10px) !important;
+  bottom: 0 !important;
+  width: 250px !important;
+}
+
+.nav-rail.collapsed .settings-menu-popover::before {
+  left: -5px;
+  bottom: 14px;
+  transform: rotate(45deg);
 }
 
 .lang-switch {
@@ -5787,6 +5922,10 @@ h2 {
     cursor: pointer;
     margin-left: auto;
     transition: all 0.15s ease;
+  }
+
+  .sidebar-collapse-btn {
+    display: none !important;
   }
 
   .sidebar-close-btn:hover {

@@ -1182,6 +1182,38 @@ function bindEvents() {
       setMobileSidebar(false);
     }
   });
+
+  // Desktop Sidebar Collapse (n8n-style icon-only rail)
+  const appShell = document.querySelector(".app-shell");
+  const sidebarCollapseBtn = maybe("sidebarCollapseBtn");
+
+  function setSidebarCollapsed(collapsed) {
+    if (!navRail || !appShell) return;
+    const isCollapsed = collapsed ?? !navRail.classList.contains("collapsed");
+    navRail.classList.toggle("collapsed", isCollapsed);
+    appShell.classList.toggle("sidebar-collapsed", isCollapsed);
+    try {
+      localStorage.setItem("robonix.sidebar_collapsed", isCollapsed ? "true" : "false");
+    } catch (_) {}
+    if (sidebarCollapseBtn) {
+      const leftIcon = sidebarCollapseBtn.querySelector(".collapse-icon-left");
+      const rightIcon = sidebarCollapseBtn.querySelector(".collapse-icon-right");
+      if (leftIcon) leftIcon.style.display = isCollapsed ? "none" : "block";
+      if (rightIcon) rightIcon.style.display = isCollapsed ? "block" : "none";
+      const titleKey = isCollapsed ? "Expand sidebar" : "Collapse sidebar";
+      sidebarCollapseBtn.setAttribute("title", t(titleKey));
+      sidebarCollapseBtn.setAttribute("aria-label", t(titleKey));
+    }
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 240);
+  }
+
+  try {
+    if (window.innerWidth > 860 && localStorage.getItem("robonix.sidebar_collapsed") === "true") {
+      setSidebarCollapsed(true);
+    }
+  } catch (_) {}
+
+  sidebarCollapseBtn?.addEventListener("click", () => setSidebarCollapsed());
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });
