@@ -78,10 +78,25 @@
   }
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
 }
 
 *::-webkit-scrollbar,
@@ -177,6 +192,7 @@ select {
   gap: 0;
   overflow: visible;
   user-select: none;
+  -webkit-user-select: none;
   position: relative;
   z-index: 40;
 }
@@ -443,6 +459,7 @@ select {
   gap: 10px;
   white-space: nowrap;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .brand-logo-wrap {
@@ -2780,6 +2797,7 @@ h2 {
   font: 650 9px/1.05 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   pointer-events: none;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .bt-node .bt-node-title {
@@ -2859,6 +2877,7 @@ h2 {
   padding: 4vh 4vw;
   background: rgba(2, 7, 9, 0.78);
   backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
 }
 
 .modal-backdrop[hidden] {
@@ -3664,6 +3683,7 @@ h2 {
   border-radius: 7px;
   background: rgba(7, 16, 18, 0.74);
   backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .robot-telemetry strong {
@@ -5691,6 +5711,10 @@ h2 {
     -webkit-backdrop-filter: blur(24px);
     display: flex;
     flex-direction: column;
+    overscroll-behavior: contain;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
   }
 
   .nav-rail.open {
@@ -5742,7 +5766,7 @@ h2 {
   .workspace {
     height: 100%;
     height: 100dvh;
-    grid-template-rows: 44px minmax(0, 1fr);
+    grid-template-rows: calc(44px + env(safe-area-inset-top, 0px)) minmax(0, 1fr);
     overflow: hidden;
   }
 
@@ -5774,8 +5798,8 @@ h2 {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
-    min-height: 44px;
+    padding: calc(6px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) 6px calc(10px + env(safe-area-inset-left, 0px));
+    min-height: calc(44px + env(safe-area-inset-top, 0px));
     overflow-x: auto;
     overflow-y: hidden;
     white-space: nowrap;
@@ -5863,6 +5887,7 @@ h2 {
     padding: 10px 10px 14px;
     gap: 10px;
     max-width: 100%;
+    -webkit-overflow-scrolling: touch;
   }
 
   .message {
@@ -5893,6 +5918,13 @@ h2 {
     font-size: 16px !important; /* Critical: stops iOS Safari auto-zoom on input focus */
     padding: 6px 4px;
     max-height: 120px;
+  }
+
+  /* Prevent auto-zoom on iOS Safari for all inputs */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 
   .send-button .btn-key {
@@ -5926,6 +5958,10 @@ h2 {
     flex-direction: column;
     border-left: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+    overscroll-behavior: contain;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
   }
 
   .dashboard-sidebar.open {
@@ -5939,6 +5975,12 @@ h2 {
     width: 100% !important;
     min-width: 0 !important;
     height: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .work-page {
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Vitals Page on Mobile */
@@ -5946,6 +5988,8 @@ h2 {
     height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 
   .vitals-overview {
@@ -6074,7 +6118,8 @@ h2 {
     max-width: 34px;
   }
 
-  .workspace:has(.vitals-page.active) .command-bar {
+  .workspace:has(.vitals-page.active) .command-bar,
+  .workspace[data-active-page="vitals"] .command-bar {
     grid-template-columns: minmax(0, 1fr) 150px;
     gap: 6px;
     padding: 6px 8px;
@@ -6082,19 +6127,25 @@ h2 {
 
   .workspace:has(.vitals-page.active) .command-bar > .select-field.wide,
   .workspace:has(.vitals-page.active) .command-bar > #userBadge,
-  .workspace:has(.vitals-page.active) #handsfreeToggle {
+  .workspace:has(.vitals-page.active) #handsfreeToggle,
+  .workspace[data-active-page="vitals"] .command-bar > .select-field.wide,
+  .workspace[data-active-page="vitals"] .command-bar > #userBadge,
+  .workspace[data-active-page="vitals"] #handsfreeToggle {
     display: none;
   }
 
-  .workspace:has(.vitals-page.active) .command-bar > #endpointBadge {
+  .workspace:has(.vitals-page.active) .command-bar > #endpointBadge,
+  .workspace[data-active-page="vitals"] .command-bar > #endpointBadge {
     grid-column: 1 / -1;
   }
 
-  .workspace:has(.vitals-page.active) #refreshSystem {
+  .workspace:has(.vitals-page.active) #refreshSystem,
+  .workspace[data-active-page="vitals"] #refreshSystem {
     grid-column: 1;
   }
 
-  .workspace:has(.vitals-page.active) #connectNow {
+  .workspace:has(.vitals-page.active) #connectNow,
+  .workspace[data-active-page="vitals"] #connectNow {
     grid-column: 2;
   }
 
@@ -6471,6 +6522,7 @@ h2 {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   user-select: none;
+  -webkit-user-select: none;
   transition: all 120ms ease;
 }
 
@@ -6479,13 +6531,15 @@ h2 {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-.perception-layer-pill:has(input:checked) {
+.perception-layer-pill:has(input:checked),
+.perception-layer-pill.is-checked {
   background: rgba(95, 205, 216, 0.12);
   border-color: rgba(95, 205, 216, 0.3);
   color: #5ad1e6;
 }
 
-.perception-layer-pill.laser-layer-pill:has(input:checked) {
+.perception-layer-pill.laser-layer-pill:has(input:checked),
+.perception-layer-pill.laser-layer-pill.is-checked {
   background: rgba(53, 224, 160, 0.12);
   border-color: rgba(53, 224, 160, 0.3);
   color: #35e0a0;
@@ -6714,6 +6768,7 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, monospace;
   pointer-events: none;
   backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   transform: translate(12px, -50%);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
@@ -6761,6 +6816,7 @@ h2 {
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   pointer-events: none;
 }
 
@@ -7072,9 +7128,23 @@ h2 {
 }
 
 @media (max-width: 720px) {
+  .perception-header {
+    padding: 10px 14px 8px;
+    gap: 8px;
+  }
+
   .perception-grid {
     grid-template-columns: 1fr;
     grid-auto-rows: minmax(240px, 1fr);
+    padding: 10px;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .perception-grid .perception-tile[data-tile="scene"],
+  .perception-grid.layout-split .perception-tile[data-tile="scene"] {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .perception-channel-matrix {
@@ -7349,6 +7419,7 @@ h2 {
   background: rgba(18, 22, 30, 0.95);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   z-index: 10;
 }
 
@@ -7440,6 +7511,7 @@ h2 {
   transition: all 130ms ease;
   white-space: nowrap;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .studio-service-tab:hover {
@@ -7493,6 +7565,7 @@ h2 {
   cursor: pointer;
   transition: all 120ms ease;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .studio-action-btn:hover {
@@ -7525,6 +7598,7 @@ h2 {
   z-index: 5;
   background: rgba(11, 14, 20, 0.88);
   backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -7875,6 +7949,7 @@ h2 {
 
 .bt-tree-viewport .bt-svg text {
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .task-scope-controls {

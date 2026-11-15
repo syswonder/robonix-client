@@ -1016,8 +1016,28 @@ function bindEvents() {
   $("taskInput").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
     event.preventDefault();
-    $("composer").requestSubmit();
+    const form = $("composer");
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+    } else {
+      form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    }
   });
+  $("taskInput").addEventListener("focus", () => {
+    // On iOS Safari / mobile Chrome, scroll messages to bottom after keyboard shows
+    setTimeout(() => {
+      const messages = $("messages");
+      if (messages) messages.scrollTop = messages.scrollHeight;
+    }, 320);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+      if (document.activeElement === $("taskInput")) {
+        const messages = $("messages");
+        if (messages) messages.scrollTop = messages.scrollHeight;
+      }
+    });
+  }
   window.addEventListener("keydown", (event) => {
     if (event.key !== "F2") return;
     event.preventDefault();
@@ -1168,11 +1188,19 @@ function bindEvents() {
   maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeRtdlHistory();
   });
-  maybe("closeCallDetail")?.addEventListener("click", () => $("callDetailModal").close());
+  maybe("closeCallDetail")?.addEventListener("click", () => {
+    const modal = $("callDetailModal");
+    if (!modal) return;
+    if (typeof modal.close === "function") modal.close();
+    else modal.removeAttribute("open");
+  });
   maybe("callDetailModal")?.addEventListener("click", event => {
     if (event.target !== event.currentTarget) return;
     const r = event.currentTarget.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) event.currentTarget.close();
+    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) {
+      if (typeof event.currentTarget.close === "function") event.currentTarget.close();
+      else event.currentTarget.removeAttribute("open");
+    }
   });
   maybe("closeNodeDetail")?.addEventListener("click", closeNodeDetail);
   maybe("nodeDetailModal")?.addEventListener("click", (event) => {
@@ -1470,6 +1498,8 @@ function renderAttachments() {
 function activatePage(name) {
   if (!name) return;
   state.activePage = name;
+  const workspace = document.querySelector(".workspace");
+  if (workspace) workspace.setAttribute("data-active-page", name);
   try {
     localStorage.setItem("robonix.active_page", name);
     if (window.location.hash.slice(1) !== name) {
@@ -3105,7 +3135,8 @@ function enableTreePanZoom(planId, viewport, svg) {
   viewport.addEventListener("pointermove", (event) => {
     if (!dragging) return;
     // The pointer was released outside the viewport before capture started.
-    if (event.buttons === 0) {
+    // iOS Safari sometimes reports event.buttons === 0 during touch moves, so exclude touch.
+    if (event.buttons === 0 && event.pointerType !== "touch") {
       endDrag(event);
       return;
     }
@@ -4600,7 +4631,11 @@ function showCallDetails(context) {
   }, null, 2);
   root.append(fields, source, payload);
   renderDetailImage(payload, image);
-  if (!$("callDetailModal").open) $("callDetailModal").showModal();
+  const modal = $("callDetailModal");
+  if (modal && !modal.open) {
+    if (typeof modal.showModal === "function") modal.showModal();
+    else modal.setAttribute("open", "");
+  }
 }
 
 function executionSummaries() {
@@ -7021,6 +7056,12 @@ function bindSceneLayers() {
   const root = document.querySelector('.perception-tile[data-tile="scene"]');
   if (!root || root.dataset.layersBound) return;
   root.dataset.layersBound = "1";
+  root.querySelectorAll(".perception-layer-pill input").forEach((input) => {
+    const pill = input.closest(".perception-layer-pill");
+    const sync = () => pill?.classList.toggle("is-checked", input.checked);
+    sync();
+    input.addEventListener("change", sync);
+  });
   root.querySelectorAll("[data-scene-layer]").forEach((input) => {
     const key = input.dataset.sceneLayer;
     input.addEventListener("change", () => {
