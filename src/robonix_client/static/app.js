@@ -1099,6 +1099,37 @@ function bindEvents() {
     const sidebar = $("dashboardSidebar");
     if (sidebar) sidebar.classList.remove("open");
   });
+  const settingsTrigger = maybe("settingsTriggerBtn");
+  const settingsPopover = maybe("settingsMenuPopover");
+  if (settingsTrigger && settingsPopover) {
+    settingsTrigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isHidden = settingsPopover.hidden;
+      settingsPopover.hidden = !isHidden;
+      settingsTrigger.classList.toggle("active", isHidden);
+    });
+    document.addEventListener("click", (event) => {
+      if (!settingsPopover.hidden && !event.target.closest("#settingsDropdownWrapper")) {
+        settingsPopover.hidden = true;
+        settingsTrigger.classList.remove("active");
+      }
+    });
+  }
+  maybe("settingsMenuAudio")?.addEventListener("click", () => {
+    activatePage("audio");
+    if (settingsPopover) settingsPopover.hidden = true;
+    if (settingsTrigger) settingsTrigger.classList.remove("active");
+  });
+  maybe("settingsMenuSettings")?.addEventListener("click", () => {
+    activatePage("settings");
+    if (settingsPopover) settingsPopover.hidden = true;
+    if (settingsTrigger) settingsTrigger.classList.remove("active");
+  });
+  maybe("navChatBtn")?.addEventListener("click", () => {
+    if (state.messages.length > 0 || state.sessionTitle) {
+      newSession();
+    }
+  });
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });

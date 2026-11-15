@@ -23,10 +23,25 @@
             </div>
           </div>
 
-          <button class="new-session-button sidebar-new-chat" type="button" id="newSessionAction" title="Start a fresh conversation. Clears past turn context." data-i18n-title="Start a fresh conversation. Clears past turn context.">
-            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span class="btn-label" data-i18n="New chat">New chat</span>
-          </button>
+          <!-- All navigation placed ABOVE recent chats, consistent with n8n -->
+          <nav class="nav-list sidebar-primary-nav" aria-label="Workspace" data-i18n-aria-label="Workspace">
+            <button class="nav-item active" type="button" data-page="dashboard" id="navChatBtn" title="Start new chat" data-i18n-title="Start new chat">
+              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span data-i18n="Chat">Chat</span>
+            </button>
+            <button class="nav-item" type="button" data-page="perception">
+              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span data-i18n="Perception">Perception</span>
+            </button>
+            <button class="nav-item" type="button" data-page="vitals">
+              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <span data-i18n="Vitals">Vitals</span>
+            </button>
+            <button class="nav-item" type="button" data-page="studio">
+              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              <span data-i18n="Studio">Studio</span>
+            </button>
+          </nav>
 
           <div class="sidebar-section sidebar-history-section">
             <div class="sidebar-section-header">
@@ -34,111 +49,87 @@
             </div>
             <div class="conversation-history" id="historyList"></div>
           </div>
-
-          <div class="sidebar-section sidebar-workspace-section">
-            <div class="sidebar-section-header">
-              <span data-i18n="Workspace">Workspace</span>
-            </div>
-            <nav class="nav-list" aria-label="Workspace" data-i18n-aria-label="Workspace">
-              <button class="nav-item active" type="button" data-page="dashboard">
-                <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <span data-i18n="Chat">Chat</span>
-              </button>
-              <button class="nav-item" type="button" data-page="perception">
-                <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                <span data-i18n="Perception">Perception</span>
-              </button>
-              <button class="nav-item" type="button" data-page="vitals">
-                <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                <span data-i18n="Vitals">Vitals</span>
-              </button>
-              <button class="nav-item" type="button" data-page="studio">
-                <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                <span data-i18n="Studio">Studio</span>
-              </button>
-            </nav>
-          </div>
         </div>
 
+        <!-- Settings Expandable Menu at bottom of sidebar -->
         <div class="sidebar-bottom">
-          <nav class="nav-list sidebar-nav-bottom" aria-label="System" data-i18n-aria-label="System">
-            <button class="nav-item" type="button" data-page="audio">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
-              <span data-i18n="Audio">Audio</span>
-            </button>
-            <button class="nav-item" type="button" data-page="settings">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-              <span data-i18n="Settings">Settings</span>
-            </button>
-          </nav>
+          <div class="settings-dropdown-wrapper" id="settingsDropdownWrapper">
+            <div class="settings-menu-popover" id="settingsMenuPopover" hidden>
+              <button type="button" class="settings-menu-item" data-page="audio" id="settingsMenuAudio">
+                <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                <span data-i18n="Audio">Audio</span>
+              </button>
+              <button type="button" class="settings-menu-item" data-page="settings" id="settingsMenuSettings">
+                <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span data-i18n="Settings">Settings</span>
+              </button>
+              <div class="settings-menu-item settings-lang-row">
+                <div class="settings-lang-label">
+                  <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                  <span data-i18n="Language">Language</span>
+                </div>
+                <div class="lang-switch compact" id="langSwitch" role="group" data-i18n-title="Switch language" data-i18n-aria-label="Switch language">
+                  <span class="lang-switch-thumb" aria-hidden="true"></span>
+                  <button type="button" class="lang-option" data-lang="en" aria-pressed="true">EN</button>
+                  <button type="button" class="lang-option" data-lang="zh" aria-pressed="false">中文</button>
+                </div>
+              </div>
+            </div>
 
-          <div class="sidebar-status-group">
-            <button class="status-chip" id="refreshSystem" type="button">
-              <span class="dot"></span>
-              <span id="connectionState" data-i18n="offline">offline</span>
+            <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" title="Settings & Preferences" data-i18n-title="Settings & Preferences">
+              <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span class="settings-trigger-label" data-i18n="Settings">Settings</span>
+              <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
             </button>
-            <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
-              <span class="dot"></span>
-              <span id="handsfreeState" data-i18n="Hands-free off">Hands-free off</span>
-            </button>
-          </div>
-
-          <div class="lang-switch" id="langSwitch" role="group" data-i18n-title="Switch language" data-i18n-aria-label="Switch language">
-            <span class="lang-switch-thumb" aria-hidden="true"></span>
-            <button type="button" class="lang-option" data-lang="en" aria-pressed="true">EN</button>
-            <button type="button" class="lang-option" data-lang="zh" aria-pressed="false">中文</button>
           </div>
         </div>
       </aside>
 
       <main class="workspace">
-        <header class="command-bar workspace-header">
-          <div class="session-title-wrap">
-            <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            <input id="sessionTitleInput" class="session-title-input" autocomplete="off" placeholder="Untitled chat" data-i18n-placeholder="Untitled chat" title="Name of this session. Edit to rename it; New session creates one under this name." data-i18n-title="Name of this session. Edit to rename it; New session creates one under this name." />
-            <button class="ghost-button icon-only-btn" id="renameSession" type="button" title="Rename conversation" data-i18n-title="Rename conversation">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-            </button>
-          </div>
-
-          <span id="promptTitle" class="visually-hidden" data-i18n="What should Robonix do?">What should Robonix do?</span>
-          
+        <!-- Hidden system nodes to preserve ID bindings -->
+        <div class="system-hidden-controls" style="display:none;" aria-hidden="true">
+          <span id="promptTitle" data-i18n="What should Robonix do?">What should Robonix do?</span>
           <input id="robotHost" type="hidden" />
           <input id="atlasPort" type="hidden" />
           <input id="userId" type="hidden" />
-
-          <div class="workspace-header-actions">
-            <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings" title="Robot Atlas Endpoint. Click to edit in Settings." data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
-              <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-              <span class="endpoint-label" data-i18n="Atlas:">Atlas:</span>
-              <span class="endpoint-val" id="atlasEndpointDisplay">127.0.0.1:50051</span>
-            </button>
-            
-            <button class="endpoint-badge user-badge" id="userBadge" type="button" data-page-link="settings" title="Current Operator. Click to edit in Settings." data-i18n-title="Current Operator. Click to edit in Settings.">
-              <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-              <span class="endpoint-val" id="userDisplay">voice:client</span>
-            </button>
-
-            <button class="button connect-button compact" id="connectNow" type="button" data-i18n="Connect">Connect</button>
-
-            <button class="ghost-button icon-btn" id="clearHistory" type="button" title="Clear current conversation messages" data-i18n-title="Clear current conversation messages">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-              <span data-i18n="Clear">Clear</span>
-            </button>
-
-            <button class="ghost-button inspector-toggle-btn" id="toggleInspector" type="button" title="Toggle RTDL & Execution Inspector" data-i18n-title="Toggle RTDL & Execution Inspector">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-              <span data-i18n="RTDL Forest">RTDL Forest</span>
-            </button>
-          </div>
-        </header>
+          <button id="clearHistory" type="button"></button>
+          <button id="connectNow" type="button"></button>
+          <button id="refreshSystem" type="button"><span class="dot"></span><span id="connectionState">offline</span></button>
+          <button id="handsfreeToggle" type="button"><span class="dot"></span><span id="handsfreeState">Hands-free off</span></button>
+          <button id="endpointBadge" type="button"><span id="atlasEndpointDisplay">127.0.0.1:50051</span></button>
+          <button id="userBadge" type="button"><span id="userDisplay">voice:client</span></button>
+        </div>
 
         <section class="page dashboard-page active" data-page-panel="dashboard">
           <section class="dashboard-grid">
             <section class="panel conversation-panel">
+              <!-- Inside-Chat Header with 2 buttons -->
+              <header class="conversation-header">
+                <div class="session-title-wrap">
+                  <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <input id="sessionTitleInput" class="session-title-input" autocomplete="off" placeholder="Untitled chat" data-i18n-placeholder="Untitled chat" title="Name of this session. Edit to rename it; New session creates one under this name." data-i18n-title="Name of this session. Edit to rename it; New session creates one under this name." />
+                  <button class="ghost-button icon-only-btn" id="renameSession" type="button" title="Rename conversation" data-i18n-title="Rename conversation">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  </button>
+                </div>
+
+                <div class="conversation-header-actions">
+                  <button class="ghost-button icon-btn" id="newSessionAction" type="button" title="Start a fresh conversation" data-i18n-title="Start a fresh conversation">
+                    <svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    <span class="btn-label" data-i18n="New chat">New chat</span>
+                  </button>
+
+                  <button class="ghost-button inspector-toggle-btn" id="toggleInspector" type="button" title="Toggle RTDL & Execution Inspector" data-i18n-title="Toggle RTDL & Execution Inspector">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                    <span data-i18n="RTDL Forest">RTDL Forest</span>
+                  </button>
+                </div>
+              </header>
+
               <div class="chat-body">
                 <div class="messages" id="messages"></div>
               </div>
+
               <form class="composer" id="composer">
                 <div id="attachmentStrip" class="attachment-strip"></div>
                 <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
