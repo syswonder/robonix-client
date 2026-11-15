@@ -746,6 +746,9 @@
     document.querySelectorAll("[data-i18n-title]").forEach((node) => {
       node.title = t(node.dataset.i18nTitle);
     });
+    document.querySelectorAll("[data-i18n-tooltip]").forEach((node) => {
+      node.setAttribute("data-tooltip", t(node.dataset.i18nTooltip));
+    });
     document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
       node.placeholder = t(node.dataset.i18nPlaceholder);
     });

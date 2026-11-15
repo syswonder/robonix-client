@@ -774,32 +774,115 @@ h1 {
   border-color: rgba(255, 255, 255, 0.15);
 }
 
-.inspector-toggle-btn {
+.header-icon-btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
   border-radius: 8px;
-  border: 1px solid rgba(170, 123, 236, 0.35);
-  background: rgba(170, 123, 236, 0.1);
-  color: #d1b8ff;
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--muted);
   cursor: pointer;
-  transition: all 0.15s ease;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.inspector-toggle-btn:hover {
-  background: rgba(170, 123, 236, 0.22);
+.header-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.header-icon-btn.inspector-toggle-btn {
+  border-color: rgba(170, 123, 236, 0.35);
+  background: rgba(170, 123, 236, 0.08);
+  color: #d1b8ff;
+}
+
+.header-icon-btn.inspector-toggle-btn:hover {
+  background: rgba(170, 123, 236, 0.2);
   border-color: rgba(170, 123, 236, 0.6);
   color: #fff;
+  box-shadow: 0 0 12px rgba(170, 123, 236, 0.25);
 }
 
-.inspector-toggle-btn.active {
+.header-icon-btn.inspector-toggle-btn.active {
   background: rgba(170, 123, 236, 0.28);
   border-color: rgba(170, 123, 236, 0.75);
   color: #fff;
-  box-shadow: 0 0 14px rgba(170, 123, 236, 0.3);
+  box-shadow: 0 0 14px rgba(170, 123, 236, 0.35);
+}
+
+/* Floating Tooltip on Hover for conversation header actions */
+.conversation-header-actions [data-tooltip] {
+  position: relative;
+}
+
+.conversation-header-actions [data-tooltip]::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  border-width: 4px;
+  border-style: solid;
+  border-color: transparent transparent rgba(15, 23, 42, 0.95) transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 100;
+}
+
+.conversation-header-actions [data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.conversation-header-actions [data-tooltip]:hover::before,
+.conversation-header-actions [data-tooltip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.conversation-header-actions #toggleInspector[data-tooltip]::before {
+  left: auto;
+  right: 12px;
+  transform: translateY(2px);
+}
+
+.conversation-header-actions #toggleInspector[data-tooltip]::after {
+  left: auto;
+  right: 0;
+  transform: translateY(2px);
+}
+
+.conversation-header-actions #toggleInspector[data-tooltip]:hover::before,
+.conversation-header-actions #toggleInspector[data-tooltip]:hover::after {
+  transform: translateY(0);
 }
 
 .endpoint-badge {
