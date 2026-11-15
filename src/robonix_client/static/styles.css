@@ -6156,27 +6156,75 @@ h2 {
     padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   }
 
-  /* Vitals Page on Mobile */
+  /* Vitals Page on Mobile (Accessible 3D Robot Twin & Scrollable Layout) */
   .vitals-shell {
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .vitals-overview {
-    grid-template-columns: 1fr;
-    gap: 10px;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+    flex-shrink: 0 !important;
+    min-height: auto !important;
   }
 
   .vitals-main {
-    grid-template-columns: 1fr;
-    grid-template-rows: 320px auto auto;
-    grid-template-areas:
-      "stage"
-      "components"
-      "inspector";
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: none !important;
+    grid-template-rows: none !important;
+    flex-shrink: 0 !important;
+    gap: 12px !important;
+    overflow: visible !important;
+  }
+
+  .vitals-stage {
+    order: 1 !important;
+    width: 100% !important;
+    min-height: 340px !important;
+    height: 340px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3) !important;
+    position: relative !important;
+    overflow: hidden !important;
+    background: #081115 !important;
+  }
+
+  .vitals-canvas,
+  .vitals-canvas canvas {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 340px !important;
+    display: block !important;
+  }
+
+  .vitals-components-pane {
+    order: 2 !important;
+    width: 100% !important;
+    max-height: 300px !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--line) !important;
+    overflow: hidden !important;
+  }
+
+  .vitals-inspector {
+    order: 3 !important;
+    width: 100% !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--line) !important;
+    overflow: hidden !important;
+  }
+
+  .vitals-software {
+    flex-shrink: 0 !important;
+    margin-top: 10px !important;
   }
 
   /* Studio Page on Mobile */
@@ -7389,58 +7437,131 @@ h2 {
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 860px) {
+  .perception-shell {
+    height: 100% !important;
+    overflow: hidden !important;
+  }
+
   .perception-header {
-    padding: 10px 14px 8px;
-    gap: 8px;
+    padding: 8px 12px 6px !important;
+    gap: 6px !important;
+    flex-shrink: 0 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
   }
 
   .perception-title-group {
-    flex-wrap: wrap;
-    gap: 8px;
-    min-width: 0;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    min-width: 0 !important;
   }
 
   .perception-toolbar {
-    flex-wrap: wrap;
-    gap: 8px;
-    width: 100%;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    width: 100% !important;
   }
 
-  .perception-grid {
-    grid-template-columns: 1fr;
-    grid-auto-rows: minmax(260px, 1fr);
-    padding: 10px;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  .perception-grid,
+  .perception-grid.layout-split {
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: none !important;
+    grid-template-rows: none !important;
+    gap: 12px !important;
+    padding: 8px 10px 24px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    flex: 1 !important;
+    min-height: 0 !important;
   }
 
-  .perception-grid .perception-tile[data-tile="scene"],
-  .perception-grid.layout-split .perception-tile[data-tile="scene"] {
-    grid-column: auto;
-    grid-row: auto;
+  .perception-grid.layout-focus {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .perception-grid.layout-focus .perception-tile:not(.is-focused) {
+    display: none !important;
+  }
+
+  .perception-grid.layout-focus .perception-tile.is-focused {
+    flex: 1 !important;
+    height: 100% !important;
+    min-height: 100% !important;
+  }
+
+  .perception-tile {
+    flex-shrink: 0 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+  }
+
+  /* Primary view: Scene Map first at prominent 380px */
+  .perception-tile[data-tile="scene"] {
+    order: 1 !important;
+    height: 380px !important;
+    min-height: 380px !important;
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .perception-tile[data-tile="camera"] {
+    order: 2 !important;
+    height: 250px !important;
+    min-height: 250px !important;
+  }
+
+  .perception-tile[data-tile="depth"] {
+    order: 3 !important;
+    height: 250px !important;
+    min-height: 250px !important;
   }
 
   .perception-tile-header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    padding: 8px 10px;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 6px 10px !important;
+    min-height: 36px !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+  }
+
+  .tile-title-group {
+    flex: 0 0 auto !important;
+  }
+
+  .perception-tile-tools {
+    flex: 0 0 auto !important;
+    margin-left: auto !important;
   }
 
   .perception-tile-actions {
-    flex-wrap: wrap;
-    gap: 6px;
-    justify-content: flex-start;
+    width: 100% !important;
+    display: flex !important;
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+    padding: 4px 0 2px !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch !important;
   }
 
   .perception-layers {
-    flex-wrap: wrap;
-    gap: 4px;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .perception-tile-body {
+    flex: 1 !important;
+    min-height: 0 !important;
   }
 
   .perception-channel-matrix {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr !important;
   }
 }
 

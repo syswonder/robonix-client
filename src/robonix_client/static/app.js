@@ -1541,6 +1541,7 @@ function activatePage(name) {
   document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   window.dispatchEvent(new CustomEvent("robonix:page", { detail: { name } }));
+  setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
   if (name === "audio") {
     checkAudioServer();
     renderAudioBars();
@@ -6221,7 +6222,7 @@ function applyPerceptionLayout() {
 
   // On narrow screens let the CSS media query own the single-column layout;
   // inline grid templates would otherwise override it.
-  if (window.matchMedia && window.matchMedia("(max-width: 720px)").matches) {
+  if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) {
     grid.style.gridTemplateColumns = "";
     grid.style.gridTemplateRows = "";
     return;
