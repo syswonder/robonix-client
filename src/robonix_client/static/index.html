@@ -73,6 +73,13 @@
                   </div>
                   <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
+                <button type="button" class="settings-menu-item" id="settingsMenuGuide">
+                  <div class="settings-item-main">
+                    <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <span data-i18n="Guide">Guide</span>
+                  </div>
+                  <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
               </div>
 
               <div class="settings-popover-footer">
@@ -91,8 +98,11 @@
             </div>
 
             <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" title="Settings" data-i18n-title="Settings">
-              <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
-              <span class="settings-trigger-label" data-i18n="Settings">Settings</span>
+              <div class="settings-trigger-main">
+                <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
+                <span class="settings-trigger-label" data-i18n="Settings">Settings</span>
+              </div>
+              <svg class="settings-trigger-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
         </div>
@@ -974,6 +984,51 @@
             <div><span data-i18n="Duration">Duration</span><strong id="activeDuration">-</strong></div>
           </div>
           <pre class="args" id="activeArgs">{}</pre>
+        </div>
+      </section>
+    </div>
+
+    <!-- Embodied Agent Guide Modal -->
+    <div class="modal-backdrop" id="guideModal" role="dialog" aria-modal="true" aria-labelledby="guideModalTitle" hidden>
+      <section class="node-detail-modal guide-modal">
+        <header class="rtdl-history-modal-header">
+          <div>
+            <h2 id="guideModalTitle" data-i18n="Embodied Agent Guide">Embodied Agent Guide</h2>
+            <span class="rtdl-history-meta" data-i18n="Robonix quick start and core interactions">Robonix quick start and core interactions</span>
+          </div>
+          <button type="button" class="icon-button modal-close" id="closeGuideModal" aria-label="Close" data-i18n-aria-label="Close">×</button>
+        </header>
+        <div class="node-detail-modal-body guide-modal-body">
+          <div class="guide-cards">
+            <div class="guide-card">
+              <div class="guide-card-icon">💬</div>
+              <div class="guide-card-content">
+                <h3 data-i18n="Chat & New Session">Chat & New Session</h3>
+                <p data-i18n="Click 'Chat' in the sidebar to start a new clean session anytime. Access previous sessions from Recent Chats.">Click 'Chat' in the sidebar to start a new clean session anytime. Access previous sessions from Recent Chats.</p>
+              </div>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">🌲</div>
+              <div class="guide-card-content">
+                <h3 data-i18n="RTDL Forest & Planning">RTDL Forest & Planning</h3>
+                <p data-i18n="Click 'RTDL Forest' in the conversation header to inspect behavior tree nodes, conditions, and live executor tasks.">Click 'RTDL Forest' in the conversation header to inspect behavior tree nodes, conditions, and live executor tasks.</p>
+              </div>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">🎙️</div>
+              <div class="guide-card-content">
+                <h3 data-i18n="Voice & Hands-Free">Voice & Hands-Free</h3>
+                <p data-i18n="Toggle Hands-Free in the top bar for natural speech conversation. Press F2 anytime to barge in and interrupt.">Toggle Hands-Free in the top bar for natural speech conversation. Press F2 anytime to barge in and interrupt.</p>
+              </div>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">🖥️</div>
+              <div class="guide-card-content">
+                <h3 data-i18n="Studio Cockpit">Studio Cockpit</h3>
+                <p data-i18n="Switch to Studio in the sidebar to view RTAB-Map SLAM, 3D point clouds, Scene perception, and Robonix console.">Switch to Studio in the sidebar to view RTAB-Map SLAM, 3D point clouds, Scene perception, and Robonix console.</p>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
     </div>

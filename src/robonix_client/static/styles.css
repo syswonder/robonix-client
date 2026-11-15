@@ -364,7 +364,7 @@ select {
 .settings-trigger-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
   width: 100%;
   padding: 9px 12px;
   border-radius: 8px;
@@ -377,9 +377,31 @@ select {
   transition: all 0.14s ease;
 }
 
+.settings-trigger-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-trigger-icon {
+  color: inherit;
+  flex-shrink: 0;
+}
+
+.settings-trigger-arrow {
+  color: #5a6474;
+  flex-shrink: 0;
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
 .settings-trigger-btn:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
+}
+
+.settings-trigger-btn:hover .settings-trigger-arrow {
+  color: #c4c9d4;
+  transform: translateX(2px);
 }
 
 .settings-trigger-btn.active {
@@ -388,9 +410,9 @@ select {
   color: #fff;
 }
 
-.settings-trigger-icon {
-  color: inherit;
-  flex-shrink: 0;
+.settings-trigger-btn.active .settings-trigger-arrow {
+  color: #aa7bec;
+  transform: translateX(3px);
 }
 
 .conversation-header {
@@ -7573,4 +7595,56 @@ h2 {
   .saved-plan-nodes { padding-left: 10px; }
   .saved-plan-node { grid-template-columns: minmax(0, 1fr) auto; }
   .saved-plan-node .call-detail-trigger { grid-column: 1 / -1; justify-self: start; }
+}
+
+.guide-modal {
+  max-width: 580px;
+  width: 90vw;
+}
+
+.guide-modal-body {
+  padding: 16px;
+}
+
+.guide-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.guide-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.guide-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(170, 123, 236, 0.3);
+}
+
+.guide-card-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.guide-card-content h3 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f2f5;
+}
+
+.guide-card-content p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dim);
 }

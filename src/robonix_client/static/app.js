@@ -1125,6 +1125,15 @@ function bindEvents() {
     if (settingsPopover) settingsPopover.hidden = true;
     if (settingsTrigger) settingsTrigger.classList.remove("active");
   });
+  maybe("settingsMenuGuide")?.addEventListener("click", () => {
+    openGuideModal();
+    if (settingsPopover) settingsPopover.hidden = true;
+    if (settingsTrigger) settingsTrigger.classList.remove("active");
+  });
+  maybe("closeGuideModal")?.addEventListener("click", closeGuideModal);
+  maybe("guideModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeGuideModal();
+  });
   maybe("navChatBtn")?.addEventListener("click", () => {
     if (state.messages.length > 0 || state.sessionTitle) {
       newSession();
@@ -1155,7 +1164,21 @@ function bindEvents() {
     if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
     if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
     if (event.key === "Escape" && !maybe("nodeDetailModal")?.hidden) closeNodeDetail();
+    if (event.key === "Escape" && !maybe("guideModal")?.hidden) closeGuideModal();
   });
+}
+
+function openGuideModal() {
+  const modal = maybe("guideModal");
+  if (!modal) return;
+  modal.hidden = false;
+  maybe("closeGuideModal")?.focus();
+}
+
+function closeGuideModal() {
+  const modal = maybe("guideModal");
+  if (!modal) return;
+  modal.hidden = true;
 }
 
 function openActiveRtdl() {
