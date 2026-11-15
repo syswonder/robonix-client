@@ -5763,10 +5763,6 @@ h2 {
     grid-template-columns: 64px minmax(0, 1fr);
   }
 
-  .chat-body {
-    grid-template-columns: 1fr;
-  }
-
   .conversation-history {
     min-inline-size: 0;
     max-height: 160px;

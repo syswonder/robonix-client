@@ -1133,11 +1133,6 @@ function bindEvents() {
     if (settingsPopover) settingsPopover.hidden = true;
     if (settingsTrigger) settingsTrigger.classList.remove("active");
   });
-  maybe("navChatBtn")?.addEventListener("click", () => {
-    if (state.messages.length > 0 || state.sessionTitle) {
-      newSession();
-    }
-  });
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });
@@ -5132,6 +5127,11 @@ function deleteConversation(sessionId) {
 }
 
 function clearHistory() {
+  if (state.history.length > 0 || state.messages.length > 0) {
+    if (!window.confirm(t("Are you sure you want to clear all conversation history? This cannot be undone."))) {
+      return;
+    }
+  }
   cancelPendingPersist();
   state.history = [];
   saveConversations();
