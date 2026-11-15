@@ -80,6 +80,13 @@
                   </div>
                   <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
+                <button type="button" class="settings-menu-item" id="settingsMenuGuide">
+                  <div class="settings-item-main">
+                    <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <span data-i18n="Guide">Guide</span>
+                  </div>
+                  <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
               </div>
 
               <div class="settings-popover-footer">
@@ -204,68 +211,70 @@
             </section>
 
             <section class="dashboard-sidebar" id="dashboardSidebar">
-              <div class="drawer-header">
-                <div class="drawer-title-group">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                  <span class="drawer-title" data-i18n="RTDL & Execution">RTDL & Execution</span>
+              <div class="dashboard-sidebar-inner">
+                <div class="drawer-header">
+                  <div class="drawer-title-group">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                    <span class="drawer-title" data-i18n="RTDL & Execution">RTDL & Execution</span>
+                  </div>
+                  <button type="button" class="drawer-close-btn" id="closeInspectorBtn" title="Close inspector" aria-label="Close inspector">✕</button>
                 </div>
-                <button type="button" class="drawer-close-btn" id="closeInspectorBtn" title="Close inspector" aria-label="Close inspector">✕</button>
+
+                <nav class="sidebar-menu" id="sidebarMenu">
+                  <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl" data-i18n="RTDL Forest">RTDL Forest</button>
+                  <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="executor" data-i18n="Executor">Executor</button>
+                  <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events" data-i18n="Event Log">Event Log</button>
+                  <span class="sidebar-icon-group">
+                    <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="Plan overview" data-i18n-title="Plan overview">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                      <span id="activeRtdlCount">0</span>
+                    </button>
+                    <button class="sidebar-icon-btn" id="openRtdlHistory" type="button" title="Other plans for this task" data-i18n-title="Other plans for this task">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
+                      <span id="rtdlHistoryCount">0</span>
+                    </button>
+                  </span>
+                </nav>
+
+                <section class="panel current-goal-panel" aria-label="Task execution" data-i18n-aria-label="Task execution">
+                  <div class="panel-header compact">
+                    <h2 data-i18n="Task execution">Task execution</h2>
+                    <div class="task-scope-controls" id="taskScopeControls"></div>
+                  </div>
+                  <div class="task-list" id="taskList" hidden></div>
+                </section>
+
+                <section class="panel rtdl-panel execution-panel" data-sidebar-panel="rtdl">
+                  <div class="execution-table">
+                    <div class="table-head">
+                      <span data-i18n="Node">Node</span>
+                      <span data-i18n="Type">Type</span>
+                      <span data-i18n="Status">Status</span>
+                      <span data-i18n="Provider / ID">Provider / ID</span>
+                      <span data-i18n="Duration">Duration</span>
+                      <span data-i18n="Started">Started</span>
+                    </div>
+                    <div class="plan-tree" data-plan-tree="full"></div>
+                  </div>
+                </section>
+
+                <section class="panel executor-panel" data-sidebar-panel="executor" aria-labelledby="executorHeading" hidden>
+                  <div class="panel-header compact">
+                    <h2 class="executor-label" id="executorHeading" data-i18n="Executor">Executor</h2>
+                  </div>
+                  <div class="goal-preview" data-goal-preview></div>
+                </section>
+
+                <section class="panel trace-panel thought-panel" data-sidebar-panel="events" hidden>
+                  <div class="panel-header">
+                    <div>
+                      <h2 data-i18n="Event Log">Event Log</h2>
+                      <span><span data-event-summary>0</span> <span data-i18n="event(s)">event(s)</span></span>
+                    </div>
+                  </div>
+                  <div class="event-list" data-event-list></div>
+                </section>
               </div>
-
-              <section class="panel current-goal-panel" aria-label="Task execution" data-i18n-aria-label="Task execution">
-                <div class="panel-header compact">
-                  <h2 data-i18n="Task execution">Task execution</h2>
-                  <div class="task-scope-controls" id="taskScopeControls"></div>
-                </div>
-                <div class="task-list" id="taskList" hidden></div>
-              </section>
-
-              <nav class="sidebar-menu" id="sidebarMenu">
-                <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl" data-i18n="RTDL Forest">RTDL Forest</button>
-                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="executor" data-i18n="Executor">Executor</button>
-                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events" data-i18n="Event Log">Event Log</button>
-                <span class="sidebar-icon-group">
-                  <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="Plan overview" data-i18n-title="Plan overview">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                    <span id="activeRtdlCount">0</span>
-                  </button>
-                  <button class="sidebar-icon-btn" id="openRtdlHistory" type="button" title="Other plans for this task" data-i18n-title="Other plans for this task">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
-                    <span id="rtdlHistoryCount">0</span>
-                  </button>
-                </span>
-              </nav>
-
-              <section class="panel rtdl-panel execution-panel" data-sidebar-panel="rtdl">
-                <div class="execution-table">
-                  <div class="table-head">
-                    <span data-i18n="Node">Node</span>
-                    <span data-i18n="Type">Type</span>
-                    <span data-i18n="Status">Status</span>
-                    <span data-i18n="Provider / ID">Provider / ID</span>
-                    <span data-i18n="Duration">Duration</span>
-                    <span data-i18n="Started">Started</span>
-                  </div>
-                  <div class="plan-tree" data-plan-tree="full"></div>
-                </div>
-              </section>
-
-              <section class="panel executor-panel" data-sidebar-panel="executor" aria-labelledby="executorHeading" hidden>
-                <div class="panel-header compact">
-                  <h2 class="executor-label" id="executorHeading" data-i18n="Executor">Executor</h2>
-                </div>
-                <div class="goal-preview" data-goal-preview></div>
-              </section>
-
-              <section class="panel trace-panel thought-panel" data-sidebar-panel="events" hidden>
-                <div class="panel-header">
-                  <div>
-                    <h2 data-i18n="Event Log">Event Log</h2>
-                    <span><span data-event-summary>0</span> <span data-i18n="event(s)">event(s)</span></span>
-                  </div>
-                </div>
-                <div class="event-list" data-event-list></div>
-              </section>
             </section>
           </section>
         </section>

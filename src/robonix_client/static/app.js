@@ -1093,11 +1093,19 @@ function bindEvents() {
   maybe("closeActiveRtdl")?.addEventListener("click", closeActiveRtdl);
   maybe("toggleInspector")?.addEventListener("click", () => {
     const sidebar = $("dashboardSidebar");
-    if (sidebar) sidebar.classList.toggle("open");
+    if (sidebar) {
+      const isOpen = sidebar.classList.toggle("open");
+      maybe("toggleInspector")?.classList.toggle("active", isOpen);
+      maybe("toggleInspector")?.setAttribute("aria-pressed", String(isOpen));
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
+    }
   });
   maybe("closeInspectorBtn")?.addEventListener("click", () => {
     const sidebar = $("dashboardSidebar");
     if (sidebar) sidebar.classList.remove("open");
+    maybe("toggleInspector")?.classList.remove("active");
+    maybe("toggleInspector")?.setAttribute("aria-pressed", "false");
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
   });
   const settingsTrigger = maybe("settingsTriggerBtn");
   const settingsPopover = maybe("settingsMenuPopover");
@@ -1165,6 +1173,12 @@ function bindEvents() {
     if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
     if (event.key === "Escape" && !maybe("nodeDetailModal")?.hidden) closeNodeDetail();
     if (event.key === "Escape" && !maybe("guideModal")?.hidden) closeGuideModal();
+    if (event.key === "Escape" && $("dashboardSidebar")?.classList.contains("open")) {
+      $("dashboardSidebar").classList.remove("open");
+      maybe("toggleInspector")?.classList.remove("active");
+      maybe("toggleInspector")?.setAttribute("aria-pressed", "false");
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
+    }
   });
 }
 
