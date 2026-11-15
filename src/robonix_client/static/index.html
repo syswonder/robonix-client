@@ -86,19 +86,32 @@
       </aside>
 
       <main class="workspace">
-        <!-- Hidden system nodes to preserve ID bindings -->
-        <div class="system-hidden-controls" style="display:none;" aria-hidden="true">
-          <span id="promptTitle" data-i18n="What should Robonix do?">What should Robonix do?</span>
+        <header class="command-bar">
           <input id="robotHost" type="hidden" />
           <input id="atlasPort" type="hidden" />
           <input id="userId" type="hidden" />
-          <button id="clearHistory" type="button"></button>
-          <button id="connectNow" type="button"></button>
-          <button id="refreshSystem" type="button"><span class="dot"></span><span id="connectionState">offline</span></button>
-          <button id="handsfreeToggle" type="button"><span class="dot"></span><span id="handsfreeState">Hands-free off</span></button>
-          <button id="endpointBadge" type="button"><span id="atlasEndpointDisplay">127.0.0.1:50051</span></button>
-          <button id="userBadge" type="button"><span id="userDisplay">voice:client</span></button>
-        </div>
+
+          <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings" title="Robot Atlas Endpoint. Click to edit in Settings." data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
+            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            <span class="endpoint-label" data-i18n="Atlas:">Atlas:</span>
+            <span class="endpoint-val" id="atlasEndpointDisplay">127.0.0.1:50051</span>
+          </button>
+
+          <button class="endpoint-badge user-badge" id="userBadge" type="button" data-page-link="settings" title="Current Operator. Click to edit in Settings." data-i18n-title="Current Operator. Click to edit in Settings.">
+            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <span class="endpoint-val" id="userDisplay">voice:client</span>
+          </button>
+
+          <button class="status-chip" id="refreshSystem" type="button">
+            <span class="dot"></span>
+            <span id="connectionState" data-i18n="offline">offline</span>
+          </button>
+          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
+            <span class="dot"></span>
+            <span id="handsfreeState" data-i18n="Hands-free off">Hands-free off</span>
+          </button>
+          <button class="button connect-button" id="connectNow" type="button" data-i18n="Connect">Connect</button>
+        </header>
 
         <section class="page dashboard-page active" data-page-panel="dashboard">
           <section class="dashboard-grid">
@@ -111,9 +124,15 @@
                   <button class="ghost-button icon-only-btn" id="renameSession" type="button" title="Rename conversation" data-i18n-title="Rename conversation">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
                   </button>
+                  <span id="promptTitle" hidden></span>
                 </div>
 
                 <div class="conversation-header-actions">
+                  <button class="ghost-button icon-btn" id="clearHistory" type="button" title="Clear conversation" data-i18n-title="Clear conversation">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span data-i18n="Clear">Clear</span>
+                  </button>
+
                   <button class="ghost-button icon-btn" id="newSessionAction" type="button" title="Start a fresh conversation" data-i18n-title="Start a fresh conversation">
                     <svg class="btn-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     <span class="btn-label" data-i18n="New chat">New chat</span>
@@ -130,32 +149,35 @@
                 <div class="messages" id="messages"></div>
               </div>
 
-              <form class="composer" id="composer">
-                <div id="attachmentStrip" class="attachment-strip"></div>
-                <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
-                <div class="composer-row">
-                  <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)">
-                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-                    <span class="btn-label" data-i18n="Start recording">Start recording</span>
-                    <kbd class="btn-key">F2</kbd>
-                  </button>
-                  <button class="tool-button finish-button" type="button" id="finishVoiceButton" title="Stop recording and send what you have said so far (F2). Does not cancel the task." data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task." hidden>
-                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                    <span class="btn-label" data-i18n="Stop recording">Stop recording</span>
-                    <kbd class="btn-key">F2</kbd>
-                  </button>
-                  <button class="danger-button stop-button" type="button" id="stopButton" title="Stop this session's running task. Does not cancel other sessions or stop voice recording." data-i18n-title="Stop this session's running task. Does not cancel other sessions or stop voice recording." hidden>
-                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    <span class="btn-label" data-i18n="Stop task">Stop task</span>
-                  </button>
-                  <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)" data-i18n-title="Send task (Enter)">
-                    <svg class="btn-icon send-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    <svg class="btn-icon steer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-                    <span class="btn-label" data-i18n="Send">Send</span>
-                    <kbd class="btn-key">Enter</kbd>
-                  </button>
-                </div>
-              </form>
+              <!-- Dedicated bottom dock: stays anchored at the bottom, no jumping -->
+              <div class="composer-dock">
+                <form class="composer" id="composer">
+                  <div id="attachmentStrip" class="attachment-strip"></div>
+                  <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
+                  <div class="composer-row">
+                    <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)">
+                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                      <span class="btn-label" data-i18n="Start recording">Start recording</span>
+                      <kbd class="btn-key">F2</kbd>
+                    </button>
+                    <button class="tool-button finish-button" type="button" id="finishVoiceButton" title="Stop recording and send what you have said so far (F2). Does not cancel the task." data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task." hidden>
+                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                      <span class="btn-label" data-i18n="Stop recording">Stop recording</span>
+                      <kbd class="btn-key">F2</kbd>
+                    </button>
+                    <button class="danger-button stop-button" type="button" id="stopButton" title="Stop this session's running task. Does not cancel other sessions or stop voice recording." data-i18n-title="Stop this session's running task. Does not cancel other sessions or stop voice recording." hidden>
+                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      <span class="btn-label" data-i18n="Stop task">Stop task</span>
+                    </button>
+                    <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)" data-i18n-title="Send task (Enter)">
+                      <svg class="btn-icon send-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                      <svg class="btn-icon steer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                      <span class="btn-label" data-i18n="Send">Send</span>
+                      <kbd class="btn-key">Enter</kbd>
+                    </button>
+                  </div>
+                </form>
+              </div>
             </section>
 
             <section class="dashboard-sidebar" id="dashboardSidebar">
