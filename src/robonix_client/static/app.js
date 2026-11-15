@@ -3157,7 +3157,78 @@ function enableTreePanZoom(planId, viewport, svg) {
     apply();
   }, { passive: false });
 
+  // Mobile multi-touch gestures: pinch-to-zoom and two-finger panning
+  let touchStartDist = 0;
+  let touchStartScale = 1;
+  let lastTouchMidX = 0;
+  let lastTouchMidY = 0;
+  let isPinching = false;
+  let lastTapTime = 0;
+
+  viewport.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      isPinching = true;
+      dragging = false;
+      viewport.classList.remove("panning");
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      touchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      touchStartScale = view.scale;
+      lastTouchMidX = (t1.clientX + t2.clientX) / 2;
+      lastTouchMidY = (t1.clientY + t2.clientY) / 2;
+      event.preventDefault();
+    }
+  }, { passive: false });
+
+  viewport.addEventListener("touchmove", (event) => {
+    if (event.touches.length === 2 && isPinching) {
+      event.preventDefault();
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (!touchStartDist || dist < 5) return;
+
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const dx = midX - lastTouchMidX;
+      const dy = midY - lastTouchMidY;
+      lastTouchMidX = midX;
+      lastTouchMidY = midY;
+
+      const box = viewport.getBoundingClientRect();
+      const px = midX - box.left - (pad ? pad.left : 0);
+      const py = midY - box.top - (pad ? pad.top : 0);
+
+      const targetScale = touchStartScale * (dist / touchStartDist);
+      const next = Math.min(4, Math.max(0.3, targetScale));
+      const ratio = next / view.scale;
+
+      view.x = px - (px - view.x) * ratio + dx;
+      view.y = py - (py - view.y) * ratio + dy;
+      view.scale = next;
+      view.touched = true;
+      apply();
+    }
+  }, { passive: false });
+
+  const endTouch = (event) => {
+    if (event.touches.length < 2) {
+      isPinching = false;
+      touchStartDist = 0;
+    }
+    if (event.touches.length === 0) {
+      const now = Date.now();
+      if (now - lastTapTime < 300 && dragDistance <= 4) {
+        fitView();
+      }
+      lastTapTime = now;
+    }
+  };
+  viewport.addEventListener("touchend", endTouch);
+  viewport.addEventListener("touchcancel", endTouch);
+
   viewport.addEventListener("pointerdown", (event) => {
+    if (isPinching) return;
     if (event.button !== 0) return;
     dragging = true;
     dragDistance = 0;
@@ -3166,7 +3237,7 @@ function enableTreePanZoom(planId, viewport, svg) {
   });
 
   viewport.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
+    if (isPinching || !dragging) return;
     // The pointer was released outside the viewport before capture started.
     // iOS Safari sometimes reports event.buttons === 0 during touch moves, so exclude touch.
     if (event.buttons === 0 && event.pointerType !== "touch") {
@@ -7126,7 +7197,62 @@ function bindSceneView() {
   canvas.dataset.viewBound = "1";
   const view = perception.sceneView;
 
+  // Multi-touch pinch-to-zoom for Scene Map on mobile
+  let scenePinching = false;
+  let sceneStartDist = 0;
+  let sceneStartScale = 1;
+
+  canvas.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      scenePinching = true;
+      perception.scenePan = null;
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      sceneStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      sceneStartScale = view.scale;
+      event.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener("touchmove", (event) => {
+    if (event.touches.length === 2 && scenePinching) {
+      event.preventDefault();
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (!sceneStartDist || dist < 5 || !view.scale || !view.center) return;
+
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const { px, py } = sceneCanvasPoint(canvas, { clientX: midX, clientY: midY });
+
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const wx = view.center.x + (px - w / 2) / view.scale;
+      const wy = view.center.y - (py - h / 2) / view.scale;
+
+      const targetScale = sceneStartScale * (dist / sceneStartDist);
+      view.scale = Math.min(400, Math.max(2, targetScale));
+      view.center = {
+        x: wx - (px - w / 2) / view.scale,
+        y: wy + (py - h / 2) / view.scale,
+      };
+      view.auto = false;
+      redrawScene();
+    }
+  }, { passive: false });
+
+  const endSceneTouch = (event) => {
+    if (event.touches.length < 2) {
+      scenePinching = false;
+      sceneStartDist = 0;
+    }
+  };
+  canvas.addEventListener("touchend", endSceneTouch);
+  canvas.addEventListener("touchcancel", endSceneTouch);
+
   canvas.addEventListener("pointerdown", (event) => {
+    if (scenePinching) return;
     if (event.button !== 0) return;
     event.preventDefault();
     // Touching the map hands the viewport to the operator: no more auto-fit.
@@ -7137,6 +7263,7 @@ function bindSceneView() {
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    if (scenePinching) return;
     const pan = perception.scenePan;
     if (pan && pan.id === event.pointerId) {
       if (view.center && view.scale) {
