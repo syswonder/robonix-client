@@ -5722,6 +5722,38 @@ h2 {
     box-shadow: 14px 0 44px rgba(0, 0, 0, 0.75);
   }
 
+  /* Mobile Settings Popover: Pop upwards inside the drawer above the button */
+  .settings-menu-popover {
+    left: 0 !important;
+    right: 0 !important;
+    bottom: calc(100% + 8px) !important;
+    width: auto !important;
+    max-width: 100% !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+    animation: popoverMobileSlideUp 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  .settings-menu-popover::before {
+    left: 24px !important;
+    bottom: -5px !important;
+    border-left: none !important;
+    border-top: none !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    transform: rotate(45deg) !important;
+  }
+
+  @keyframes popoverMobileSlideUp {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   .sidebar-backdrop {
     display: block;
     position: fixed;
@@ -5951,9 +5983,10 @@ h2 {
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
     transform: translateX(100%);
-    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, visibility 0.28s;
     opacity: 0;
     pointer-events: none;
+    visibility: hidden;
     display: flex;
     flex-direction: column;
     border-left: 1px solid rgba(255, 255, 255, 0.1);
@@ -5968,6 +6001,7 @@ h2 {
     transform: translateX(0);
     opacity: 1;
     pointer-events: auto;
+    visibility: visible;
     width: 100vw;
   }
 
@@ -6011,13 +6045,60 @@ h2 {
     flex-wrap: wrap;
     padding: 8px 12px;
     gap: 8px;
+    max-width: 100vw;
+    overflow: hidden;
+  }
+
+  .studio-title-group {
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .studio-tag {
+    display: none;
   }
 
   .studio-services-nav {
     overflow-x: auto;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
     scrollbar-width: none !important;
+  }
+
+  .studio-actions {
+    margin-left: auto;
+    gap: 4px;
+  }
+
+  .studio-action-btn span {
+    display: none;
+  }
+
+  .studio-action-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  /* Audio Page on Mobile */
+  .audio-page {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    height: auto;
+    min-height: 100%;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .audio-layout {
+    grid-template-columns: 1fr !important;
+    height: auto;
+    overflow: visible;
+    gap: 12px;
   }
 }
 
@@ -6028,13 +6109,55 @@ h2 {
   }
 
   .session-title-input {
-    max-width: 140px;
+    max-width: 130px;
+  }
+
+  .endpoint-badge .endpoint-val {
+    max-width: 84px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Vitals Actions & Software list on narrow phones */
+  .vitals-overview-actions {
+    grid-template-columns: 1fr auto auto !important;
+    gap: 6px;
+  }
+
+  .vitals-source-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 4px;
+  }
+
+  .vitals-source-strip .status-chip {
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  .vitals-software {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .vitals-software-head,
+  .vitals-software-row {
+    grid-template-columns: minmax(100px, 1.2fr) 68px minmax(84px, 1fr);
+    gap: 6px;
+    padding: 6px 8px;
+    font-size: 10.5px;
+  }
+
+  .vitals-alert-panel {
+    width: 100vw !important;
+    border-left: 0 !important;
   }
 }
 
 @media (max-width: 680px) {
   .metrics-row,
   .settings-grid,
+  .settings-page-grid,
   .form-grid,
   .audio-server-actions,
   .detail-grid {
@@ -7133,9 +7256,21 @@ h2 {
     gap: 8px;
   }
 
+  .perception-title-group {
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .perception-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
   .perception-grid {
     grid-template-columns: 1fr;
-    grid-auto-rows: minmax(240px, 1fr);
+    grid-auto-rows: minmax(260px, 1fr);
     padding: 10px;
     -webkit-overflow-scrolling: touch;
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
@@ -7145,6 +7280,24 @@ h2 {
   .perception-grid.layout-split .perception-tile[data-tile="scene"] {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .perception-tile-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .perception-tile-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-start;
+  }
+
+  .perception-layers {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 
   .perception-channel-matrix {
