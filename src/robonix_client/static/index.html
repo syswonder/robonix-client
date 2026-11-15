@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Robonix Client</title>
     <link rel="icon" type="image/svg+xml" href="/static/robonix-mark.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261115-fix" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261115-mobile" />
   </head>
   <body>
     <div class="app-shell">
+      <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
       <aside class="nav-rail">
         <div class="sidebar-top">
           <div class="brand">
@@ -21,6 +22,7 @@
               <div class="brand-title">Robonix</div>
               <div class="brand-sub" data-i18n="Client">Client</div>
             </div>
+            <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" aria-label="Close menu" title="Close menu" data-i18n-aria-label="Close menu" data-i18n-title="Close menu">✕</button>
           </div>
 
           <!-- All navigation placed ABOVE recent chats, consistent with n8n -->
@@ -103,6 +105,10 @@
 
       <main class="workspace">
         <header class="command-bar">
+          <button class="mobile-nav-toggle" id="mobileNavToggle" type="button" aria-label="Open menu" title="Menu" data-i18n-aria-label="Open menu" data-i18n-title="Menu">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+
           <input id="robotHost" type="hidden" />
           <input id="atlasPort" type="hidden" />
           <input id="userId" type="hidden" />

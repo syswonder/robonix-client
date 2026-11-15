@@ -1133,6 +1133,35 @@ function bindEvents() {
     if (settingsPopover) settingsPopover.hidden = true;
     if (settingsTrigger) settingsTrigger.classList.remove("active");
   });
+
+  // Mobile Sidebar Drawer Management
+  const navRail = document.querySelector(".nav-rail");
+  const sidebarBackdrop = maybe("sidebarBackdrop");
+  const mobileNavToggle = maybe("mobileNavToggle");
+  const sidebarCloseBtn = maybe("sidebarCloseBtn");
+
+  function setMobileSidebar(open) {
+    if (!navRail) return;
+    const shouldOpen = open ?? !navRail.classList.contains("open");
+    navRail.classList.toggle("open", shouldOpen);
+    sidebarBackdrop?.classList.toggle("active", shouldOpen);
+    mobileNavToggle?.classList.toggle("active", shouldOpen);
+    mobileNavToggle?.setAttribute("aria-expanded", String(shouldOpen));
+  }
+
+  mobileNavToggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setMobileSidebar();
+  });
+  sidebarCloseBtn?.addEventListener("click", () => setMobileSidebar(false));
+  sidebarBackdrop?.addEventListener("click", () => setMobileSidebar(false));
+
+  navRail?.addEventListener("click", (event) => {
+    const navItem = event.target.closest(".nav-item, .history-open, .settings-menu-item");
+    if (navItem && window.innerWidth <= 860) {
+      setMobileSidebar(false);
+    }
+  });
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });

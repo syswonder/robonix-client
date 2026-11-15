@@ -5629,128 +5629,366 @@ h2 {
   }
 }
 
-@media (max-width: 1180px) {
-  html,
-  body {
-    overflow: auto;
-  }
+/* ==========================================================================
+   Responsive Mobile & Tablet Optimization
+   ========================================================================== */
 
+.mobile-nav-toggle {
+  display: none !important;
+}
+
+.sidebar-close-btn {
+  display: none !important;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 1280px) {
   .app-shell {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-    grid-template-columns: 1fr;
+    grid-template-columns: 230px minmax(0, 1fr);
   }
 
   .nav-rail {
-    grid-template-rows: auto auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line-soft);
+    width: 230px;
+  }
+}
+
+/* Mobile & Small Tablet Breakpoint (860px and below) */
+@media (max-width: 860px) {
+  html,
+  body {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
   }
 
-  .nav-list {
-    display: flex;
-    overflow: auto;
-  }
-
-  .workspace {
-    grid-template-rows: auto auto;
-  }
-
-  .command-bar {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .command-bar > #refreshSystem {
-    margin-left: 0;
-  }
-
-  .dashboard-grid {
-    overflow: visible;
+  .app-shell {
     grid-template-columns: 1fr;
-    height: auto;
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    position: relative;
   }
 
-  .dashboard-sidebar,
-  .page-grid {
-    overflow: visible;
+  /* Slide-out Off-Canvas Navigation Rail */
+  .nav-rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(84vw, 300px);
+    height: 100%;
+    height: 100dvh;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease;
+    box-shadow: none;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(13, 16, 22, 0.98);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    display: flex;
+    flex-direction: column;
   }
 
-  .panel {
-    min-height: 260px;
+  .nav-rail.open {
+    transform: translateX(0);
+    box-shadow: 14px 0 44px rgba(0, 0, 0, 0.75);
   }
 
-  .conversation-panel,
-  .rtdl-panel,
-  .full-panel {
-    min-height: 520px;
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 99;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
   }
 
-  .vitals-page.active {
-    height: auto;
-    overflow: visible;
+  .sidebar-backdrop.active {
+    opacity: 1;
+    pointer-events: auto;
   }
 
-  .vitals-shell {
-    height: auto;
-    min-height: 980px;
-    grid-template-rows: auto auto minmax(300px, auto) auto;
-    overflow: visible;
+  .sidebar-close-btn {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+    margin-left: auto;
+    transition: all 0.15s ease;
   }
 
-  .vitals-overview {
-    grid-template-columns: minmax(200px, 0.7fr) minmax(420px, 1.3fr);
+  .sidebar-close-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
   }
 
-  .vitals-overview-actions {
-    grid-column: 1 / -1;
-    justify-content: space-between;
+  /* Workspace & Header Layout */
+  .workspace {
+    height: 100%;
+    height: 100dvh;
+    grid-template-rows: 44px minmax(0, 1fr);
+    overflow: hidden;
   }
 
-  .vitals-source-strip {
+  .mobile-nav-toggle {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+
+  .mobile-nav-toggle:hover,
+  .mobile-nav-toggle:active {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+
+  /* Compact Command Bar */
+  .command-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    min-height: 44px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none !important;
+    flex-wrap: nowrap;
     justify-content: flex-start;
   }
 
+  .command-bar::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .endpoint-badge,
+  .status-chip {
+    height: 30px;
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 11.5px;
+    gap: 5px;
+    flex-shrink: 0;
+    width: auto !important;
+    max-width: none;
+  }
+
+  .endpoint-badge .endpoint-label {
+    display: none;
+  }
+
+  .user-badge {
+    display: none;
+  }
+
+  /* Conversation View on Mobile */
+  .dashboard-grid {
+    display: flex;
+    height: 100%;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .conversation-panel {
+    flex: 1 1 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .conversation-header {
+    padding: 6px 10px;
+    gap: 8px;
+    min-height: 44px;
+  }
+
+  .conversation-title-wrap {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .session-title-input {
+    font-size: 13.5px;
+    padding: 4px 6px;
+  }
+
+  .conversation-header-actions {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .header-icon-btn {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+  }
+
+  /* Messages & Chat Body */
+  .chat-body .messages {
+    padding: 10px 10px 14px;
+    gap: 10px;
+    max-width: 100%;
+  }
+
+  .message {
+    max-width: 96%;
+    gap: 8px;
+  }
+
+  .message-bubble {
+    padding: 8px 12px;
+    font-size: 13.5px;
+    border-radius: 14px;
+  }
+
+  /* Bottom Dock & Composer on Mobile */
+  .composer-dock {
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(180deg, rgba(12, 14, 20, 0) 0%, rgba(12, 14, 20, 0.85) 30%, rgba(12, 14, 20, 0.98) 100%);
+  }
+
+  .composer {
+    padding: 6px 10px;
+    border-radius: 14px;
+    gap: 6px;
+    max-width: 100%;
+  }
+
+  .composer textarea {
+    font-size: 16px !important; /* Critical: stops iOS Safari auto-zoom on input focus */
+    padding: 6px 4px;
+    max-height: 120px;
+  }
+
+  .send-button .btn-key {
+    display: none !important;
+  }
+
+  .tool-button.voice-inline,
+  .send-button {
+    height: 32px;
+    padding: 0 10px;
+  }
+
+  /* Display Panel (RTDL Inspector Drawer) Mobile Sheet */
+  .dashboard-sidebar {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    max-width: 100vw;
+    flex: none;
+    z-index: 95;
+    background: rgba(14, 17, 23, 0.98);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+    opacity: 0;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+  }
+
+  .dashboard-sidebar.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+    width: 100vw;
+  }
+
+  .dashboard-sidebar-inner {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 100%;
+  }
+
+  /* Vitals Page on Mobile */
+  .vitals-shell {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .vitals-overview {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
   .vitals-main {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: 480px minmax(280px, auto);
+    grid-template-columns: 1fr;
+    grid-template-rows: 320px auto auto;
     grid-template-areas:
-      "stage stage"
-      "components inspector";
-    overflow: visible;
+      "stage"
+      "components"
+      "inspector";
   }
 
-  .vitals-stage {
-    grid-area: stage;
+  /* Studio Page on Mobile */
+  .studio-header {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    gap: 8px;
   }
 
-  .vitals-components-pane {
-    grid-area: components;
+  .studio-services-nav {
+    overflow-x: auto;
+    width: 100%;
+    padding-bottom: 4px;
+    scrollbar-width: none !important;
+  }
+}
+
+/* Extra small devices (phones under 480px) */
+@media (max-width: 480px) {
+  .conversation-header {
+    padding: 6px 8px;
   }
 
-  .vitals-inspector {
-    grid-area: inspector;
-  }
-
-  .vitals-components-pane,
-  .vitals-inspector {
-    min-height: 280px;
-    border-top: 1px solid var(--line);
-  }
-
-  .vitals-component-list,
-  .vitals-inspector-body {
-    max-height: 360px;
-  }
-
-  .vitals-software {
-    min-height: 320px;
+  .session-title-input {
+    max-width: 140px;
   }
 }
 
 @media (max-width: 680px) {
-  .command-bar,
   .metrics-row,
   .settings-grid,
   .form-grid,
@@ -5761,31 +5999,6 @@ h2 {
 
   .select-field {
     grid-template-columns: 64px minmax(0, 1fr);
-  }
-
-  .conversation-history {
-    min-inline-size: 0;
-    max-height: 160px;
-    flex-shrink: 0;
-    border-right: 0;
-    border-bottom: 1px solid var(--line-soft);
-    padding-right: 0;
-    padding-bottom: 6px;
-  }
-
-  .danger-button,
-  .status-chip,
-  .wake-word,
-  .icon-button,
-  .connect-button {
-    min-width: 0;
-    width: 100%;
-    max-width: none;
-  }
-
-  .icon-button.modal-close {
-    flex: 0 0 34px;
-    width: 34px;
   }
 
   .table-head,
