@@ -2479,6 +2479,11 @@ h2 {
   gap: 6px;
   font-weight: 600;
   transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-label {
+  white-space: nowrap;
 }
 
 .tool-button .btn-icon,
@@ -6098,14 +6103,65 @@ h2 {
     font-size: 16px !important;
   }
 
-  .send-button .btn-key {
+  .composer-row {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .composer-row .btn-key {
     display: none !important;
   }
 
-  .tool-button.voice-inline,
+  .composer-row .btn-label {
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  .tool-button,
+  .send-button,
+  .danger-button {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding: 0 10px !important;
+    font-size: 12px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .tool-button.voice-inline {
+    padding: 0 !important;
+    width: 34px !important;
+    height: 32px !important;
+    min-width: 34px !important;
+    justify-content: center !important;
+    border-radius: 8px !important;
+  }
+
+  .tool-button.voice-inline .btn-label {
+    display: none !important;
+  }
+
+  .tool-button.voice-inline .btn-icon {
+    margin: 0 !important;
+  }
+
+  .tool-button.finish-button {
+    padding: 0 8px !important;
+    border-radius: 8px !important;
+  }
+
+  .stop-button {
+    padding: 0 10px !important;
+    border-radius: 8px !important;
+  }
+
   .send-button {
-    height: 32px;
-    padding: 0 10px;
+    padding: 0 12px !important;
+    border-radius: 8px !important;
+    margin-left: auto !important;
   }
 
   /* Display Panel (RTDL Inspector Drawer) Mobile Sheet */
