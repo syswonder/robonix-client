@@ -1,6 +1,11 @@
 const $ = (id) => document.getElementById(id);
 const maybe = (id) => document.getElementById(id);
 
+const ROBONIX_MARK_PATH = "M159.11,27.03c-2.31-1.41,.08,19.02-20.72,25.72,1.64-8.68-.75-15.71-2.06-16.83-1.34-1.15-1.47,7.18-12.11,8.85-1.1-1.92-2.7-3.94-4.62-5.96,.96-4.77-.35-8.65-1.06-9.27-.08-.07-1.87,2.21-5.01,3.64-.83-.68-1.66-1.36-2.52-2.01-2.34-1.81-4.69-3.25-6.94-4.41,.24-.54,1.68-4.26,.03-8.06-1.73-4-6.24-5.63-10.68-3.97-4.34,1.62-6.11,5.61-6.44,6.48-.02,.05-.04,.11-.06,.16-5.31-1-9.51-1-12.92-.51-1.83-3.12-5.28-5.44-8.82-5.45-2.91,0-6.22,1.33-8.02,4.01-3.01,4.48-1.49,11.63,3.44,14.31,.4,.22,.81,.39,1.23,.54-.43,.08-.9,.09-1.4,.02-3.31-.51-5.72-4.19-7.55-7.01-.02-.02-.05,.03-.08,.04-9.06,5.84-15.87,17.7-17.02,25.21-.93,.65-1.87,1.31-2.82,2-15.53,11.22-28.72,38.2-20.76,79.27,.17,1.19,1.02,2.53,2.35,2.53l14.45,.06c1.37,0,2.54-1,2.74-2.36l.82-5.6c.65-4.39,3.99-8.03,8.38-8.67,5.52-.8,10.47,3.02,11.26,8.35l.88,5.96c.2,1.34,1.35,2.33,2.7,2.33h14.79c1.35,0,2.5-.99,2.7-2.33l.79-5.3c.56-5.15,4.62-9.16,9.82-9.16s9.39,4.06,9.97,9.16l.82,5.62c.17,1.15,1.15,2,2.32,2h14.41c1.24,0,2.19-.73,2.65-2.05,2.76-8.08,2.26-14.58,1.88-17.92-.07-.6-.21-1.02-.3-1.43-13.95-.27-28.02-4.32-38.25-9.72,11.23,3.65,21.72,5.62,27.34,5.82,73.38,2.6,59.58-80.89,54.38-84.06ZM81.48,63.03c-1.47,3.41-5.43,4.99-8.84,3.52-3.41-1.47-4.99-5.43-3.52-8.84,1.47-3.41,5.43-4.99,8.84-3.52s4.99,5.43,3.52,8.84Z";
+function robonixMarkSvg(width, height) {
+  return `<svg width="${width}" height="${height}" viewBox="0 0 170 151" fill="currentColor" aria-hidden="true"><path d="${ROBONIX_MARK_PATH}"/></svg>`;
+}
+
 /// Translate a UI string. Keys are the English source text; i18n.js maps
 /// them for zh-CN. Falls back to the raw key (placeholders interpolated)
 /// if i18n.js has not loaded.
@@ -2510,7 +2515,7 @@ function renderMessageElement(message) {
     const avatar = document.createElement("div");
     avatar.className = "assistant-avatar";
     avatar.setAttribute("aria-hidden", "true");
-    avatar.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg>`;
+    avatar.innerHTML = robonixMarkSvg(16, 16);
     const name = document.createElement("span");
     name.className = "assistant-name";
     name.textContent = t("Robonix Embodied Agent");
@@ -2625,10 +2630,7 @@ function renderMessages() {
     empty.className = "empty-chat-hero";
     empty.innerHTML = `
       <div class="empty-chat-avatar" aria-hidden="true">
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
-        </svg>
+        ${robonixMarkSvg(34, 34)}
       </div>
       <h3 class="empty-chat-title">${t("Robonix Embodied Agent")}</h3>
       <p class="empty-chat-subtitle">${t("Perception, planning, and real-time physical action execution")}</p>
