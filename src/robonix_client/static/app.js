@@ -1091,6 +1091,14 @@ function bindEvents() {
   maybe("closeRtdlHistory")?.addEventListener("click", closeRtdlHistory);
   maybe("openActiveRtdl")?.addEventListener("click", openActiveRtdl);
   maybe("closeActiveRtdl")?.addEventListener("click", closeActiveRtdl);
+  maybe("toggleInspector")?.addEventListener("click", () => {
+    const sidebar = $("dashboardSidebar");
+    if (sidebar) sidebar.classList.toggle("open");
+  });
+  maybe("closeInspectorBtn")?.addEventListener("click", () => {
+    const sidebar = $("dashboardSidebar");
+    if (sidebar) sidebar.classList.remove("open");
+  });
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });
@@ -1484,6 +1492,9 @@ function newSession() {
   renderPlan();
   renderSceneAssets();
   renderHistory();
+  if (state.activePage !== "dashboard") {
+    activatePage("dashboard");
+  }
 }
 
 /// Keep the command bar's session chip showing the live conversation title.
@@ -5132,6 +5143,9 @@ function openConversation(sessionId) {
   renderPlan();
   renderSceneAssets();
   renderHistory();
+  if (state.activePage !== "dashboard") {
+    activatePage("dashboard");
+  }
 }
 
 function firstUserMessage() {

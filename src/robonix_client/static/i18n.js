@@ -663,6 +663,12 @@
     "Copy code": "复制代码",
     "Copy": "复制",
     "Copied!": "已复制！",
+    "New chat": "新建对话",
+    "Recent Chats": "近期对话",
+    "RTDL Forest & Execution": "RTDL 树与执行监控",
+    "Toggle RTDL & Execution Inspector": "展开/收起 RTDL 树与执行监控",
+    "Execution Inspector": "执行监控器",
+    "Close inspector": "关闭监控器",
   };
 
   // Legacy status rows stored the translated text instead of the key. Build a
