@@ -2500,8 +2500,9 @@ function renderMessageElement(message) {
   el.className = `message ${message.role}`;
   el.dataset.messageId = message.id;
   // Legacy status rows carried meta="status"; the label is noise and the role
-  // is already obvious from the styling.
-  if (message.meta && message.role !== "status") {
+  // is already obvious from the styling. Agent messages show their identity
+  // in .assistant-header (single logo + "Robonix") so omit .meta to avoid duplication.
+  if (message.meta && message.role !== "status" && message.role !== "agent") {
     const meta = document.createElement("span");
     meta.className = "meta";
     // Stored rows keep the translated label, so a wording change only reaches
@@ -2518,7 +2519,7 @@ function renderMessageElement(message) {
     avatar.innerHTML = robonixMarkSvg(16, 16);
     const name = document.createElement("span");
     name.className = "assistant-name";
-    name.textContent = t("Robonix Embodied Agent");
+    name.textContent = "Robonix";
     header.append(avatar, name);
     el.appendChild(header);
 
@@ -2526,25 +2527,6 @@ function renderMessageElement(message) {
     body.className = "agent-markdown-body";
     appendAgentMarkdown(body, message);
     el.appendChild(body);
-
-    const actions = document.createElement("div");
-    actions.className = "assistant-actions";
-    const copyBtn = document.createElement("button");
-    copyBtn.type = "button";
-    copyBtn.className = "assistant-action-btn copy-msg-btn";
-    copyBtn.title = t("Copy response");
-    copyBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>${t("Copy")}</span>`;
-    copyBtn.addEventListener("click", () => {
-      navigator.clipboard?.writeText(String(message.text || "")).then(() => {
-        const span = copyBtn.querySelector("span");
-        if (span) span.textContent = t("Copied!");
-        setTimeout(() => {
-          if (span) span.textContent = t("Copy");
-        }, 2000);
-      }).catch(() => {});
-    });
-    actions.appendChild(copyBtn);
-    el.appendChild(actions);
   } else {
     el.appendChild(document.createTextNode(message.text));
   }
@@ -2632,38 +2614,8 @@ function renderMessages() {
       <div class="empty-chat-avatar" aria-hidden="true">
         ${robonixMarkSvg(34, 34)}
       </div>
-      <h3 class="empty-chat-title">${t("Robonix Embodied Agent")}</h3>
-      <p class="empty-chat-subtitle">${t("Perception, planning, and real-time physical action execution")}</p>
-      <div class="empty-chat-suggestions">
-        <button type="button" class="suggestion-chip" data-prompt="${t("Run behavior tree manipulation demo in Webots")}">
-          <span class="suggestion-icon">🤖</span>
-          <span class="suggestion-text">${t("Run manipulation demo in Webots")}</span>
-        </button>
-        <button type="button" class="suggestion-chip" data-prompt="${t("Inspect robot arm joints and soma hardware vitals")}">
-          <span class="suggestion-icon">🦾</span>
-          <span class="suggestion-text">${t("Inspect joints & hardware vitals")}</span>
-        </button>
-        <button type="button" class="suggestion-chip" data-prompt="${t("Explain the active RTDL plan structure and node status")}">
-          <span class="suggestion-icon">🌲</span>
-          <span class="suggestion-text">${t("Explain active RTDL plan")}</span>
-        </button>
-        <button type="button" class="suggestion-chip" data-prompt="${t("Inspect spatial perception and 3D camera sensor feeds")}">
-          <span class="suggestion-icon">👁️</span>
-          <span class="suggestion-text">${t("Inspect spatial perception")}</span>
-        </button>
-      </div>
+      <h3 class="empty-chat-title">Robonix</h3>
     `;
-    empty.querySelectorAll(".suggestion-chip").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const prompt = btn.getAttribute("data-prompt");
-        const input = $("taskInput");
-        if (input) {
-          input.value = prompt;
-          autoGrowInput();
-          input.focus();
-        }
-      });
-    });
     root.appendChild(empty);
     if (stick) root.scrollTop = root.scrollHeight;
     return;
