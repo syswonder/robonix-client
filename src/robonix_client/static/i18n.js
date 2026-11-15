@@ -69,6 +69,7 @@
     "Compute node telemetry from Vitals": "来自 Vitals 的计算节点遥测",
     "Audio": "音频",
     "Settings": "设置",
+    "Language": "语言",
     "Studio": "工作室",
     "Robonix Studio": "Robonix 工作室",
     "Studio Services": "服务列表",

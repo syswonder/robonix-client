@@ -1147,6 +1147,10 @@ function bindEvents() {
     if (event.target === event.currentTarget) closeNodeDetail();
   });
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && settingsPopover && !settingsPopover.hidden) {
+      settingsPopover.hidden = true;
+      if (settingsTrigger) settingsTrigger.classList.remove("active");
+    }
     if (event.key === "Escape" && maybe("callDetailModal")?.open) return;
     if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
     if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
