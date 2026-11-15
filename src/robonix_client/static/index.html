@@ -108,6 +108,7 @@
           <input id="userId" type="hidden" />
 
           <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings" title="Robot Atlas Endpoint. Click to edit in Settings." data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
+            <span class="endpoint-status-dot" aria-hidden="true"></span>
             <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
             <span class="endpoint-label" data-i18n="Atlas:">Atlas:</span>
             <span class="endpoint-val" id="atlasEndpointDisplay">127.0.0.1:50051</span>
@@ -118,15 +119,21 @@
             <span class="endpoint-val" id="userDisplay">voice:client</span>
           </button>
 
-          <button class="status-chip" id="refreshSystem" type="button">
-            <span class="dot"></span>
+          <button class="status-chip system-status-pill" id="refreshSystem" type="button" title="System readiness. Click to refresh." data-i18n-title="System readiness. Click to refresh.">
+            <span class="status-dot-wrap" aria-hidden="true">
+              <span class="dot-ping"></span>
+              <span class="dot"></span>
+            </span>
             <span id="connectionState" data-i18n="offline">offline</span>
           </button>
           <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
-            <span class="dot"></span>
+            <svg class="handsfree-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
             <span id="handsfreeState" data-i18n="Hands-free off">Hands-free off</span>
           </button>
-          <button class="button connect-button" id="connectNow" type="button" data-i18n="Connect">Connect</button>
+          <button class="button connect-button" id="connectNow" type="button" title="Check Atlas connection" data-i18n-title="Check Atlas connection">
+            <svg class="connect-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <span class="connect-label" data-i18n="Connect">Connect</span>
+          </button>
         </header>
 
         <section class="page dashboard-page active" data-page-panel="dashboard">

@@ -818,6 +818,25 @@ h1 {
   text-decoration: none;
 }
 
+.endpoint-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #64748b;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.endpoint-badge.online .endpoint-status-dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+
+.endpoint-badge.offline .endpoint-status-dot {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
 .endpoint-badge:hover {
   border-color: rgba(170, 123, 236, 0.5);
   background: rgba(170, 123, 236, 0.08);
@@ -896,47 +915,150 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  height: 34px;
+  min-height: 34px;
   padding: 0 12px;
-  color: #cfe6da;
+  color: #e2e8f0;
   white-space: nowrap;
-  min-width: 108px;
+  min-width: 0;
   flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.status-chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.status-dot-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
-  background: var(--green);
-  box-shadow: 0 0 12px rgba(111, 209, 125, 0.9);
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  position: relative;
+  z-index: 1;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.dot-ping {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: #22c55e;
+  opacity: 0.6;
+  animation: status-ping 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes status-ping {
+  75%, 100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
 }
 
 .status-chip.offline .dot {
-  background: var(--red);
-  box-shadow: 0 0 10px rgba(240, 103, 88, 0.8);
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.status-chip.offline .dot-ping {
+  display: none;
+}
+
+.status-chip.degraded .dot {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+
+.status-chip.degraded .dot-ping {
+  background: #f59e0b;
 }
 
 .handsfree-chip {
-  min-width: 150px;
+  min-width: 0;
+  padding: 0 12px;
+  gap: 7px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: 8px;
 }
 
-.handsfree-chip.listening .dot {
-  animation: handsfree-pulse 1.6s ease-in-out infinite;
+.handsfree-chip .handsfree-icon {
+  flex-shrink: 0;
+  color: #64748b;
+  transition: color 0.2s ease, transform 0.2s ease;
 }
 
-.handsfree-chip.busy .dot {
-  background: var(--amber);
-  box-shadow: 0 0 12px rgba(242, 181, 68, 0.75);
-  animation: handsfree-pulse 0.8s ease-in-out infinite;
+.handsfree-chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
 }
 
-.handsfree-chip.error .dot {
-  background: var(--red);
-  box-shadow: 0 0 10px rgba(240, 103, 88, 0.75);
+.handsfree-chip:hover .handsfree-icon {
+  color: #94a3b8;
 }
 
-@keyframes handsfree-pulse {
-  50% { opacity: 0.45; transform: scale(0.72); }
+.handsfree-chip.listening {
+  color: #e9d5ff;
+  border-color: rgba(170, 123, 236, 0.45);
+  background: rgba(170, 123, 236, 0.12);
+  box-shadow: 0 0 14px rgba(170, 123, 236, 0.2);
+}
+
+.handsfree-chip.listening .handsfree-icon {
+  color: #c084fc;
+  animation: handsfree-icon-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes handsfree-icon-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.8; }
+}
+
+.handsfree-chip.busy {
+  color: #fef08a;
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.18);
+}
+
+.handsfree-chip.busy .handsfree-icon {
+  color: #fbbf24;
+}
+
+.handsfree-chip.error {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.handsfree-chip.error .handsfree-icon {
+  color: #f87171;
 }
 
 .wake-word {
@@ -1076,14 +1198,40 @@ h1 {
 }
 
 .connect-button {
-  min-width: 96px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 12px;
+  min-width: 0;
+  border-radius: 8px;
   white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.connect-button:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.65);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+}
+
+.connect-button .connect-icon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+/* Scheme C: In online state, hide the redundant Connect button! */
 .connect-button.connected {
-  color: var(--green);
-  border-color: #315742;
-  background: #12221b;
+  display: none !important;
 }
 
 .icon-button {

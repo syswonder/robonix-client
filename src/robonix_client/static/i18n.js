@@ -119,6 +119,7 @@
     "Connected": "已连接",
     "Atlas is reachable": "Atlas 可达",
     "Check Atlas connection": "检查 Atlas 连接",
+    "System readiness. Click to refresh.": "系统就绪状态。点击刷新。",
 
     // Conversation panel
     "Conversation": "对话",

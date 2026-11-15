@@ -4750,10 +4750,15 @@ function renderSystem(data) {
   $("connectionState").textContent = t(stateLabel);
   $("refreshSystem").classList.toggle("offline", !online);
   $("refreshSystem").classList.toggle("online", online);
+  $("refreshSystem").classList.toggle("degraded", summary.state === "degraded");
+  maybe("endpointBadge")?.classList.toggle("online", online);
+  maybe("endpointBadge")?.classList.toggle("offline", !online);
   if (maybe("connectNow")) {
-    $("connectNow").textContent = online ? t("Connected") : t("Connect");
-    $("connectNow").classList.toggle("connected", online);
-    $("connectNow").title = online ? t("Atlas is reachable") : t("Check Atlas connection");
+    const connectBtn = $("connectNow");
+    const label = connectBtn.querySelector(".connect-label") || connectBtn;
+    label.textContent = online ? t("Connected") : t("Connect");
+    connectBtn.classList.toggle("connected", online);
+    connectBtn.title = online ? t("Atlas is reachable") : t("Check Atlas connection");
   }
   if (maybe("metricState")) $("metricState").textContent = t(stateLabel);
   if (maybe("metricActive")) $("metricActive").textContent = String(summary.active || 0);
