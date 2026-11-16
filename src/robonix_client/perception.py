@@ -323,11 +323,13 @@ async def _map_ui_base(atlas_endpoint: str) -> str:
         # The Scene provider advertises the address it is actually reachable
         # at; prefer it over the Atlas host, which may be a tunnel or a name.
         endpoint, _ = await _discover_mcp_endpoint(atlas_endpoint, CONTRACT_SCENE_ROBOT)
-        advertised = urlparse(endpoint).hostname
-        if advertised and advertised not in _LOOPBACK_HOSTS:
-            host = advertised
     except Exception:
-        pass
+        # Scene may not have registered yet: use the Atlas host for now but
+        # do not cache it, so a later poll can still pick up the advertisement.
+        return f"http://{host}:{MAP_UI_PORT}"
+    advertised = urlparse(endpoint).hostname
+    if advertised and advertised not in _LOOPBACK_HOSTS:
+        host = advertised
     base = f"http://{host}:{MAP_UI_PORT}"
     _map_ui_bases[atlas_endpoint] = base
     return base

@@ -7,7 +7,7 @@ import struct
 import sys
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -500,6 +500,17 @@ async def query_atlas(
         atlas_pb2.QueryResponse,
     )
     return list(resp.providers)
+
+
+async def list_contracts(atlas_endpoint: str) -> dict[str, Any]:
+    """Atlas contract descriptors keyed by contract id."""
+    resp = await _unary_unary(
+        atlas_endpoint,
+        "/robonix.atlas.Atlas/ListContracts",
+        atlas_pb2.ListContractsRequest(namespace_prefix=""),
+        atlas_pb2.ListContractsResponse,
+    )
+    return {contract.id: contract for contract in resp.contracts}
 
 
 async def connect_capability(
@@ -1123,10 +1134,11 @@ async def enroll_voiceprint(
 async def list_voiceprints(settings: ClientSettings) -> dict[str, Any]:
     """Read the enrolled-speaker catalog.
 
-    The service drops records written by a previous voiceprint model on load
-    (they keep `model="campplus_zh"`). An empty catalog while the contract is
-    online therefore means those users must be re-enrolled, which is what the
-    settings page surfaces.
+    On load the service keeps only records whose `model` is "campplus_zh" and
+    drops the rest, including records with no `model` written by an earlier
+    voiceprint model. An empty catalog while the contract is online therefore
+    means those users must be re-enrolled, which is what the settings page
+    surfaces.
     """
     endpoint = await discover_endpoint(
         settings.atlas_endpoint,
@@ -1236,17 +1248,21 @@ async def _stream_tts_to_speaker(
     tts_endpoint: str,
     speaker_endpoint: str,
     request: Any,
-) -> dict[str, Any]:
+    stats: dict[str, Any],
+) -> None:
     """Pipe server-streamed TTS chunks straight into the speaker stream.
 
     Playback starts on the first chunk instead of after the whole utterance is
     synthesized; the queue keeps at most 32 chunks in flight so a slow speaker
-    throttles the TTS stream rather than growing memory.
+    throttles the TTS stream rather than growing memory. `stats` is filled as
+    chunks arrive, so a caller that catches an error can still tell whether
+    any audio reached the speaker.
     """
     queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
-    stats = {"bytes": 0, "encoding": "", "sampleRateHz": 0}
+    stats.update({"bytes": 0, "encoding": "", "sampleRateHz": 0})
 
     async def produce() -> None:
+        cancelled = False
         try:
             async with stream_channel(tts_endpoint) as channel:
                 call = channel.unary_stream(
@@ -1255,15 +1271,22 @@ async def _stream_tts_to_speaker(
                     response_deserializer=tts_pb2.SynthesizeAudioChunk.FromString,
                 )
                 async for chunk in call(request, timeout=30.0):
-                    data = bytes(chunk.chunk)
+                    # `chunk` is an audio.AudioChunk message; the PCM is in `.data`.
+                    data = bytes(chunk.chunk.data)
                     if not data:
                         continue
                     stats["encoding"] = stats["encoding"] or chunk.encoding
                     stats["sampleRateHz"] = stats["sampleRateHz"] or int(chunk.sample_rate_hz)
                     stats["bytes"] += len(data)
                     await queue.put(data)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            await queue.put(None)
+            # Cancellation means the speaker side is gone: a blocking put on a
+            # full queue would then never return.
+            if not cancelled:
+                await queue.put(None)
 
     async def chunks() -> AsyncIterator[Any]:
         seq = 0
@@ -1298,7 +1321,6 @@ async def _stream_tts_to_speaker(
             producer.cancel()
             with suppress(asyncio.CancelledError):
                 await producer
-    return stats
 
 
 async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker test") -> dict[str, Any]:
@@ -1307,7 +1329,9 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
     speaker_endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_SPEAKER, settings.speaker_node_id)
 
     # tts_stream is optional: older deployments only advertise the unary
-    # contract, so probe for it and fall back after producing no audio.
+    # contract, so probe for it. A stream that fails or yields nothing before
+    # any audio played falls back to unary; once audio played, a failure is
+    # real and retrying would replay the phrase.
     try:
         stream_endpoint = await discover_endpoint(
             settings.atlas_endpoint, CONTRACT_TTS_STREAM, settings.tts_node_id
@@ -1321,8 +1345,13 @@ async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker t
             voice="",
             speed=1.0,
         )
-        stats = await _stream_tts_to_speaker(stream_endpoint, speaker_endpoint, stream_req)
-        if stats["bytes"]:
+        stats: dict[str, Any] = {}
+        try:
+            await _stream_tts_to_speaker(stream_endpoint, speaker_endpoint, stream_req, stats)
+        except grpc.aio.AioRpcError:
+            if stats.get("bytes"):
+                raise
+        if stats.get("bytes"):
             return {
                 "ok": True,
                 "text": phrase,
@@ -1436,7 +1465,13 @@ def decode_handsfree_event(raw: bytes) -> Any:
 async def system_snapshot(atlas_endpoint: str) -> dict[str, Any]:
     atlas = normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS)
     providers = await query_atlas(atlas)
-    provider_rows = [provider_to_dict(provider) for provider in providers]
+    try:
+        contracts = await list_contracts(atlas)
+    except grpc.aio.AioRpcError:
+        # Contract flags only annotate the provider list; an Atlas without
+        # ListContracts still yields a usable snapshot.
+        contracts = {}
+    provider_rows = [provider_to_dict(provider, contracts) for provider in providers]
     contract_presence = required_contracts(provider_rows)
     active = sum(1 for row in provider_rows if row["state"] == "ACTIVE")
     errors = [row for row in provider_rows if row["state"] == "ERROR"]
@@ -1506,7 +1541,20 @@ def _capability_params(cap: Any) -> dict[str, str]:
     return {}
 
 
-def provider_to_dict(provider: Any) -> dict[str, Any]:
+def _contract_flags(contract: Any) -> dict[str, bool]:
+    """Per-contract flags Atlas keeps on the ContractDescriptor, not the Capability."""
+    if contract is None:
+        # Unknown contract: report Atlas' defaults.
+        return {"crossNamespace": False, "llmCallable": True}
+    return {
+        "crossNamespace": bool(contract.cross_namespace),
+        # Absent means true, for Atlas builds that predate the field.
+        "llmCallable": contract.llm_callable if contract.HasField("llm_callable") else True,
+    }
+
+
+def provider_to_dict(provider: Any, contracts: dict[str, Any] | None = None) -> dict[str, Any]:
+    contracts = contracts or {}
     return {
         "id": provider.id,
         "kind": KIND_NAMES.get(provider.kind, str(provider.kind)),
@@ -1523,8 +1571,7 @@ def provider_to_dict(provider: Any) -> dict[str, Any]:
                 "description": cap.description,
                 "params": _capability_params(cap),
                 "namespaceMismatch": bool(getattr(cap, "namespace_mismatch", False)),
-                "crossNamespace": bool(getattr(cap, "cross_namespace", False)),
-                "llmCallable": bool(getattr(cap, "llm_callable", False)),
+                **_contract_flags(contracts.get(cap.contract_id)),
             }
             for cap in provider.capabilities
         ],

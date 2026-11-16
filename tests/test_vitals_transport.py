@@ -16,7 +16,9 @@ from robonix_client.proto import (
 from robonix_client.transport import ClientSettings
 from robonix_client.vitals_transport import (
     _description_loop,
+    _hardware_loop,
     _hardware_poll_loop,
+    _store_hardware_snapshot,
     aggregate_component_health,
     fallback_robot_description,
     load_robot_description,
@@ -410,6 +412,154 @@ class VitalsPollingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["type"], "hardware")
         self.assertIn("summary", event["data"])
         self.assertIs(hardware_state["value"], response.snapshot)
+
+    async def test_late_poll_cannot_replace_stream_frame(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        old = vitals_client_pb2.VitalsSnapshot(ts_ns=100)
+        fresh = vitals_client_pb2.VitalsSnapshot(ts_ns=200)
+        hardware_state: dict = {"value": old, "received_at_ms": 1000}
+        request_started = asyncio.Event()
+        third_request_started = asyncio.Event()
+        return_old = asyncio.Event()
+        requests = 0
+
+        async def get_vitals(*_args):
+            nonlocal requests
+            requests += 1
+            request_id = requests
+            request_started.set()
+            if request_id == 3:
+                third_request_started.set()
+            await return_old.wait()
+            snapshot = old if request_id == 1 else fresh
+            return vitals_client_pb2.GetVitals_Response(snapshot=snapshot)
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", get_vitals),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                await asyncio.wait_for(request_started.wait(), 1.0)
+                _store_hardware_snapshot(fresh, hardware_state)
+                return_old.set()
+                await asyncio.wait_for(third_request_started.wait(), 1.0)
+                self.assertEqual(hardware_state["value"].ts_ns, fresh.ts_ns)
+                event = await asyncio.wait_for(queue.get(), 1.0)
+                self.assertEqual(event["data"]["updatedAtMs"], 2000)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    async def test_poll_accepts_smaller_timestamp_after_vitals_restart(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        previous = vitals_client_pb2.VitalsSnapshot(ts_ns=5000)
+        restarted = vitals_client_pb2.VitalsSnapshot(ts_ns=10)
+        hardware_state: dict = {"value": previous, "received_at_ms": 1000}
+
+        request_count = 0
+
+        async def get_restarted_snapshot(*_args):
+            nonlocal request_count
+            request_count += 1
+            return vitals_client_pb2.GetVitals_Response(snapshot=restarted)
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", get_restarted_snapshot),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertEqual(hardware_state["value"].ts_ns, restarted.ts_ns)
+        self.assertEqual(hardware_state["received_at_ms"], 2000)
+        self.assertEqual(event["data"]["updatedAtMs"], 2000)
+
+    async def test_same_snapshot_keeps_original_receive_time(self):
+        snapshot = vitals_client_pb2.VitalsSnapshot(ts_ns=100)
+        response = vitals_client_pb2.GetVitals_Response(snapshot=snapshot)
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state: dict = {"value": None, "received_at_ms": 0}
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", AsyncMock(return_value=response)),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", side_effect=[1000, 2000]) as clock,
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                first = await asyncio.wait_for(queue.get(), 1.0)
+                second = await asyncio.wait_for(queue.get(), 1.0)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertEqual(first["data"]["updatedAtMs"], 1000)
+        self.assertEqual(second["data"]["updatedAtMs"], 1000)
+        clock.assert_called_once()
+
+    async def test_stream_reset_accepts_smaller_timestamp(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state: dict = {
+            "value": vitals_client_pb2.VitalsSnapshot(ts_ns=5000),
+            "received_at_ms": 1000,
+        }
+        restarted = vitals_client_pb2.VitalsSnapshot(ts_ns=10)
+
+        class Channel:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            def unary_stream(self, *_args, **_kwargs):
+                async def stream(_request):
+                    yield restarted
+                return stream
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport.stream_channel", return_value=Channel()),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                while True:
+                    event = await asyncio.wait_for(queue.get(), 1.0)
+                    if event["type"] == "hardware":
+                        break
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertIs(hardware_state["value"], restarted)
+        self.assertEqual(event["data"]["updatedAtMs"], 2000)
 
 
 class ComponentHealthTest(unittest.TestCase):

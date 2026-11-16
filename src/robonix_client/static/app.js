@@ -228,14 +228,6 @@ const state = {
   },
 };
 
-/// Name captured for a New session click that is still in flight.
-///
-/// Pressing the button blurs the name field first, so without this the typed
-/// name would be committed as a rename of the session being left and the new
-/// one would open unnamed -- two chats from one click. null means no click is
-/// pending and the field behaves as a plain rename box.
-let pendingNewSessionTitle = null;
-
 const DEFAULT_ATLAS_PORT = 50051;
 const AUDIO_LOG_MAX_LINES = 120;
 const AUDIO_LOG_MAX_CHARS = 260;
@@ -809,6 +801,7 @@ async function init() {
   bindSettings();
   bindEvents();
   bindSceneLayers();
+  restoreSessionListState();
   refreshVoiceprintUsers();
   bindSceneView();
   bindPerceptionControls();
@@ -889,7 +882,6 @@ function bindSettings() {
   if (maybe("speakerDeviceId")) $("speakerDeviceId").value = state.settings.speakerDeviceId || "";
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
-  if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
   const endpointEl = maybe("atlasEndpointDisplay");
   if (endpointEl) endpointEl.textContent = `${state.settings.robotHost || "127.0.0.1"}:${state.settings.atlasPort || DEFAULT_ATLAS_PORT}`;
   const userEl = maybe("userDisplay");
@@ -1054,34 +1046,11 @@ function bindEvents() {
   maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
-  // The command bar's name field renames the open session as you type it;
-  // the button beside it starts a new one under whatever name it holds.
-  const sessionTitleInput = maybe("sessionTitleInput");
-  if (sessionTitleInput) {
-    sessionTitleInput.addEventListener("change", commitSessionTitle);
-    sessionTitleInput.addEventListener("blur", commitSessionTitle);
-    sessionTitleInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        sessionTitleInput.blur();
-      }
-    });
-    // Clears a capture left behind by a click that never completed.
-    sessionTitleInput.addEventListener("focus", () => {
-      pendingNewSessionTitle = null;
-    });
-  }
-  const newSessionAction = maybe("newSessionAction");
-  if (newSessionAction) {
-    // mousedown lands before the field's blur, which is the only moment the
-    // typed name is still known to be meant for the session about to open.
-    newSessionAction.addEventListener("mousedown", () => {
-      pendingNewSessionTitle = maybe("sessionTitleInput")?.value.trim() || "";
-    });
-    newSessionAction.addEventListener("click", newSession);
-  }
-  $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
-  $("clearHistory").addEventListener("click", clearHistory);
+  maybe("sessionListToggle")?.addEventListener("click", toggleSessionList);
+  maybe("newSessionAction")?.addEventListener("click", newSession);
+  maybe("renameSession")?.addEventListener("click", () => renameConversation(state.sessionId));
+  maybe("clearHistory")?.addEventListener("click", clearHistory);
+  bindSessionDialog();
   maybe("connectNow")?.addEventListener("click", async () => {
     state.settings = collectSettings();
     await persistSettings().catch((error) => addTimeline("error", t("settings save failed: {error}", { error })));
@@ -1187,31 +1156,47 @@ function bindEvents() {
   const appShell = document.querySelector(".app-shell");
   const sidebarCollapseBtn = maybe("sidebarCollapseBtn");
 
-  function setSidebarCollapsed(collapsed) {
+  // The icon rail is a desktop layout. Its rules outrank the mobile drawer's,
+  // so below the breakpoint the classes are dropped while the saved
+  // preference is kept for when the window widens again.
+  const desktopLayout = window.matchMedia("(min-width: 861px)");
+
+  function savedSidebarCollapsed() {
+    try {
+      return localStorage.getItem("robonix.sidebar_collapsed") === "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setSidebarCollapsed(collapsed, { persist = true } = {}) {
     if (!navRail || !appShell) return;
     const isCollapsed = collapsed ?? !navRail.classList.contains("collapsed");
-    navRail.classList.toggle("collapsed", isCollapsed);
-    appShell.classList.toggle("sidebar-collapsed", isCollapsed);
-    try {
-      localStorage.setItem("robonix.sidebar_collapsed", isCollapsed ? "true" : "false");
-    } catch (_) {}
+    const applied = isCollapsed && desktopLayout.matches;
+    navRail.classList.toggle("collapsed", applied);
+    appShell.classList.toggle("sidebar-collapsed", applied);
+    if (persist) {
+      try {
+        localStorage.setItem("robonix.sidebar_collapsed", isCollapsed ? "true" : "false");
+      } catch (_) {}
+    }
     if (sidebarCollapseBtn) {
       const leftIcon = sidebarCollapseBtn.querySelector(".collapse-icon-left");
       const rightIcon = sidebarCollapseBtn.querySelector(".collapse-icon-right");
-      if (leftIcon) leftIcon.style.display = isCollapsed ? "none" : "block";
-      if (rightIcon) rightIcon.style.display = isCollapsed ? "block" : "none";
-      const titleKey = isCollapsed ? "Expand sidebar" : "Collapse sidebar";
+      if (leftIcon) leftIcon.style.display = applied ? "none" : "block";
+      if (rightIcon) rightIcon.style.display = applied ? "block" : "none";
+      const titleKey = applied ? "Expand sidebar" : "Collapse sidebar";
       sidebarCollapseBtn.setAttribute("title", t(titleKey));
       sidebarCollapseBtn.setAttribute("aria-label", t(titleKey));
     }
-    setTimeout(() => window.dispatchEvent(new Event("resize")), 240);
+    // The width changes in one step, so the new size is already measurable.
+    window.dispatchEvent(new Event("resize"));
   }
 
-  try {
-    if (window.innerWidth > 860 && localStorage.getItem("robonix.sidebar_collapsed") === "true") {
-      setSidebarCollapsed(true);
-    }
-  } catch (_) {}
+  if (savedSidebarCollapsed()) setSidebarCollapsed(true, { persist: false });
+  desktopLayout.addEventListener("change", () => {
+    setSidebarCollapsed(savedSidebarCollapsed(), { persist: false });
+  });
 
   sidebarCollapseBtn?.addEventListener("click", () => setSidebarCollapsed());
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
@@ -1238,16 +1223,26 @@ function bindEvents() {
   maybe("nodeDetailModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeNodeDetail();
   });
+  // One Escape closes one layer, the topmost first. The call-detail <dialog>
+  // closes itself on Escape before this listener runs, so its `open` flag is
+  // already false here; capture-phase tracking catches that press instead.
+  let dialogEscape = false;
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && settingsPopover && !settingsPopover.hidden) {
+    dialogEscape = event.key === "Escape" && Boolean(maybe("callDetailModal")?.open);
+  }, true);
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (dialogEscape || maybe("callDetailModal")?.open) return;
+    if (!maybe("sessionDialog")?.hidden) return closeSessionDialog();
+    if (settingsPopover && !settingsPopover.hidden) {
       settingsPopover.hidden = true;
       if (settingsTrigger) settingsTrigger.classList.remove("active");
+      return;
     }
-    if (event.key === "Escape" && maybe("callDetailModal")?.open) return;
-    if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
-    if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
-    if (event.key === "Escape" && !maybe("nodeDetailModal")?.hidden) closeNodeDetail();
-    if (event.key === "Escape" && $("dashboardSidebar")?.classList.contains("open")) {
+    if (!maybe("nodeDetailModal")?.hidden) return closeNodeDetail();
+    if (!maybe("activeRtdlModal")?.hidden) return closeActiveRtdl();
+    if (!maybe("rtdlHistoryModal")?.hidden) return closeRtdlHistory();
+    if ($("dashboardSidebar")?.classList.contains("open")) {
       $("dashboardSidebar").classList.remove("open");
       maybe("toggleInspector")?.classList.remove("active");
       maybe("toggleInspector")?.setAttribute("aria-pressed", "false");
@@ -1578,8 +1573,10 @@ function forgetActiveTurn() {
 /// Pilot compacts a conversation's memory only when it receives an explicit
 /// `session_end`; switching to another session id alone leaves the previous
 /// conversation uncompacted. Fire and forget: the switch must not wait on it.
+/// Only a session the user actually spoke in has Pilot memory to compact;
+/// status lines alone (a fresh "new session" notice) do not count.
 function notifySessionEnd() {
-  if (!state.messages.length && !state.timeline.length) return;
+  if (!state.messages.some((item) => item.role === "user")) return;
   const settings = collectSettings();
   if (!settings.sessionId) return;
   fetch("/api/session/end", {
@@ -1592,24 +1589,16 @@ function notifySessionEnd() {
 
 function newSession() {
   if (state.busy) {
-    pendingNewSessionTitle = null;
     addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
     return;
   }
-  // Captured at mousedown, before the field blurred. An untouched field still
-  // shows the CURRENT session's name, and naming the new session after it
-  // would clone the name on every click, so only text the user actually
-  // changed counts as a name for the session about to open.
-  const typedTitle = pendingNewSessionTitle ?? (maybe("sessionTitleInput")?.value.trim() || "");
-  pendingNewSessionTitle = null;
-  const requestedTitle = typedTitle && typedTitle !== state.sessionTitle ? typedTitle : "";
   persistCurrentConversation();
   notifySessionEnd();
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
-  state.sessionTitle = requestedTitle ? uniqueConversationTitle(requestedTitle, state.sessionId) : "";
-  state.customTitle = Boolean(requestedTitle);
+  state.sessionTitle = "";
+  state.customTitle = false;
   state.messages = [];
   state.timeline = [];
   state.plan = null;
@@ -1617,7 +1606,6 @@ function newSession() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
   renderSessionChip();
   // Pilot keys conversation history by session id, so a fresh id is what
   // actually drops the old turns from the next prompt.
@@ -1633,48 +1621,14 @@ function newSession() {
   }
 }
 
-/// Keep the command bar's session chip showing the live conversation title.
-/// It was static markup before, so a reset left the previous name on screen
-/// and made the button look inert.
-function renderSessionChip() {
-  const field = maybe("sessionTitleInput");
-  // Never clobber what the user is in the middle of typing.
-  if (field && document.activeElement !== field) field.value = state.sessionTitle || "";
+function currentConversationTitle() {
+  return state.sessionTitle || truncateTitle(firstUserMessage(), 24) || t("Untitled chat");
 }
 
-/// Apply the name field to the open session. Runs on change/blur rather than
-/// on every keystroke so a half-typed name is not written to the sidebar.
-/// An emptied field means "no explicit name", which leaves the conversation
-/// on its message-derived title instead of naming it the empty string.
-function commitSessionTitle() {
-  const field = maybe("sessionTitleInput");
-  if (!field) return;
-  // A New session click is mid-flight and owns this text; renaming the
-  // session being left with it is what produced two chats per click.
-  if (pendingNewSessionTitle !== null) {
-    renderSessionChip();
-    return;
-  }
-  const typed = field.value.trim();
-  if (!typed) {
-    state.customTitle = false;
-    const userPrompt = firstUserMessage();
-    state.sessionTitle = userPrompt ? truncateTitle(userPrompt, 24) : "";
-    if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
-    renderSessionChip();
-    persistCurrentConversation();
-    return;
-  }
-  if (typed === state.sessionTitle) {
-    renderSessionChip();
-    return;
-  }
-  const title = uniqueConversationTitle(typed, state.sessionId);
-  state.sessionTitle = title;
-  state.customTitle = true;
-  if (maybe("promptTitle")) $("promptTitle").textContent = title;
-  persistCurrentConversation(title, true);
-  renderSessionChip();
+function renderSessionChip() {
+  const title = state.sessionTitle || firstUserMessage() || t("What should Robonix do?");
+  const display = maybe("sessionTitleDisplay");
+  if (display) display.textContent = truncateTitle(title, 72);
 }
 
 async function sendTask() {
@@ -2334,6 +2288,26 @@ const MD_LINK = /^(https?:\/\/|mailto:)/i;
 /// the message itself (it is persisted to disk as JSON).
 const markdownCache = new WeakMap();
 
+/// `navigator.clipboard` exists only in secure contexts; a phone opening the
+/// client over plain HTTP at the robot's IP has none, so fall back to the
+/// legacy copy command there.
+function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    if (copied) resolve();
+    else reject(new Error("copy failed"));
+  });
+}
+
 function appendAgentMarkdown(el, message) {
   const source = String(message.text || "");
   let cached = markdownCache.get(message);
@@ -2384,7 +2358,7 @@ function markdownNodes(text) {
       copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-text">${t("Copy")}</span>`;
       const codeText = body.join("\n");
       copyBtn.addEventListener("click", () => {
-        navigator.clipboard?.writeText(codeText).then(() => {
+        copyText(codeText).then(() => {
           const span = copyBtn.querySelector(".copy-text");
           if (span) span.textContent = t("Copied!");
           setTimeout(() => {
@@ -3163,9 +3137,23 @@ function enableTreePanZoom(planId, viewport, svg) {
   let lastTouchMidX = 0;
   let lastTouchMidY = 0;
   let isPinching = false;
+  // A tap is one short, unmoved, single-finger touch. Pinches and pans must
+  // not count, or a tap right after zooming would reset the zoom.
   let lastTapTime = 0;
+  let touchIsTap = false;
+  let touchStartTime = 0;
+  let touchStartX = 0;
+  let touchStartY = 0;
 
   viewport.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 1) {
+      touchIsTap = true;
+      touchStartTime = Date.now();
+      touchStartX = event.touches[0].clientX;
+      touchStartY = event.touches[0].clientY;
+    } else {
+      touchIsTap = false;
+    }
     if (event.touches.length === 2) {
       isPinching = true;
       dragging = false;
@@ -3181,6 +3169,10 @@ function enableTreePanZoom(planId, viewport, svg) {
   }, { passive: false });
 
   viewport.addEventListener("touchmove", (event) => {
+    const touch = event.touches[0];
+    if (touchIsTap && touch && Math.hypot(touch.clientX - touchStartX, touch.clientY - touchStartY) > 8) {
+      touchIsTap = false;
+    }
     if (event.touches.length === 2 && isPinching) {
       event.preventDefault();
       const t1 = event.touches[0];
@@ -3218,8 +3210,16 @@ function enableTreePanZoom(planId, viewport, svg) {
     }
     if (event.touches.length === 0) {
       const now = Date.now();
-      if (now - lastTapTime < 300 && dragDistance <= 4) {
+      const tapped = event.type === "touchend" && touchIsTap && now - touchStartTime < 300;
+      touchIsTap = false;
+      if (!tapped) {
+        lastTapTime = 0;
+        return;
+      }
+      if (now - lastTapTime < 300) {
+        lastTapTime = 0;
         fitView();
+        return;
       }
       lastTapTime = now;
     }
@@ -3386,25 +3386,25 @@ function nodeCardLabels(node, status, kindMeta) {
   let title = "";
   let meta = "";
   if (isLeaf) {
-    title = node.call?.name || node.opId || "action";
+    title = node.call?.name || node.opId || t("action");
     meta = node.call ? compactProvider(node.call) : (node.description || displayStatus(status));
   } else if (kindMeta.kind === "sequence") {
-    title = node.description || "Sequence";
+    title = node.description || t("Sequence");
     const count = (node.children || []).length;
-    meta = count ? `${count} steps` : "Sequence";
+    meta = count ? t("{count} steps", { count }) : t("Sequence");
   } else if (kindMeta.kind === "parallel") {
-    title = node.description || "Parallel";
+    title = node.description || t("Parallel");
     const count = (node.children || []).length;
-    meta = count ? `${count} concurrent` : "Parallel";
+    meta = count ? t("{count} concurrent", { count }) : t("Parallel");
   } else if (kindMeta.kind === "if") {
-    title = "If Branch";
-    meta = nodeControlMeta(node) || node.description || "Condition";
+    title = t("If Branch");
+    meta = nodeControlMeta(node) || node.description || t("Condition");
   } else if (kindMeta.kind === "repeat") {
-    title = node.repeatCount ? `Repeat ×${node.repeatCount}` : "Repeat";
-    meta = node.description || (node.repeatCount ? `${node.repeatCount} iterations` : "Loop");
+    title = node.repeatCount ? t("Repeat ×{count}", { count: node.repeatCount }) : t("Repeat");
+    meta = node.description || (node.repeatCount ? t("{count} iterations", { count: node.repeatCount }) : t("Loop"));
   } else if (kindMeta.kind === "while") {
-    title = node.maxIterations ? `While ≤${node.maxIterations}` : "While";
-    meta = nodeControlMeta(node) || node.description || "Condition loop";
+    title = node.maxIterations ? t("While ≤{count}", { count: node.maxIterations }) : t("While");
+    meta = nodeControlMeta(node) || node.description || t("Condition loop");
   } else {
     title = nodeLabel(node);
     meta = nodeControlMeta(node) || displayStatus(status);
@@ -3572,7 +3572,7 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect 
               type: i === 0 ? "if-true" : "if-false",
               from: { x: ox + w / 2, y: oy + nodeH },
               to: { x: cx + cl.entryX, y: cy },
-              label: i === 0 ? "✓ True" : "✗ False",
+              label: i === 0 ? t("✓ True") : t("✗ False"),
               isSkipped,
             });
             childExits.push({ x: cx + cl.exitX, y: cy + cl.exitY });
@@ -3755,7 +3755,7 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect 
       const badgeW = 50;
       const badgeH = 13;
       canvas.appendChild(createSvgRect(e.parentPoint.x - badgeW / 2, e.forkY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
-      canvas.appendChild(createSvgText(e.parentPoint.x, e.forkY + 3.2, "PARALLEL", "bt-bus-text"));
+      canvas.appendChild(createSvgText(e.parentPoint.x, e.forkY + 3.2, t("PARALLEL"), "bt-bus-text"));
       e.children.forEach((ch) => {
         canvas.appendChild(createSvgPath(`M ${ch.x} ${e.forkY} V ${ch.y}`, "bt-edge"));
         canvas.appendChild(createSvgArrow(ch.x, ch.y, "down"));
@@ -3768,7 +3768,7 @@ function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect 
       const badgeW = 36;
       const badgeH = 13;
       canvas.appendChild(createSvgRect(e.exitPoint.x - badgeW / 2, e.joinY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
-      canvas.appendChild(createSvgText(e.exitPoint.x, e.joinY + 3.2, "JOIN", "bt-bus-text"));
+      canvas.appendChild(createSvgText(e.exitPoint.x, e.joinY + 3.2, t("JOIN"), "bt-bus-text"));
       canvas.appendChild(createSvgPath(`M ${e.exitPoint.x} ${e.joinY} V ${e.exitPoint.y}`, "bt-edge"));
     } else if (e.type === "if-join") {
       e.children.forEach((ch, idx) => {
@@ -4090,8 +4090,24 @@ function ellipsize(text, max) {
 
 function pickRunningIndex(plan, nodeStateByIndex) {
   const callable = plan.nodes.filter((node) => node.call);
-  const explicitRunning = plan.nodes.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
-  if (explicitRunning) return explicitRunning.index;
+  const explicitRunningCall = callable.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
+  if (explicitRunningCall) return explicitRunningCall.index;
+  const explicitRunningOperator = plan.nodes.find((node) => !node.call && nodeStateByIndex.get(node.index)?.state === "RUNNING");
+  if (explicitRunningOperator) {
+    const byIndex = new Map(plan.nodes.map((node) => [Number(node.index), node]));
+    const activeLeaf = (node) => {
+      if (node.call) return nodeStateByIndex.has(node.index) ? null : node;
+      const children = (node.children || []).map((index) => byIndex.get(Number(index))).filter(Boolean);
+      const runningChild = children.find((child) => nodeStateByIndex.get(child.index)?.state === "RUNNING");
+      if (runningChild) return activeLeaf(runningChild);
+      for (const child of children) {
+        const pending = activeLeaf(child);
+        if (pending) return pending;
+      }
+      return null;
+    };
+    return activeLeaf(explicitRunningOperator)?.index ?? explicitRunningOperator.index;
+  }
   const firstPending = callable.find((node) => !nodeStateByIndex.has(node.index));
   return firstPending?.index ?? callable.at(-1)?.index ?? plan.rootIndex ?? 0;
 }
@@ -4353,14 +4369,19 @@ function renderActivePlans(error = "") {
   const modalSummary = maybe("activeRtdlModalSummary");
   if (!root || !count) return;
   clear(root);
+  const button = maybe("openActiveRtdl");
   if (error) {
-    count.textContent = t("unavailable");
+    // The count badge is a few characters wide; the reason goes in the
+    // tooltip and the modal instead of a truncated word.
+    count.textContent = "—";
+    button?.setAttribute("title", `${t("Plan overview")}: ${t("Live Executor query failed")}`);
     if (modalSummary) modalSummary.textContent = t("Live Executor query failed");
     root.appendChild(executorErrorNotice(error));
     return;
   }
   const planCount = state.executorPlans.length;
   count.textContent = String(planCount);
+  button?.setAttribute("title", t("Plan overview"));
   if (modalSummary) modalSummary.textContent = t(
     planCount === 1 ? "{count} live plan reported by Executor" : "{count} live plans reported by Executor",
     { count: planCount },
@@ -5131,7 +5152,6 @@ function persistCurrentConversation(titleHint = "", force = false) {
 
   const title = uniqueConversationTitle(baseTitle, state.sessionId);
   state.sessionTitle = title;
-  if (maybe("promptTitle")) $("promptTitle").textContent = title;
   renderSessionChip();
 
   const conversation = {
@@ -5160,6 +5180,37 @@ function persistCurrentConversation(titleHint = "", force = false) {
 }
 
 let renderedHistorySignature = "";
+const SESSION_LIST_COLLAPSED_KEY = "robonix.session_list_collapsed";
+let sessionDialogAction = null;
+let sessionDialogReturnFocus = null;
+
+function toggleSessionList() {
+  const section = maybe("sessionListSection");
+  const toggle = maybe("sessionListToggle");
+  const list = maybe("historyList");
+  if (!section || !toggle || !list) return;
+  const collapsed = !section.classList.contains("collapsed");
+  section.classList.toggle("collapsed", collapsed);
+  list.hidden = collapsed;
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", t(collapsed ? "Expand session list" : "Collapse session list"));
+  try {
+    localStorage.setItem(SESSION_LIST_COLLAPSED_KEY, String(collapsed));
+  } catch (_) {}
+}
+
+function restoreSessionListState() {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(SESSION_LIST_COLLAPSED_KEY) === "true";
+  } catch (_) {}
+  const section = maybe("sessionListSection");
+  if (!section) return;
+  section.classList.toggle("collapsed", collapsed);
+  if (maybe("historyList")) maybe("historyList").hidden = collapsed;
+  maybe("sessionListToggle")?.setAttribute("aria-expanded", String(!collapsed));
+  maybe("sessionListToggle")?.setAttribute("aria-label", t(collapsed ? "Expand session list" : "Collapse session list"));
+}
 
 function renderHistory() {
   pendingRenders.delete("history");
@@ -5231,29 +5282,120 @@ function renderHistory() {
   });
 }
 
+function bindSessionDialog() {
+  const dialog = maybe("sessionDialog");
+  const form = maybe("sessionDialogForm");
+  if (!dialog || !form) return;
+  maybe("sessionDialogClose")?.addEventListener("click", closeSessionDialog);
+  maybe("sessionDialogCancel")?.addEventListener("click", closeSessionDialog);
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), [href], [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeSessionDialog();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (sessionDialogAction?.kind === "rename") {
+      const nextTitle = maybe("sessionDialogInput")?.value.trim() || "";
+      if (!nextTitle) {
+        maybe("sessionDialogInput")?.focus();
+        return;
+      }
+      commitConversationRename(sessionDialogAction.sessionId, nextTitle);
+    } else if (sessionDialogAction?.kind === "clear") {
+      performClearHistory();
+    }
+    closeSessionDialog();
+  });
+}
+
+function openSessionDialog(action) {
+  const dialog = maybe("sessionDialog");
+  const title = maybe("sessionDialogTitle");
+  const kicker = maybe("sessionDialogKicker");
+  const label = maybe("sessionDialogLabel");
+  const input = maybe("sessionDialogInput");
+  const description = maybe("sessionDialogDescription");
+  const submit = maybe("sessionDialogSubmit");
+  if (!dialog || !action) return;
+  sessionDialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  sessionDialogAction = action;
+  const isRename = action.kind === "rename";
+  if (kicker) kicker.textContent = t(isRename ? "Session" : "Clear sessions");
+  if (title) title.textContent = t(isRename ? "Rename session" : "Clear all sessions?");
+  if (label) {
+    label.textContent = t("Session name");
+    label.hidden = !isRename;
+  }
+  if (input) {
+    input.hidden = !isRename;
+    input.value = isRename ? action.currentTitle : "";
+  }
+  if (description) {
+    description.textContent = isRename
+      ? t("Choose a clear name so you can find this session later.")
+      : t("Are you sure you want to clear all conversation history? This cannot be undone.");
+  }
+  if (submit) {
+    submit.textContent = t(isRename ? "Save name" : "Clear all sessions");
+    submit.classList.toggle("destructive", !isRename);
+  }
+  dialog.hidden = false;
+  document.body.classList.add("session-dialog-open");
+  requestAnimationFrame(() => (isRename ? input : maybe("sessionDialogCancel"))?.focus());
+}
+
+function closeSessionDialog() {
+  const dialog = maybe("sessionDialog");
+  if (!dialog || dialog.hidden) return;
+  dialog.hidden = true;
+  document.body.classList.remove("session-dialog-open");
+  sessionDialogAction = null;
+  const returnFocus = sessionDialogReturnFocus;
+  sessionDialogReturnFocus = null;
+  requestAnimationFrame(() => {
+    if (returnFocus?.isConnected) returnFocus.focus();
+    else maybe("renameSession")?.focus();
+  });
+}
+
 function renameConversation(sessionId) {
-  // window.prompt blocks the event loop, which would stall a live event
-  // stream, so renaming waits. Say so rather than ignoring the click.
   if (state.busy) {
     addStatusLine(t("Renaming is unavailable while a task is running."), "milestone", "Renaming is unavailable while a task is running.");
     return;
   }
   if (sessionId === state.sessionId) persistCurrentConversation("", true);
   const conversation = state.history.find((item) => item.id === sessionId);
-  const currentTitle = conversation?.title || state.sessionTitle || truncateTitle(firstUserMessage(), 24) || t("Untitled chat");
-  const nextTitle = window.prompt(t("Rename session"), currentTitle);
-  if (nextTitle === null) return;
-  const trimmed = nextTitle.trim();
-  if (!trimmed) return;
-  const title = uniqueConversationTitle(trimmed, sessionId);
+  const currentTitle = conversation?.title || (sessionId === state.sessionId ? currentConversationTitle() : t("Untitled chat"));
+  openSessionDialog({ kind: "rename", sessionId, currentTitle });
+}
+
+function commitConversationRename(sessionId, rawTitle) {
+  const title = uniqueConversationTitle(rawTitle, sessionId);
   if (sessionId === state.sessionId) {
     state.sessionTitle = title;
     state.customTitle = true;
-    if (maybe("promptTitle")) $("promptTitle").textContent = title;
     renderSessionChip();
   }
+  const conversation = state.history.find((item) => item.id === sessionId);
   if (conversation) {
-    // Renaming must not reorder the list either -- see persistCurrentConversation.
     conversation.title = title;
     conversation.customTitle = true;
     conversation.updatedAt = Date.now();
@@ -5266,12 +5408,17 @@ function renameConversation(sessionId) {
 }
 
 function deleteConversation(sessionId) {
+  if (sessionId === state.sessionId && state.busy) {
+    addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
+    return;
+  }
   // A scheduled save of the chat being deleted would bring it straight back.
   if (sessionId === state.sessionId) cancelPendingPersist();
   else flushPersist();
   state.history = state.history.filter((item) => item.id !== sessionId);
   saveConversations();
   if (sessionId === state.sessionId) {
+    notifySessionEnd();
     state.sessionId = getSessionId();
     rememberLastSession(state.sessionId);
     forgetActiveTurn();
@@ -5284,7 +5431,6 @@ function deleteConversation(sessionId) {
     state.batches = [];
     state.nodeStates = {};
     state.activeAgentId = null;
-    if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
     renderSessionChip();
     renderMessages();
     renderTimeline();
@@ -5295,15 +5441,20 @@ function deleteConversation(sessionId) {
 }
 
 function clearHistory() {
-  if (state.history.length > 0 || state.messages.length > 0) {
-    if (!window.confirm(t("Are you sure you want to clear all conversation history? This cannot be undone."))) {
-      return;
-    }
+  if (state.busy) {
+    addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
+    return;
   }
+  if (!state.history.length && !state.messages.length) return;
+  openSessionDialog({ kind: "clear" });
+}
+
+function performClearHistory() {
   cancelPendingPersist();
   state.history = [];
   saveConversations();
   attachmentStore.clear().catch(() => {});
+  notifySessionEnd();
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
@@ -5316,7 +5467,6 @@ function clearHistory() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
   renderSessionChip();
   renderMessages();
   renderTimeline();
@@ -5356,7 +5506,6 @@ function openConversation(sessionId) {
   state.selectedTaskId = conversation.selectedTaskId || "";
   state.followLatestTask = conversation.followLatestTask !== false;
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = conversation.title || t("What should Robonix do?");
   renderSessionChip();
   $("taskInput").value = "";
   autoGrowInput();
@@ -6051,6 +6200,7 @@ function setBusy(value) {
     if (steerIcon) steerIcon.style.display = value ? "" : "none";
     setButtonLabel(sendBtn, value ? t("Steer") : t("Send"));
     sendBtn.title = value ? t("Send to the running task (Enter)") : t("Send task (Enter)");
+    sendBtn.setAttribute("aria-label", value ? t("Steer") : t("Send"));
   }
   if (maybe("stopButton")) $("stopButton").hidden = !value;
   // Left enabled while busy on purpose: a disabled button swallows the click
@@ -7661,12 +7811,7 @@ async function scanStudioServices(force = false) {
   studioLastScanTs = Date.now();
 
   const rescanBtn = document.getElementById("studioRescanBtn");
-  const badge = document.getElementById("studioServiceBadge");
-  const badgeText = document.getElementById("studioBadgeText");
-
   if (rescanBtn) rescanBtn.classList.add("scanning");
-  if (badge) badge.classList.add("scanning");
-  if (badgeText) badgeText.textContent = t("Scanning services...");
 
   try {
     const host = getStudioHost();
@@ -7692,7 +7837,6 @@ async function scanStudioServices(force = false) {
       studioScanning = false;
       studioScanController = null;
       if (rescanBtn) rescanBtn.classList.remove("scanning");
-      if (badge) badge.classList.remove("scanning");
     }
   }
 
@@ -7700,12 +7844,10 @@ async function scanStudioServices(force = false) {
   if (scanToken !== studioScanGeneration) return;
 
   if (!studioDiscoveredServices.length) {
-    // A stale port would keep the old service's name in the badge and make the
-    // next language switch skip updating it.
+    // A stale port would point the frame at a service that is gone.
     activeStudioPort = null;
     renderStudioTabs();
     renderStudioEmptyState(true);
-    if (badgeText) badgeText.textContent = `0 ${t("Services Online")}`;
     return;
   }
 
@@ -7723,20 +7865,12 @@ async function scanStudioServices(force = false) {
 
 function switchStudioServiceByPort(port) {
   const numPort = Number(port);
-  const service = studioDiscoveredServices.find((s) => s.port === numPort);
   activeStudioPort = numPort;
 
   // Update tabs active state
   document.querySelectorAll(".studio-service-tab").forEach((tab) => {
     tab.classList.toggle("active", Number(tab.dataset.studioPort) === numPort);
   });
-
-  // Update status badge
-  const badgeText = document.getElementById("studioBadgeText");
-  if (badgeText) {
-    const sName = service ? t(service.name) : "Service";
-    badgeText.textContent = `${sName} · Port ${numPort}`;
-  }
 
   const vp = document.getElementById("studioViewport");
   const frame = document.getElementById("studioFrame");
@@ -7911,12 +8045,8 @@ window.addEventListener("resize", () => {
 
 /// Re-render every dynamic region after a language switch. Static markup is
 /// handled by i18n.js walking data-i18n; this covers everything app.js writes
-/// from state. promptTitle is excluded from data-i18n for the same reason:
-/// it shows the live session title once one exists.
+/// from state.
 function handleI18nChange() {
-  if (maybe("promptTitle")) {
-    $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
-  }
   renderSessionChip();
   renderMessages();
   renderTimeline();
@@ -7940,12 +8070,6 @@ function handleI18nChange() {
   updatePerceptionEmptyDiagnostics((perception && perception.tiles) || {});
   redrawPerceptionCanvases();
   renderStudioTabs();
-  const badgeText = document.getElementById("studioBadgeText");
-  if (badgeText && activeStudioPort) {
-    const s = studioDiscoveredServices.find((item) => item.port === activeStudioPort);
-    const sName = s ? t(s.name) : "Service";
-    badgeText.textContent = `${sName} · Port ${activeStudioPort}`;
-  }
   syncStudioFrameLang();
 }
 

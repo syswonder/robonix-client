@@ -57,12 +57,13 @@
             </button>
           </nav>
 
-          <div class="sidebar-section sidebar-history-section">
-            <div class="sidebar-section-header">
-              <span data-i18n="Recent Chats">Recent Chats</span>
-            </div>
+          <section class="sidebar-section sidebar-history-section" id="sessionListSection">
+            <button class="sidebar-section-header session-list-toggle" id="sessionListToggle" type="button" aria-expanded="true" aria-controls="historyList" aria-label="Collapse session list" data-i18n-aria-label="Collapse session list">
+              <span data-i18n="Session list">Session list</span>
+              <svg class="session-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
             <div class="conversation-history" id="historyList"></div>
-          </div>
+          </section>
         </div>
 
         <!-- Settings Popover Menu at bottom of sidebar (n8n-aligned) -->
@@ -161,18 +162,16 @@
               <header class="conversation-header">
                 <div class="session-title-wrap">
                   <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                  <input id="sessionTitleInput" class="session-title-input" autocomplete="off" placeholder="Untitled chat" data-i18n-placeholder="Untitled chat" title="Name of this session. Edit to rename it; New session creates one under this name." data-i18n-title="Name of this session. Edit to rename it; New session creates one under this name." />
-                  <button class="ghost-button icon-only-btn" id="renameSession" type="button" title="Rename conversation" data-i18n-title="Rename conversation">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                  </button>
-                  <span id="promptTitle" hidden></span>
+                  <h1 class="session-title-display" id="sessionTitleDisplay">What should Robonix do?</h1>
                 </div>
 
                 <div class="conversation-header-actions">
-                  <button class="ghost-button header-icon-btn" id="clearHistory" type="button" aria-label="Clear" data-i18n-aria-label="Clear" data-tooltip="Clear" data-i18n-tooltip="Clear">
+                  <button class="ghost-button header-icon-btn" id="renameSession" type="button" aria-label="Rename session" data-i18n-aria-label="Rename session" data-tooltip="Rename session" data-i18n-tooltip="Rename session">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  </button>
+                  <button class="ghost-button header-icon-btn" id="clearHistory" type="button" aria-label="Clear sessions" data-i18n-aria-label="Clear sessions" data-tooltip="Clear sessions" data-i18n-tooltip="Clear sessions">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
-
                   <button class="ghost-button header-icon-btn" id="newSessionAction" type="button" aria-label="New chat" data-i18n-aria-label="New chat" data-tooltip="New chat" data-i18n-tooltip="New chat">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -197,7 +196,7 @@
                   <div id="attachmentStrip" class="attachment-strip"></div>
                   <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
                   <div class="composer-row">
-                    <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)">
+                    <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)" aria-label="Start recording" data-i18n-aria-label="Start recording">
                       <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                       <span class="btn-label" data-i18n="Start recording">Start recording</span>
                       <kbd class="btn-key">F2</kbd>
@@ -829,11 +828,6 @@
               <div class="studio-title-group">
                 <div class="studio-title-line">
                   <h2 id="studioTitle" data-i18n="Robonix Studio">Robonix Studio</h2>
-                  <span class="studio-tag" data-i18n="Integrated Service Cockpit">Integrated Service Cockpit</span>
-                </div>
-                <div class="studio-service-badge" id="studioServiceBadge">
-                  <span class="pulse-dot"></span>
-                  <span id="studioBadgeText">Scene Service · Port 50107</span>
                 </div>
               </div>
 
@@ -1006,6 +1000,27 @@
           </div>
           <pre class="args" id="activeArgs">{}</pre>
         </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop session-dialog-backdrop" id="sessionDialog" role="dialog" aria-modal="true" aria-labelledby="sessionDialogTitle" hidden>
+      <section class="session-dialog">
+        <header class="session-dialog-header">
+          <div>
+            <span class="session-dialog-kicker" id="sessionDialogKicker" data-i18n="Session">Session</span>
+            <h2 id="sessionDialogTitle" data-i18n="Rename session">Rename session</h2>
+          </div>
+          <button class="icon-button modal-close" id="sessionDialogClose" type="button" aria-label="Close" data-i18n-aria-label="Close">×</button>
+        </header>
+        <form class="session-dialog-form" id="sessionDialogForm">
+          <label class="session-dialog-label" id="sessionDialogLabel" for="sessionDialogInput" data-i18n="Session name">Session name</label>
+          <input class="session-dialog-input" id="sessionDialogInput" type="text" maxlength="120" autocomplete="off" />
+          <p class="session-dialog-description" id="sessionDialogDescription" aria-live="polite"></p>
+          <div class="session-dialog-actions">
+            <button class="session-dialog-button secondary" id="sessionDialogCancel" type="button" data-i18n="Cancel">Cancel</button>
+            <button class="session-dialog-button primary" id="sessionDialogSubmit" type="submit" data-i18n="Save name">Save name</button>
+          </div>
+        </form>
       </section>
     </div>
 

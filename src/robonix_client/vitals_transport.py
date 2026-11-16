@@ -453,6 +453,7 @@ def aggregate_component_health(
 def vitals_snapshot_to_dict(
     snapshot: Any,
     description: dict[str, Any],
+    received_at_ms: int | None = None,
 ) -> dict[str, Any]:
     signals = []
     for signal in snapshot.components:
@@ -490,10 +491,11 @@ def vitals_snapshot_to_dict(
         for body in snapshot.bodies
     ]
     component_health = aggregate_component_health(description, signals, bodies)
-    # `ts_ns` is Chronos' monotonic clock, not Unix epoch. Using it as a wall
-    # clock renders "last updated" in 1970, so freshness comes from receipt
-    # time and the raw value stays for internal ordering only.
-    received_at_ms = _now_ms()
+    # `ts_ns` counts from Vitals' process start, not Unix epoch. Using it as a
+    # wall clock renders "last updated" in 1970, so freshness comes from
+    # receipt time and the raw value stays for internal ordering only.
+    if received_at_ms is None:
+        received_at_ms = _now_ms()
     power = snapshot.power
     soc_percent = float(power.battery_percent)
     voltage = float(power.voltage)
@@ -604,6 +606,14 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _store_hardware_snapshot(snapshot: Any, hardware_state: dict[str, Any]) -> int:
+    previous = hardware_state.get("value")
+    if previous is None or snapshot.ts_ns != previous.ts_ns:
+        hardware_state["received_at_ms"] = _now_ms()
+    hardware_state["value"] = snapshot
+    return hardware_state["received_at_ms"]
+
+
 def _error_text(exc: BaseException) -> str:
     if isinstance(exc, grpc.aio.AioRpcError):
         return f"gRPC {exc.code().name}: {exc.details()}"
@@ -647,7 +657,9 @@ async def _description_loop(
                     await queue.put(
                         {
                             "type": "hardware",
-                            "data": vitals_snapshot_to_dict(snapshot, description),
+                            "data": vitals_snapshot_to_dict(
+                                snapshot, description, hardware_state.get("received_at_ms")
+                            ),
                         }
                     )
             await _put_source(queue, "soma", "ready")
@@ -683,12 +695,12 @@ async def _hardware_loop(
                     response_deserializer=vitals_client_pb2.VitalsSnapshot.FromString,
                 )
                 async for snapshot in call(vitals_client_pb2.StreamVitals_Request()):
-                    hardware_state["value"] = snapshot
+                    received_at_ms = _store_hardware_snapshot(snapshot, hardware_state)
                     await queue.put(
                         {
                             "type": "hardware",
                             "data": vitals_snapshot_to_dict(
-                                snapshot, description_state["value"]
+                                snapshot, description_state["value"], received_at_ms
                             ),
                         }
                     )
@@ -721,6 +733,7 @@ async def _hardware_poll_loop(
             )
             retry_seconds = 1.0
             while True:
+                previous = hardware_state.get("value")
                 response = await _shared_unary_unary(
                     endpoint,
                     VITALS_GET_PATH,
@@ -728,12 +741,26 @@ async def _hardware_poll_loop(
                     vitals_client_pb2.GetVitals_Response,
                 )
                 snapshot = response.snapshot
-                hardware_state["value"] = snapshot
+                current = hardware_state.get("value")
+                if current is not previous:
+                    hardware_state.pop("poll_reset_candidate", None)
+                    await asyncio.sleep(HARDWARE_POLL_SECONDS)
+                    continue
+                if current is not None and snapshot.ts_ns < current.ts_ns:
+                    candidate = hardware_state.get("poll_reset_candidate")
+                    if candidate is None or snapshot.ts_ns < candidate:
+                        hardware_state["poll_reset_candidate"] = snapshot.ts_ns
+                        await asyncio.sleep(HARDWARE_POLL_SECONDS)
+                        continue
+                    hardware_state.pop("poll_reset_candidate", None)
+                else:
+                    hardware_state.pop("poll_reset_candidate", None)
+                received_at_ms = _store_hardware_snapshot(snapshot, hardware_state)
                 await queue.put(
                     {
                         "type": "hardware",
                         "data": vitals_snapshot_to_dict(
-                            snapshot, description_state["value"]
+                            snapshot, description_state["value"], received_at_ms
                         ),
                     }
                 )
@@ -802,7 +829,7 @@ async def stream_vitals_events(
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
     description_state = {"value": fallback_robot_description()}
-    hardware_state = {"value": None}
+    hardware_state = {"value": None, "received_at_ms": 0}
     yield {
         "type": "description",
         "data": description_state["value"],

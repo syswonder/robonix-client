@@ -175,14 +175,9 @@ select {
   overflow: hidden;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  transition: grid-template-columns 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   background:
     radial-gradient(circle at 70% 12%, rgba(44, 126, 132, 0.14), transparent 28%),
     linear-gradient(180deg, #081014, #071012 45%, #080d0f);
-}
-
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .nav-rail {
@@ -200,11 +195,19 @@ select {
   -webkit-user-select: none;
   position: relative;
   z-index: 40;
-  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  /* Collapsing is not animated on purpose. The rail's width and the shell's
+     grid column have to change together or the shell's gradient shows through
+     the gap, and animating either one reflows and repaints the whole window
+     on every frame: 225ms frames on a full conversation, against 18ms for the
+     one-step switch. */
 }
 
 .nav-rail.collapsed {
   width: 56px;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 56px minmax(0, 1fr);
 }
 
 .sidebar-top {
@@ -227,11 +230,35 @@ select {
 }
 
 .sidebar-history-section {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-height: 0;
   margin-bottom: 8px;
   display: flex;
   flex-direction: column;
+}
+
+.sidebar-history-section:not(.collapsed) {
+  flex: 1 1 auto;
+}
+
+.sidebar-history-section.collapsed {
+  margin-bottom: 0;
+}
+
+.sidebar-history-section .conversation-history {
+  min-height: 0;
+  max-height: 100%;
+  opacity: 1;
+  overflow: auto;
+  transition: opacity 0.16s ease;
+}
+
+.sidebar-history-section.collapsed .conversation-history {
+  height: 0;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .sidebar-section-header {
@@ -244,6 +271,29 @@ select {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+}
+
+.session-list-toggle {
+  min-width: 0;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-list-toggle:hover {
+  color: var(--text);
+}
+
+.session-list-chevron {
+  flex: 0 0 auto;
+  transform: rotate(90deg);
+  transition: transform 0.18s ease;
+}
+
+.sidebar-history-section.collapsed .session-list-chevron {
+  transform: rotate(0deg);
 }
 
 .sidebar-bottom {
@@ -848,34 +898,25 @@ h1 {
 .session-title-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 0 1 340px;
+  gap: 10px;
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+.session-title-display {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-title-icon {
   color: var(--muted);
   flex-shrink: 0;
-}
-
-.session-title-input {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  padding: 4px 8px;
-  color: var(--text);
-  font-size: 13.5px;
-  font-weight: 600;
-  outline: none;
-  transition: all 0.15s ease;
-}
-
-.session-title-input:hover,
-.session-title-input:focus {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .workspace-header-actions {
@@ -1557,8 +1598,9 @@ h1 {
 }
 
 .dashboard-sidebar.open {
-  width: 480px;
-  flex: 0 0 480px;
+  /* Leave enough room for the composer at desktop widths near the mobile breakpoint. */
+  width: min(480px, calc(100vw - 490px));
+  flex: 0 0 min(480px, calc(100vw - 490px));
   opacity: 1;
   pointer-events: auto;
   border-left-color: var(--line-soft);
@@ -1566,8 +1608,8 @@ h1 {
 }
 
 .dashboard-sidebar-inner {
-  width: 480px;
-  min-width: 480px;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2421,6 +2463,7 @@ h2 {
   position: relative;
   transform: none;
   width: 100%;
+  min-width: 0;
   max-width: 860px;
   margin: 0 auto;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -2465,6 +2508,8 @@ h2 {
 .composer-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -3022,6 +3067,130 @@ h2 {
 
 .modal-backdrop[hidden] {
   display: none;
+}
+
+.session-dialog-backdrop {
+  z-index: 1200;
+  padding: 20px;
+}
+
+.session-dialog {
+  width: min(100%, 440px);
+  overflow: hidden;
+  border: 1px solid rgba(145, 169, 190, 0.2);
+  border-radius: 14px;
+  background: #10151d;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.session-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 14px;
+}
+
+.session-dialog-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: #8ba4b5;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.session-dialog-header h2 {
+  color: #edf3f7;
+  font-size: 17px;
+  font-weight: 680;
+}
+
+.session-dialog-form {
+  display: grid;
+  gap: 10px;
+  padding: 0 22px 20px;
+}
+
+.session-dialog-label {
+  color: #c1ccd5;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-dialog-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(145, 169, 190, 0.22);
+  border-radius: 7px;
+  outline: none;
+  background: #0b1017;
+  color: #f4f7fa;
+  font: inherit;
+  font-size: 14px;
+}
+
+.session-dialog-input:focus {
+  border-color: rgba(88, 192, 216, 0.72);
+  box-shadow: 0 0 0 3px rgba(88, 192, 216, 0.12);
+}
+
+.session-dialog-description {
+  margin: 0;
+  color: #94a2ad;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.session-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.session-dialog-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(145, 169, 190, 0.2);
+  border-radius: 7px;
+  background: #171e28;
+  color: #d8e0e6;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-dialog-button:hover {
+  background: #222c38;
+  color: #fff;
+}
+
+.session-dialog-button.primary {
+  border-color: rgba(88, 192, 216, 0.5);
+  background: #176477;
+  color: #f3fdff;
+}
+
+.session-dialog-button.primary:hover {
+  background: #1b778d;
+}
+
+.session-dialog-button.destructive {
+  border-color: rgba(251, 113, 133, 0.5);
+  background: #9f2942;
+  color: #fff;
+}
+
+.session-dialog-button.destructive:hover {
+  background: #be3450;
+}
+
+body.session-dialog-open {
+  overflow: hidden;
 }
 
 .rtdl-history-modal,
@@ -5772,7 +5941,8 @@ h2 {
 
 @media (max-width: 1500px) {
   .app-shell {
-    grid-template-columns: 240px minmax(0, 1fr);
+    /* The rail's width below drives the column; see .app-shell above. */
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .nav-rail {
@@ -5782,6 +5952,12 @@ h2 {
   .vitals-overview {
     grid-template-columns: minmax(210px, 0.75fr) minmax(420px, 1.4fr) minmax(170px, auto);
     gap: 12px;
+  }
+
+  /* With the nav rail beside it the summary row is ~1200px at 1440px wide:
+     tighter cells keep "1 attention / 8" from being cut. */
+  .vitals-overview-metric {
+    padding: 2px 10px;
   }
 
   .vitals-main {
@@ -5807,7 +5983,8 @@ h2 {
 
 @media (max-width: 1280px) {
   .app-shell {
-    grid-template-columns: 230px minmax(0, 1fr);
+    /* The rail's width below drives the column; see .app-shell above. */
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .nav-rail {
@@ -6037,14 +6214,13 @@ h2 {
     min-height: 44px;
   }
 
-  .conversation-title-wrap {
+  .session-title-wrap {
     flex: 1 1 0;
     min-width: 0;
   }
 
-  .session-title-input {
-    font-size: 13.5px;
-    padding: 4px 6px;
+  .session-title-display {
+    font-size: 13px;
   }
 
   .conversation-header-actions {
@@ -6298,10 +6474,6 @@ h2 {
     min-width: 0;
   }
 
-  .studio-tag {
-    display: none;
-  }
-
   .studio-services-nav {
     overflow-x: auto;
     width: 100%;
@@ -6345,14 +6517,31 @@ h2 {
   }
 }
 
+/* Tight desktop chat columns need icon-only task controls. */
+@media (min-width: 861px) and (max-width: 900px) {
+  .composer-row .btn-label,
+  .composer-row .btn-key {
+    display: none !important;
+  }
+
+  .composer-row .tool-button,
+  .composer-row .stop-button,
+  .composer-row .send-button {
+    width: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+  }
+
+  .composer-row .send-button {
+    margin-left: auto !important;
+  }
+}
+
 /* Extra small devices (phones under 480px) */
 @media (max-width: 480px) {
   .conversation-header {
     padding: 6px 8px;
-  }
-
-  .session-title-input {
-    max-width: 130px;
   }
 
   .endpoint-badge .endpoint-val {
@@ -7912,43 +8101,6 @@ h2 {
   letter-spacing: -0.01em;
 }
 
-.studio-tag {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(122, 167, 255, 0.12);
-  color: #7aa7ff;
-  border: 1px solid rgba(122, 167, 255, 0.25);
-  font-family: ui-monospace, SFMono-Regular, monospace;
-}
-
-.studio-service-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(90, 209, 230, 0.3);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: #5ad1e6;
-}
-
-.studio-service-badge .pulse-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #5ad1e6;
-  box-shadow: 0 0 6px #5ad1e6;
-  animation: studioPulse 1.8s infinite ease-in-out;
-}
-
-@keyframes studioPulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.85); }
-}
-
 .studio-services-nav {
   display: flex;
   align-items: center;
@@ -8114,11 +8266,6 @@ h2 {
   animation: studioSpin 0.8s linear infinite;
 }
 
-.studio-service-badge.scanning .pulse-dot {
-  background: #5ad1e6;
-  box-shadow: 0 0 8px rgba(90, 209, 230, 0.8);
-}
-
 .studio-empty-state {
   position: absolute;
   inset: 0;
@@ -8191,9 +8338,10 @@ h2 {
 }
 
 .sidebar-menu-item {
-  flex: 1 1 0;
+  /* Size by label so "RTDL Forest" is not cut to match the shorter tabs. */
+  flex: 1 1 auto;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
