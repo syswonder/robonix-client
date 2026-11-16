@@ -797,8 +797,9 @@ async def abort_ws(ws: WebSocket) -> None:
     try:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
+        expected_turn_id = _payload_expected_turn_id(payload)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in abort_turn(settings):
+        async for item in abort_turn(settings, expected_turn_id):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:

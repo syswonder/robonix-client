@@ -1,12 +1,9 @@
-"""Compute-node telemetry panel, driven by the Vitals snapshot.
+"""Compute-node telemetry panel, driven by the Vitals snapshot stream.
 
-Reads the shared `robonix/system/vitals/get` contract (the same snapshot behind
-the Vitals page) and projects the compute-node metrics - CPU temperature and
-input-power voltage/current - into the flat shape the browser panel renders.
-When Vitals is unreachable, or a snapshot carries no compute-node signals
-(e.g. a deployment whose Soma model omits the component), the adapter reports
-`source=unavailable` and stops, so the browser keeps the Compute Node panel
-hidden.
+Reads the shared `robonix/system/vitals/stream` contract and projects compute-
+node metrics into the flat shape consumed by the browser panel. When Vitals is
+unreachable, or the stream carries no compute-node signals, the adapter reports
+`source=unavailable` and stops so the browser keeps the panel hidden.
 """
 
 from __future__ import annotations
@@ -19,28 +16,14 @@ import grpc
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from .proto import vitals_client_pb2
-from .transport import ClientSettings, _unary_unary, discover_endpoint
-from .vitals_transport import CONTRACT_VITALS_GET, VITALS_GET_PATH
+from .transport import ClientSettings, discover_endpoint, stream_channel
+from .vitals_transport import CONTRACT_VITALS_STREAM, VITALS_STREAM_PATH
 
 router = APIRouter()
 
-# GetVitals returns the cached snapshot on demand. Polling it is what keeps
-# compute-node readings fresh: StreamVitals only broadcasts on change, so a
-# slowly drifting temperature would otherwise stay at its first frame.
-VITALS_POLL_SECONDS = 1.5
-
-# Signal names Vitals synthesizes for the compute-node metrics: the Soma model
-# declares `body/compute_node/{cpu,input_power}` and Vitals flattens each metric
-# into `{component_id}/{signal}`.
 CPU_TEMP_SIGNAL = "body/compute_node/cpu/temperature"
 INPUT_VOLTAGE_SIGNAL = "body/compute_node/input_power/voltage"
 INPUT_CURRENT_SIGNAL = "body/compute_node/input_power/current"
-
-# Signals the panel renders. Vitals delivers *partial* snapshots -- a single
-# frame may carry only the physical-body readings while the compute node's
-# arrive in another -- so one snapshot without these says nothing about the
-# deployment. Only a sustained absence (over this grace window) means the Soma
-# model genuinely has no compute-node component.
 COMPUTE_NODE_SIGNALS = ("cpuTemp", "voltage", "current")
 COMPUTE_NODE_GRACE_S = 8.0
 
@@ -71,48 +54,39 @@ def compute_node_sample(snapshot: vitals_client_pb2.VitalsSnapshot) -> dict[str,
     }
 
 
-async def _poll_vitals(
+async def _stream_vitals(
     settings: ClientSettings,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Yield compute-node readings from the on-demand Vitals snapshot."""
-    endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_VITALS_GET)
-    while True:
-        response = await _unary_unary(
-            endpoint,
-            VITALS_GET_PATH,
-            vitals_client_pb2.GetVitals_Request(),
-            vitals_client_pb2.GetVitals_Response,
+    """Relay live compute-node readings from the Vitals snapshot stream."""
+    endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_VITALS_STREAM)
+    async with stream_channel(endpoint) as channel:
+        call = channel.unary_stream(
+            VITALS_STREAM_PATH,
+            request_serializer=vitals_client_pb2.StreamVitals_Request.SerializeToString,
+            response_deserializer=vitals_client_pb2.VitalsSnapshot.FromString,
         )
-        yield {
-            "type": "sample",
-            "source": "vitals",
-            "data": compute_node_sample(response.snapshot),
-        }
-        await asyncio.sleep(VITALS_POLL_SECONDS)
+        async for snapshot in call(vitals_client_pb2.StreamVitals_Request()):
+            yield {
+                "type": "sample",
+                "source": "vitals",
+                "data": compute_node_sample(snapshot),
+            }
 
 
 async def stream_health_events(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
-    """Yield browser-ready events.
-
-    Snapshots are merged across frames: a compute-node signal seen once is
-    carried forward, so the panel keeps showing all three metrics even though
-    Vitals delivers them in separate partial snapshots. Only when *no* signal
-    turns up within the grace window does the deployment count as lacking the
-    component, and the panel is told to stay hidden. Transport failures are
-    retried with backoff rather than hiding the panel for good.
-    """
-    yield {"type": "accepted", "contract": CONTRACT_VITALS_GET}
+    """Yield browser-ready events and merge partial component snapshots."""
+    yield {"type": "accepted", "contract": CONTRACT_VITALS_STREAM}
     retry_seconds = 1.0
     while True:
+        latest: dict[str, Any] = {key: None for key in COMPUTE_NODE_SIGNALS}
+        deadline = time.monotonic() + COMPUTE_NODE_GRACE_S
         try:
-            latest: dict[str, Any] = {key: None for key in COMPUTE_NODE_SIGNALS}
-            deadline = time.monotonic() + COMPUTE_NODE_GRACE_S
-            async for event in _poll_vitals(settings):
+            async for event in _stream_vitals(settings):
                 sample = event["data"]
                 for key in COMPUTE_NODE_SIGNALS:
                     if sample[key] is not None:
                         latest[key] = sample[key]
-                if any(latest[key] is not None for key in COMPUTE_NODE_SIGNALS):
+                if any(value is not None for value in latest.values()):
                     retry_seconds = 1.0
                     yield {
                         "type": "sample",
@@ -123,7 +97,7 @@ async def stream_health_events(settings: ClientSettings) -> AsyncIterator[dict[s
                     yield {
                         "type": "source",
                         "source": "unavailable",
-                        "error": "Vitals snapshot carries no compute-node signals",
+                        "error": "Vitals stream carries no compute-node signals",
                     }
                     return
         except asyncio.CancelledError:
@@ -132,7 +106,7 @@ async def stream_health_events(settings: ClientSettings) -> AsyncIterator[dict[s
             yield {
                 "type": "source",
                 "source": "connecting",
-                "error": f"Vitals snapshot unavailable: {_error_text(exc)}",
+                "error": f"Vitals stream unavailable: {_error_text(exc)}",
             }
         await asyncio.sleep(retry_seconds)
         retry_seconds = min(retry_seconds * 2.0, 15.0)
