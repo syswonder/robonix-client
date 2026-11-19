@@ -188,7 +188,7 @@
     "Stop task": "停止任务",
     "Aborting": "正在中止…",
     "Reconnect compute-node stream": "重新连接计算节点流",
-    "Stop this session's running task. Does not cancel other sessions or stop voice recording.": "停止本会话运行中的任务；不会取消其他会话，也不会停止录音。",
+    "Request a stop for this session only.": "仅请求停止本会话的任务。",
     "Abort requested; stopping this session's running task.": "已请求中止；正在停止本会话运行中的任务。",
     "abort requested": "已请求中止",
     "abort requested for {turn}": "已请求中止 {turn}",
