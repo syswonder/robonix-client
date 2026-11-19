@@ -933,14 +933,11 @@ async def _submit_text_once(
             yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
 
 
-async def abort_turn(
-    settings: ClientSettings,
-    expected_turn_id: str = "",
-) -> AsyncIterator[dict[str, Any]]:
+async def abort_turn(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
     # The turn changes which plans are running; do not serve a stale snapshot.
     _active_plans_cache.clear()
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
-    task = build_abort_task(settings, expected_turn_id)
+    task = build_abort_task(settings)
     async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",

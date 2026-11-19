@@ -5,7 +5,7 @@ from unittest import mock
 from robonix_client.transport import (
     GRPC_CHANNEL_OPTIONS,
     ClientSettings,
-    build_abort_task,
+    abort_turn,
     build_text_task,
     build_voice_context,
     grpc_channel,
@@ -64,13 +64,34 @@ class TaskIdentityTest(unittest.TestCase):
         task = build_text_task(ClientSettings(user_id="alice"), "hello")
         self.assertEqual(json.loads(task.context_json)["user_id"], "alice")
 
-    def test_abort_task_does_not_carry_expected_turn_id(self):
-        # Liaison aborts by session; `expected_turn_id` is only honoured on the
-        # steer path, so advertising it in an abort would be a false promise.
-        task = build_abort_task(ClientSettings())
+
+class AbortTurnTest(unittest.IsolatedAsyncioTestCase):
+    async def test_submits_session_scoped_abort_task(self):
+        settings = ClientSettings(
+            liaison_endpoint="robot.local:50051", session_id="session-7"
+        )
+        channel = mock.MagicMock()
+        submit = channel.unary_stream.return_value
+        submit.return_value.__aiter__.return_value = []
+        with mock.patch("robonix_client.transport.grpc_channel") as open_channel:
+            open_channel.return_value.__aenter__.return_value = channel
+
+            async for _ in abort_turn(settings):
+                pass
+
+        open_channel.assert_called_once_with(settings.liaison_endpoint)
+        channel.unary_stream.assert_called_once()
+        self.assertEqual(
+            channel.unary_stream.call_args.args,
+            ("/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",),
+        )
+        submit.assert_called_once()
+        (task,) = submit.call_args.args
+        self.assertEqual(task.session_id, settings.session_id)
         context = json.loads(task.context_json)
+        self.assertIs(context["abort_turn"], True)
+        self.assertEqual(context["interaction_mode"], "abort")
         self.assertNotIn("expected_turn_id", context)
-        self.assertTrue(context["abort_turn"])
 
 
 if __name__ == "__main__":
