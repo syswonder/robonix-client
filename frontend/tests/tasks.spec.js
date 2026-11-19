@@ -8,6 +8,16 @@ async function prepare(page) {
   });
   await page.goto('/#dashboard');
   await page.waitForFunction(() => typeof renderGoalPanel === 'function' && state.activePage === 'dashboard');
+  await openDisplayPanel(page);
+}
+
+// Tasks, RTDL and Executor live in the Display Panel, which starts closed on
+// every load.
+async function openDisplayPanel(page, view) {
+  const panel = page.locator('#dashboardSidebar');
+  if (!/\bopen\b/.test(await panel.getAttribute('class') || '')) await page.locator('#toggleInspector').click();
+  await expect(panel).toHaveClass(/\bopen\b/);
+  if (view) await page.locator(`[data-sidebar-view="${view}"]`).click();
 }
 
 async function populate(page, count = 12) {
@@ -27,11 +37,13 @@ test('long task lists scroll without overlapping the executor card or status', a
   const geometry = await page.evaluate(() => {
     const header = document.querySelector('.current-goal-panel > .panel-header').getBoundingClientRect();
     const list = document.querySelector('#taskList').getBoundingClientRect();
-    const card = document.querySelector('.goal-preview').getBoundingClientRect();
+    // The Executor card sits in its own Display Panel tab, so the list only
+    // has to stay inside its own panel.
+    const panel = document.querySelector('.current-goal-panel').getBoundingClientRect();
     const rows = [...document.querySelectorAll('.task-list-row')];
     const first = rows[0].getBoundingClientRect();
     return {
-      separated:first.top >= header.bottom && list.bottom <= card.top,
+      separated:first.top >= header.bottom && list.bottom <= panel.bottom,
       scrollable:document.querySelector('#taskList').scrollHeight > document.querySelector('#taskList').clientHeight,
       statusSeparated:rows.every(row=>row.querySelector('.task-list-goal').getBoundingClientRect().right <= row.querySelector('.task-list-status').getBoundingClientRect().left),
       ordered:rows.every((row,i)=>!i || row.getBoundingClientRect().top >= rows[i-1].getBoundingClientRect().bottom),
@@ -60,6 +72,7 @@ test('task snapshots survive reload and conversation switching; new events repla
     persistCurrentConversation();
   });
   await page.reload();
+  await openDisplayPanel(page);
   await expect(page.locator('.task-list-row')).toHaveCount(3);
   const id = await page.evaluate(()=>state.sessionId);
   await page.evaluate(()=>newSession());
@@ -69,6 +82,7 @@ test('task snapshots survive reload and conversation switching; new events repla
   await page.evaluate(()=>handlePilotEvent({kind:'task_state',taskState:{...state.taskState,status:'done',tasks:state.taskState.tasks.map(t=>({...t,status:'done'}))}}));
   await expect(page.locator('.task-list-status').last()).toHaveText('done');
   await page.reload();
+  await openDisplayPanel(page);
   await expect(page.locator('.task-list-status').last()).toHaveText('done');
 });
 
@@ -85,21 +99,230 @@ test('other active tasks retain controls and abort updates every active row', as
 
 
 
+test('active-task controls stay inside the composer when the display panel is open', async ({page}, testInfo) => {
+  await page.setViewportSize({width: testInfo.project.name === 'mobile' ? 390 : 1000, height: 850});
+  await prepare(page);
+  await page.evaluate(() => setBusy(true));
+  await expect(page.locator('#stopButton')).toBeVisible();
+
+  for (const lang of ['en', 'zh']) {
+    await page.evaluate(lang => window.RobonixI18N.setLang(lang), lang);
+    for (const width of testInfo.project.name === 'mobile' ? [390] : [1440, 1120, 1000, 861]) {
+      await page.setViewportSize({width, height: 850});
+      await openDisplayPanel(page);
+      await page.waitForTimeout(350);
+      const bounds = await page.evaluate(() => {
+        const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+        const composer = box('#composer');
+        const panel = box('#dashboardSidebar');
+        const buttons = ['.voice-inline', '#stopButton', '#sendButton'].map(box);
+        const mobile = matchMedia('(max-width: 860px)').matches;
+        return {
+          inside: buttons.every((button) => button.left >= composer.left - 1 && button.right <= composer.right + 1),
+          separated: mobile || buttons.every((button) => button.right <= panel.left + 1),
+          overlap: buttons.some((button, index) => buttons.slice(index + 1).some((other) =>
+            button.left < other.right && button.right > other.left &&
+            button.top < other.bottom && button.bottom > other.top)),
+        };
+      });
+      expect(bounds, `${lang} at ${width}px`).toEqual({inside: true, separated: true, overlap: false});
+    }
+  }
+});
+
+test('running leaf takes precedence over active loop and sequence operators', async ({page}) => {
+  await prepare(page);
+  const active = await page.evaluate(() => {
+    const plan = {
+      rootIndex: 0,
+      nodes: [
+        {index: 0, kind: 'sequence', children: [1]},
+        {index: 1, kind: 'while', children: [2]},
+        {index: 2, kind: 'do', call: {callId: 'loop-body'}, children: []},
+      ],
+    };
+    const states = new Map([
+      [0, {state: 'RUNNING'}],
+      [1, {state: 'RUNNING'}],
+      [2, {state: 'RUNNING'}],
+    ]);
+    return pickRunningIndex(plan, states);
+  });
+  expect(active).toBe(2);
+});
+
+test('offline Connect fits the shared phone top bar', async ({page}) => {
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const body = path === '/api/defaults' ? {robotHost: 'robot-with-a-long-hostname.local', atlasPort: 50051}
+      : path === '/api/system' ? {error: 'offline'} : {available: false};
+    return route.fulfill({json: body});
+  });
+  await page.goto('/#dashboard');
+  const connect = page.locator('#connectNow');
+  await expect(page.locator('#refreshSystem')).toHaveClass(/offline/);
+  for (const width of [320, 390]) {
+    await page.setViewportSize({width, height: 844});
+    for (const lang of ['en', 'zh']) {
+      await page.evaluate(lang => window.RobonixI18N.setLang(lang), lang);
+      for (const name of ['dashboard', 'vitals', 'audio', 'settings', 'perception', 'studio']) {
+        await page.evaluate(name => activatePage(name), name);
+        await expect(connect).toHaveText(lang === 'en' ? 'Connect' : '连接');
+        await expect(connect).toBeInViewport({ratio: 1});
+        await expect(page.locator('#handsfreeToggle')).toBeInViewport({ratio: 1});
+        expect(await page.locator('.command-bar').evaluate(bar => bar.scrollWidth)).toBe(width);
+      }
+    }
+  }
+});
+
+test('compact hands-free control visibly distinguishes recording from off', async ({page}) => {
+  await page.setViewportSize({width: 320, height: 700});
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await page.evaluate(() => window.RobonixI18N.setLang('en'));
+  const button = page.locator('#handsfreeToggle');
+  const mic = button.locator('.handsfree-icon:not(.handsfree-recording-icon)');
+  const recording = button.locator('.handsfree-recording-icon');
+  const setStatus = (status) => page.evaluate(status => {
+    Object.assign(state.handsfree, {state: status, enabled: status === 'suspended', busy: false});
+    renderHandsfree();
+  }, status);
+  await setStatus('off');
+  await expect(button).toHaveAccessibleName('Hands-free off');
+  await expect(mic).toBeVisible();
+  await expect(recording).toBeHidden();
+  await setStatus('suspended');
+  await expect(button).toHaveAccessibleName('Recording');
+  await expect(mic).toBeHidden();
+  await expect(recording).toBeInViewport({ratio: 1});
+});
+
+test('clear sessions is reachable in a short phone drawer', async ({page}) => {
+  await page.setViewportSize({width: 568, height: 210});
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await page.evaluate(() => {
+    state.messages = [{id:'m1', role:'user', text:'Original task'}];
+    persistCurrentConversation();
+  });
+  await page.locator('#mobileNavToggle').click();
+  await page.locator('#sessionListActionsTrigger').click();
+  await page.locator('#clearHistory').click({timeout: 3000});
+  await expect(page.locator('#sessionDialog')).toBeVisible();
+});
+
+test('settings sections show headings and keep the sidebar selection', async ({page}) => {
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await expect(page.locator('.workspace')).toHaveAttribute('data-active-page', 'dashboard');
+  await page.evaluate(() => window.RobonixI18N.setLang('zh'));
+  const trigger = page.locator('#settingsTriggerBtn');
+  const openNavigation = async () => {
+    const toggle = page.locator('#mobileNavToggle');
+    if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  };
+  await openNavigation();
+  await trigger.click();
+  await page.locator('#settingsMenuAudio').click();
+  await expect(page.locator('#audioTitle')).toHaveText('音频');
+  await expect(page.locator('#audioTitle')).toBeVisible();
+  await expect(page.getByText('输入原语', {exact: true})).toBeVisible();
+  await expect(trigger).toHaveClass(/current-section/);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await openNavigation();
+  await trigger.click();
+  await expect(page.locator('#settingsMenuAudio')).toHaveAttribute('aria-current', 'page');
+  await page.locator('#settingsMenuSettings').click();
+  await expect(page.locator('#connectionTitle')).toHaveText('连接');
+  await expect(page.locator('#connectionTitle')).toBeVisible();
+  await expect(trigger).toHaveClass(/current-section/);
+  await page.evaluate(() => activatePage('dashboard'));
+  await expect(trigger).not.toHaveClass(/current-section/);
+});
+
+test('session list collapses, remembers state, and session dialogs are custom', async ({page}, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'session list and conversation controls are in the desktop navigation');
+  await page.setViewportSize({width: 1000, height: 850});
+  await prepare(page);
+  const toggle = page.locator('#sessionListToggle');
+  const section = page.locator('#sessionListSection');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(section).toHaveClass(/collapsed/);
+  await expect(page.locator('#historyList')).toBeHidden();
+  await expect.poll(() => toggle.locator('svg').evaluate(el => getComputedStyle(el).transform)).toBe('matrix(1, 0, 0, 1, 0, 0)');
+  await page.reload();
+  await openDisplayPanel(page);
+  await expect(page.locator('#sessionListToggle')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#sessionListToggle').click();
+  await expect(page.locator('#historyList')).toBeVisible();
+
+  await page.evaluate(() => {
+    state.messages = [{id:'m1', role:'user', text:'Original task'}];
+    persistCurrentConversation();
+  });
+  const renameTrigger = page.locator('#renameSession');
+  await renameTrigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#sessionDialog')).toBeVisible();
+  await expect(page.locator('#sessionDialogInput')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#sessionDialogClose')).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#sessionDialogSubmit')).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#sessionDialogClose')).toBeFocused();
+  await page.locator('#sessionDialogInput').fill('Renamed task');
+  await page.locator('#sessionDialogSubmit').click();
+  await expect(page.locator('#sessionTitleDisplay')).toHaveText('Renamed task');
+  await expect(page.locator('#renameSession')).toBeFocused();
+  await page.evaluate(() => window.RobonixI18N.setLang('zh'));
+  await expect(page.locator('.conversation-header #clearHistory')).toHaveCount(0);
+  await expect(page.locator('.history-item.active .history-rename')).toHaveCount(0);
+  const actions = page.locator('#sessionListActionsTrigger');
+  await expect(actions).toHaveAccessibleName('会话列表操作');
+  await actions.click();
+  await page.locator('#clearHistory').click();
+  await expect(page.locator('#sessionDialog')).toBeVisible();
+  await expect(page.locator('#sessionDialogDescription')).toHaveText('确定要清空所有会话记录吗？此操作无法撤销。');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#sessionDialog')).toBeHidden();
+  await expect(page.locator('#dashboardSidebar')).toHaveClass(/open/);
+  await expect(actions).toBeFocused();
+  await actions.click();
+  await page.locator('#clearHistory').click();
+  await page.locator('#sessionDialogSubmit').click();
+  await expect(page.locator('#historyList .history-item')).toHaveCount(0);
+  await expect(actions).toBeFocused();
+});
+
 test('executor updates keep panel and tree positions stable', async ({page}) => {
   await prepare(page);
+  await page.waitForFunction(() => {
+    const sidebar = document.querySelector('#dashboardSidebar');
+    const width = sidebar.getBoundingClientRect().width;
+    const previous = Number(sidebar.dataset.testStableWidth || 0);
+    sidebar.dataset.testStableWidth = String(width);
+    return width === previous && width > 0;
+  });
+  await page.waitForTimeout(350);
   await populate(page,12);
-  const positions = () => page.evaluate(() => ['.current-goal-panel', '.goal-preview', '#taskList', '#sidebarMenu'].map(s => {
+  const positions = () => page.evaluate(() => ['.current-goal-panel', '#taskList', '#sidebarMenu'].map(s => {
     const r=document.querySelector(s).getBoundingClientRect(); return [r.top,r.height];
   }));
   const before=await positions();
   await page.locator('#taskList').evaluate(e=>e.scrollTop=60);
   await page.evaluate(()=>{state.executorPlans[0].ops[0].description='A very long operation description '.repeat(30); renderGoalPanel();});
-  expect(await positions()).toEqual(before);
+  await expect.poll(positions).toEqual(before);
   expect(await page.locator('#taskList').evaluate(e=>e.scrollTop)).toBe(0);
   await page.evaluate(()=>{state.executorPlans=[];renderGoalPanel();});
   expect(await positions()).toEqual(before);
+  // The task panel sizes to its rows (capped), so a shorter task list may
+  // shrink it; only Executor updates must leave the layout alone.
   await populate(page,1);
-  expect(await positions()).toEqual(before);
+  await openDisplayPanel(page, 'executor');
   await page.getByRole("button", {name:"View call details",exact:true}).click();
   await page.evaluate(()=>renderGoalPanel());
   await expect(page.locator("#callDetailModal")).toBeVisible();
@@ -146,6 +369,7 @@ test('task selection scopes tree, history and Executor, with no foreign fallback
   await page.evaluate(()=>handlePilotEvent({kind:'task_state',taskState:{...state.taskState,taskId:'C'}}));
   await expect(page.locator('[data-task-id="B"]')).toHaveAttribute('aria-pressed','true');
   await page.reload();
+  await openDisplayPanel(page);
   await expect(page.locator('[data-task-id="B"]')).toHaveAttribute('aria-pressed','true');
   await page.getByRole('button',{name:'Follow latest task',exact:true}).click();
   await expect(follow).toHaveAttribute('aria-pressed','true');
@@ -217,6 +441,7 @@ test('Executor metadata prefers authoritative active-plan fields', async ({page}
 
 test('execution summary retains completed calls and keeps details accessible', async ({page}) => {
   await ownershipFixture(page);
+  await openDisplayPanel(page, 'executor');
   await expect(page.locator('.executor-label')).toHaveText('Executor');
   const headingSizes = await page.evaluate(() => ({
     task: getComputedStyle(document.querySelector('.current-goal-panel h2')).fontSize,
@@ -250,6 +475,7 @@ test('execution summary retains completed calls and keeps details accessible', a
   await page.getByRole('button',{name:'View call details',exact:true}).click();
   await expect(page.locator('#callDetailBody')).toContainText('SUCCEEDED');
   await page.keyboard.press('Escape');
+  await openDisplayPanel(page, 'rtdl');
   await page.locator('[data-task-id="C"]').click();
   await expect(page.locator('.goal-card > strong')).not.toHaveText('plan-a');
   await page.locator('[data-task-id="A"]').click();
@@ -259,6 +485,7 @@ test('execution summary retains completed calls and keeps details accessible', a
     renderGoalPanel();
   });
   await expect(page.locator('.execution-summary-status')).toHaveText('failed');
+  await openDisplayPanel(page, 'executor');
   await expect(page.locator('.executor-label')).toBeVisible();
 });
 
@@ -323,6 +550,16 @@ test('empty task and missing tree messages appear only once', async ({page}) => 
 });
 
 
+// The Executor tab is tall enough to show two call cards without scrolling;
+// cap the list so scroll handling is still exercised.
+async function limitPreviewHeight(page) {
+  await page.locator('.goal-preview').evaluate(el => {
+    el.style.flex = '0 0 auto';
+    el.style.height = '160px';
+  });
+  expect(await page.locator('.goal-preview').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+}
+
 async function parallelCallsFixture(page) {
   await ownershipFixture(page);
   await page.evaluate(() => {
@@ -353,6 +590,8 @@ test('parallel calls retain individual results without mixing tasks or changing 
   await expect(cards.nth(1)).toContainText('plan-a / nav');
   await expect(page.locator('.goal-preview')).not.toContainText('Composite description');
   const panelHeight = await page.locator('.current-goal-panel').evaluate(el => el.getBoundingClientRect().height);
+  await openDisplayPanel(page, 'executor');
+  await limitPreviewHeight(page);
   await page.locator('.goal-preview').evaluate(el => el.scrollTop = 35);
   await page.evaluate(() => renderGoalPanel());
   expect(await page.locator('.goal-preview').evaluate(el => el.scrollTop)).toBe(35);
@@ -378,12 +617,14 @@ test('parallel calls retain individual results without mixing tasks or changing 
     rememberLastSession(state.sessionId);
   });
   await expect(cards.filter({hasText:'base-provider'}).locator('.execution-summary-status')).toHaveText('canceled');
+  await openDisplayPanel(page, 'rtdl');
   await page.locator('[data-task-id="C"]').click();
   await expect(page.locator('.goal-preview')).not.toContainText('camera-provider');
   await page.locator('[data-task-id="A"]').click();
   await expect(cards).toHaveCount(2);
   expect(await page.locator('.current-goal-panel').evaluate(el => el.getBoundingClientRect().height)).toBe(panelHeight);
   await page.reload();
+  await openDisplayPanel(page);
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0).locator('.execution-summary-status')).toHaveText('completed');
   await expect(cards.filter({hasText:'base-provider'}).locator('.execution-summary-status')).toHaveText('canceled');
@@ -441,6 +682,7 @@ test('only a new owned RTDL replaces the complete Executor group', async ({page}
   });
   await expect(page.locator('.goal-preview .goal-card > strong')).toHaveText(['new call']);
   await page.reload();
+  await openDisplayPanel(page);
   await expect(page.locator('.goal-preview .goal-card > strong')).toHaveText(['new call']);
 });
 
@@ -582,6 +824,8 @@ test('saved plans without task information get their own group', async ({page}) 
 
 test('Executor heading stays fixed while calls scroll and refresh', async ({page}) => {
   await parallelCallsFixture(page);
+  await openDisplayPanel(page, 'executor');
+  await limitPreviewHeight(page);
   const heading = page.locator('#executorHeading');
   const preview = page.locator('.goal-preview');
   await heading.scrollIntoViewIfNeeded();
@@ -649,6 +893,7 @@ test('Executor orders returned calls and preserves order through verification, b
   });
   await expect(titles).toHaveText(['snapshot','navigate']);
   await page.reload();
+  await openDisplayPanel(page);
   await expect(titles).toHaveText(['snapshot','navigate']);
 });
 

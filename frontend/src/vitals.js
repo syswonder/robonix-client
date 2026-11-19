@@ -57,6 +57,227 @@ function clear(node) {
   if (node) node.replaceChildren();
 }
 
+// Provider details card. The native `title` tooltip renders as an unstylable
+// white box, so the row carries an explicit info button that opens a dark card
+// anchored to it. One card is shared by the whole list.
+let providerCard = null;
+let providerCardAnchor = null;
+
+function closeProviderCard() {
+  if (!providerCard) return;
+  providerCard.hidden = true;
+  if (providerCardAnchor) providerCardAnchor.setAttribute("aria-expanded", "false");
+  providerCardAnchor = null;
+}
+
+function ensureProviderCard() {
+  if (providerCard) return providerCard;
+  providerCard = document.createElement("div");
+  providerCard.className = "vitals-provider-card";
+  providerCard.hidden = true;
+  providerCard.setAttribute("role", "dialog");
+  document.body.appendChild(providerCard);
+  document.addEventListener("pointerdown", (event) => {
+    if (providerCard.hidden) return;
+    if (providerCard.contains(event.target)) return;
+    if (providerCardAnchor?.contains(event.target)) return;
+    closeProviderCard();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeProviderCard();
+  });
+  window.addEventListener("resize", closeProviderCard);
+  return providerCard;
+}
+
+function capabilityBinding(params) {
+  if (!params) return "";
+  if (params.serviceName || params.method) {
+    return [
+      [params.serviceName, params.method].filter(Boolean).join("/"),
+      params.protoFile,
+    ].filter(Boolean).join(" · ");
+  }
+  if (params.qosProfile) return `QoS · ${params.qosProfile}`;
+  if (params.inputSchema) return `schema · ${params.inputSchema}`;
+  return "";
+}
+
+function providerCardValue(label, value, className = "") {
+  const row = document.createElement("div");
+  row.className = "vitals-provider-card-field";
+  const key = document.createElement("span");
+  key.className = "vitals-provider-card-field-label";
+  key.textContent = label;
+  const val = document.createElement("span");
+  val.className = className
+    ? `vitals-provider-card-field-value ${className}`
+    : "vitals-provider-card-field-value";
+  val.textContent = value;
+  row.append(key, val);
+  return row;
+}
+
+// CAPABILITY.md is full markdown; dumping it verbatim makes the card a wall of
+// syntax, so strip the common markers and keep the prose.
+function capabilityMdSummary(md) {
+  return md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "· ")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\[([^\]\n]+)\]\([^)\n]*\)/g, "$1")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n+/g, " ")
+    .trim();
+}
+
+function appendClampedText(parent, text, className, maxChars) {
+  const body = document.createElement("p");
+  body.className = `${className} vitals-card-clamp`;
+  body.textContent = text;
+  parent.appendChild(body);
+  if (text.length <= maxChars) return;
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "vitals-provider-card-more";
+  toggle.textContent = t("Show more");
+  toggle.addEventListener("click", () => {
+    const clamped = body.classList.toggle("vitals-card-clamp");
+    toggle.textContent = clamped ? t("Show more") : t("Show less");
+  });
+  parent.appendChild(toggle);
+}
+
+function providerCapabilityItem(cap) {
+  const li = document.createElement("li");
+  if (cap.namespaceMismatch) li.classList.add("is-mismatch");
+  const head = document.createElement("div");
+  head.className = "vitals-provider-card-cap-head";
+  const code = document.createElement("code");
+  code.textContent = cap.contractId;
+  const tag = document.createElement("span");
+  tag.className = "vitals-provider-card-tag";
+  tag.textContent = cap.transport;
+  head.append(code, tag);
+  li.appendChild(head);
+  const flags = [
+    cap.llmCallable ? t("LLM callable") : "",
+    cap.crossNamespace ? t("cross-namespace") : "",
+    cap.namespaceMismatch ? t("namespace mismatch") : "",
+  ].filter(Boolean);
+  if (flags.length) {
+    const meta = document.createElement("div");
+    meta.className = "vitals-provider-card-cap-flags";
+    meta.textContent = flags.join(" · ");
+    li.appendChild(meta);
+  }
+  if (cap.description) {
+    appendClampedText(li, cap.description, "vitals-provider-card-cap-desc", 90);
+  }
+  const binding = capabilityBinding(cap.params);
+  if (binding) {
+    appendClampedText(li, binding, "vitals-provider-card-cap-bind", 80);
+  }
+  return li;
+}
+
+function toggleProviderCard(anchor, item) {
+  if (providerCard && !providerCard.hidden && providerCardAnchor === anchor) {
+    closeProviderCard();
+    return;
+  }
+  closeProviderCard();
+  const card = ensureProviderCard();
+  card.replaceChildren();
+
+  const head = document.createElement("div");
+  head.className = "vitals-provider-card-head";
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "vitals-provider-card-title";
+  const title = document.createElement("strong");
+  title.textContent = item.id;
+  const kind = document.createElement("span");
+  kind.className = "vitals-provider-card-kind";
+  kind.textContent = item.kind || "";
+  titleWrap.append(title, kind);
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "vitals-provider-card-close";
+  close.textContent = "×";
+  close.setAttribute("aria-label", t("Close"));
+  close.addEventListener("click", closeProviderCard);
+  head.append(titleWrap, close);
+  card.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "vitals-provider-card-body";
+  card.appendChild(body);
+
+  const meta = document.createElement("div");
+  meta.className = "vitals-provider-card-meta";
+  const namespace = document.createElement("span");
+  namespace.textContent = item.namespace || "--";
+  const state = document.createElement("span");
+  state.textContent = t(item.state || "unknown");
+  meta.append(namespace, state);
+  body.appendChild(meta);
+
+  if (item.registrationId) {
+    body.appendChild(providerCardValue("registration_id", item.registrationId, "vitals-provider-card-code"));
+  }
+
+  const description = document.createElement("section");
+  description.className = "vitals-provider-card-section";
+  const descriptionTitle = document.createElement("div");
+  descriptionTitle.className = "vitals-provider-card-section-title";
+  descriptionTitle.textContent = t("Contract description");
+  description.appendChild(descriptionTitle);
+  const summary = capabilityMdSummary(item.capabilityMd || "");
+  if (summary) {
+    appendClampedText(description, summary, "vitals-provider-card-md", 200);
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "vitals-provider-card-empty";
+    empty.textContent = t("No description");
+    description.appendChild(empty);
+  }
+  body.appendChild(description);
+
+  const caps = item.capabilities || [];
+  if (caps.length) {
+    const section = document.createElement("section");
+    section.className = "vitals-provider-card-section";
+    const heading = document.createElement("div");
+    heading.className = "vitals-provider-card-section-title";
+    heading.textContent = `${t("Capabilities")} · ${caps.length}`;
+    const list = document.createElement("ul");
+    list.className = "vitals-provider-card-caps";
+    caps.forEach((cap) => list.appendChild(providerCapabilityItem(cap)));
+    section.append(heading, list);
+    body.appendChild(section);
+  }
+
+  // Show it before measuring, otherwise the card has zero size.
+  card.hidden = false;
+  providerCardAnchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  const rect = anchor.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const margin = 10;
+  const left = Math.min(
+    Math.max(margin, rect.left),
+    Math.max(margin, window.innerWidth - margin - cardRect.width),
+  );
+  let top = rect.bottom + 8;
+  if (top + cardRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - cardRect.height - 8);
+  }
+  card.style.left = `${left}px`;
+  card.style.top = `${top}px`;
+}
+
 function safeHealth(value) {
   return Object.hasOwn(HEALTH_SEVERITY, value) ? value : "unknown";
 }
@@ -1042,7 +1263,7 @@ class VitalsDashboard {
       else if (!byId("vitalsAlertPanelLayer")?.hidden) this.closeAlertPanel();
     });
     window.addEventListener("beforeunload", () => this.disconnect());
-    this.ageTimer = window.setInterval(() => this.renderUpdatedAt(), 1000);
+    this.ageTimer = window.setInterval(() => this.renderUpdatedAt(), 250);
     this.renderAll();
     this.setActive(document.querySelector("[data-page-panel='vitals']")?.classList.contains("active"));
   }
@@ -1528,7 +1749,16 @@ class VitalsDashboard {
       Number(this.modules?.updatedAtMs || 0),
       Number(this.providers?.updatedAtMs || 0),
     );
-    if (byId("vitalsUpdatedAt")) byId("vitalsUpdatedAt").textContent = formatAge(latest);
+    const node = byId("vitalsUpdatedAt");
+    if (!node) return;
+    if (!latest) {
+      node.textContent = "--";
+      return;
+    }
+    // Sub-second precision below 10s: the readout visibly ticks, so it is
+    // obvious at a glance whether telemetry is still arriving or frozen.
+    const seconds = Math.max(0, (Date.now() - latest) / 1000);
+    node.textContent = seconds < 10 ? `${seconds.toFixed(1)}s` : formatAge(latest);
   }
 
   renderSources() {
@@ -1544,7 +1774,11 @@ class VitalsDashboard {
   }
 
   renderStage() {
-    if (byId("vitalsRenderMode")) byId("vitalsRenderMode").textContent = t("{mode} model", { mode: t(this.renderMode) });
+    const parts = [t("{mode} model", { mode: t(this.renderMode) })];
+    const warning = this.description?.urdfWarning;
+    if (warning === "assets_missing") parts.push(t("URDF assets missing"));
+    else if (warning === "unavailable") parts.push(t("URDF unavailable"));
+    if (byId("vitalsRenderMode")) byId("vitalsRenderMode").textContent = parts.join(" · ");
   }
 
   renderComponents() {
@@ -1735,9 +1969,24 @@ class VitalsDashboard {
     rows.forEach((item) => {
       const row = document.createElement("div");
       row.className = "vitals-software-row";
+      const nameCell = document.createElement("span");
+      nameCell.className = "vitals-software-name";
       const name = document.createElement("strong");
       name.textContent = isModules ? item.moduleId || item.moduleKey : item.id;
-      name.title = name.textContent;
+      nameCell.appendChild(name);
+      if (!isModules) {
+        const info = document.createElement("button");
+        info.type = "button";
+        info.className = "vitals-info-button";
+        info.textContent = "i";
+        info.setAttribute("aria-label", t("Provider details"));
+        info.setAttribute("aria-expanded", "false");
+        info.addEventListener("click", (event) => {
+          event.stopPropagation();
+          toggleProviderCard(info, item);
+        });
+        nameCell.appendChild(info);
+      }
       const health = document.createElement("span");
       health.className = "vitals-software-state";
       const dot = document.createElement("span");
@@ -1745,15 +1994,24 @@ class VitalsDashboard {
       const healthText = document.createElement("span");
       healthText.textContent = t(safeHealth(item.health));
       health.append(dot, healthText);
+      const caps = item.capabilities || [];
+      const namespaceMismatch = caps.some((cap) => cap.namespaceMismatch);
       const state = document.createElement("span");
-      state.textContent = isModules ? [item.state, item.reasonCode].filter(Boolean).join(" · ") : t(item.state || "unknown");
+      state.textContent = isModules
+        ? [item.state, item.reasonCode].filter(Boolean).join(" · ")
+        : [t(item.state || "unknown"), namespaceMismatch ? t("namespace mismatch") : ""]
+            .filter(Boolean)
+            .join(" · ");
       state.title = isModules ? item.detail || state.textContent : item.stateDetail || state.textContent;
       const source = document.createElement("span");
       source.textContent = isModules ? item.source || item.providerId || "--" : item.namespace || "--";
       source.title = source.textContent;
+      const llmCaps = caps.filter((cap) => cap.llmCallable).length;
       const tail = document.createElement("span");
-      tail.textContent = isModules ? `${item.ttlMs || 0} ms` : String(item.capabilities?.length || 0);
-      row.append(name, health, state, source, tail);
+      tail.textContent = isModules
+        ? `${item.ttlMs || 0} ms`
+        : `${caps.length}${llmCaps ? ` (${llmCaps} ${t("LLM")})` : ""}`;
+      row.append(nameCell, health, state, source, tail);
       root?.appendChild(row);
     });
   }

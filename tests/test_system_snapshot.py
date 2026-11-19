@@ -58,5 +58,31 @@ class RequiredContractsTest(unittest.TestCase):
         self.assertEqual(executor["providers"], [])
 
 
+class ContractFlagsTest(unittest.TestCase):
+    def provider_with(self, *contract_ids: str):
+        item = transport.atlas_pb2.CapabilityProvider(id="p")
+        for contract_id in contract_ids:
+            item.capabilities.add(contract_id=contract_id)
+        return item
+
+    def test_flags_come_from_the_contract_descriptor(self):
+        contracts = {
+            "a": transport.atlas_pb2.ContractDescriptor(
+                id="a", cross_namespace=True, llm_callable=False
+            ),
+            "b": transport.atlas_pb2.ContractDescriptor(id="b"),
+        }
+
+        caps = transport.provider_to_dict(
+            self.provider_with("a", "b", "unknown"), contracts
+        )["capabilities"]
+
+        self.assertEqual(
+            [(cap["crossNamespace"], cap["llmCallable"]) for cap in caps],
+            # Absent `llm_callable` means true, also for unknown contracts.
+            [(True, False), (False, True), (False, True)],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,11 +21,18 @@ from .urdf_assets import urdf_asset_store
 CONTRACT_SOMA_GET_YAML = "robonix/system/soma/get_yaml"
 CONTRACT_SOMA_GET_URDF = "robonix/system/soma/get_urdf"
 CONTRACT_VITALS_STREAM = "robonix/system/vitals/stream"
+CONTRACT_VITALS_GET = "robonix/system/vitals/get"
 CONTRACT_VITALS_MODULES_GET = "robonix/system/vitals/modules/get"
 
 SOMA_GET_YAML_PATH = "/robonix.contracts.RobonixSystemSomaGetYaml/GetYaml"
 SOMA_GET_URDF_PATH = "/robonix.contracts.RobonixSystemSomaGetUrdf/GetUrdf"
 VITALS_STREAM_PATH = "/robonix.contracts.RobonixSystemVitalsStream/StreamVitals"
+VITALS_GET_PATH = "/robonix.contracts.RobonixSystemVitalsGet/GetVitals"
+
+# StreamVitals only broadcasts on health/body/power changes, so values that
+# drift slowly (CPU temperature, compute-node input current) freeze between
+# events. Re-read the cached snapshot on this cadence to keep them moving.
+HARDWARE_POLL_SECONDS = 2.0
 VITALS_MODULES_GET_PATH = (
     "/robonix.contracts.RobonixSystemVitalsModulesGet/GetModuleHealthSnapshot"
 )
@@ -212,6 +219,7 @@ def fallback_robot_description() -> dict[str, Any]:
         },
         "urdfXml": "",
         "urdfAssetBaseUrl": "",
+        "urdfWarning": "",
         "summary": "",
     }
 
@@ -229,29 +237,46 @@ async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
 
     urdf_xml = ""
     urdf_asset_base_url = ""
+    urdf_warning = ""
     try:
         urdf_endpoint = await discover_endpoint(
             settings.atlas_endpoint, CONTRACT_SOMA_GET_URDF
         )
-        urdf_response = await _unary_unary(
-            urdf_endpoint,
-            SOMA_GET_URDF_PATH,
-            soma_client_pb2.GetUrdf_Request(
-                robot_id=yaml_response.robot_id,
-                include_assets=True,
-            ),
-            soma_client_pb2.GetUrdf_Response,
-        )
-        urdf_xml = urdf_response.urdf_xml
-        resource_set_id = urdf_asset_store.put(
-            (asset.path, asset.data) for asset in urdf_response.assets
-        )
-        if resource_set_id:
-            urdf_asset_base_url = (
-                f"/api/vitals/urdf-assets/{resource_set_id}/"
+        try:
+            urdf_response = await _unary_unary(
+                urdf_endpoint,
+                SOMA_GET_URDF_PATH,
+                soma_client_pb2.GetUrdf_Request(
+                    robot_id=yaml_response.robot_id,
+                    include_assets=True,
+                ),
+                soma_client_pb2.GetUrdf_Response,
             )
+        except grpc.aio.AioRpcError:
+            # A single missing mesh/texture fails the whole asset request. The
+            # text URDF is still renderable, so retry without assets and say
+            # why the model is text-only instead of silently falling back.
+            urdf_response = await _unary_unary(
+                urdf_endpoint,
+                SOMA_GET_URDF_PATH,
+                soma_client_pb2.GetUrdf_Request(
+                    robot_id=yaml_response.robot_id,
+                    include_assets=False,
+                ),
+                soma_client_pb2.GetUrdf_Response,
+            )
+            urdf_warning = "assets_missing"
+        urdf_xml = urdf_response.urdf_xml
+        if not urdf_warning:
+            resource_set_id = urdf_asset_store.put(
+                (asset.path, asset.data) for asset in urdf_response.assets
+            )
+            if resource_set_id:
+                urdf_asset_base_url = (
+                    f"/api/vitals/urdf-assets/{resource_set_id}/"
+                )
     except (grpc.aio.AioRpcError, RuntimeError):
-        pass
+        urdf_warning = "unavailable"
 
     description = normalize_robot_description(
         yaml_response.yaml_text,
@@ -259,6 +284,7 @@ async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
         yaml_response.robot_id,
         urdf_asset_base_url,
     )
+    description["urdfWarning"] = urdf_warning
     return description
 
 
@@ -274,17 +300,19 @@ def _highest_health(values: list[str]) -> str:
 
 
 def _signal_visual_state(signal: dict[str, Any]) -> str:
+    # Torque-off is an operator state, not a fault: report it as idle even
+    # though Vitals now raises WARN for it.
+    key = str(signal.get("key") or "")
+    if key.endswith("/torque_enabled"):
+        try:
+            if float(signal.get("observedValue")) < 0.5:
+                return "idle"
+        except (TypeError, ValueError):
+            pass
     health = str(signal.get("health") or "unknown")
     if health != "ok":
         return health
     if signal.get("visualState") == "idle":
-        return "idle"
-    try:
-        observed_value = float(signal.get("observedValue"))
-    except (TypeError, ValueError):
-        return health
-    key = str(signal.get("key") or "")
-    if key.endswith("/torque_enabled") and observed_value < 0.5:
         return "idle"
     return health
 
@@ -425,6 +453,7 @@ def aggregate_component_health(
 def vitals_snapshot_to_dict(
     snapshot: Any,
     description: dict[str, Any],
+    received_at_ms: int | None = None,
 ) -> dict[str, Any]:
     signals = []
     for signal in snapshot.components:
@@ -462,6 +491,11 @@ def vitals_snapshot_to_dict(
         for body in snapshot.bodies
     ]
     component_health = aggregate_component_health(description, signals, bodies)
+    # `ts_ns` counts from Vitals' process start, not Unix epoch. Using it as a
+    # wall clock renders "last updated" in 1970, so freshness comes from
+    # receipt time and the raw value stays for internal ordering only.
+    if received_at_ms is None:
+        received_at_ms = _now_ms()
     power = snapshot.power
     soc_percent = float(power.battery_percent)
     voltage = float(power.voltage)
@@ -475,7 +509,7 @@ def vitals_snapshot_to_dict(
         }
     return {
         "timestampNs": int(snapshot.ts_ns),
-        "updatedAtMs": int(snapshot.ts_ns // 1_000_000) if snapshot.ts_ns else _now_ms(),
+        "updatedAtMs": received_at_ms,
         "power": power_summary,
         "signals": signals,
         "bodies": bodies,
@@ -485,10 +519,17 @@ def vitals_snapshot_to_dict(
 
 
 def _module_health(module: Any) -> str:
+    # The health code is the authoritative level (required = ERROR,
+    # optional = WARN). A state/reason marker only adds `stale` when the code
+    # itself is not already reporting a fault, so an ERROR is never downgraded
+    # to the weaker grey `stale`.
+    health = MODULE_HEALTH_NAMES.get(int(module.health), "unknown")
+    if health in ("error", "warn"):
+        return health
     marker = f"{module.state} {module.reason_code}".lower()
     if any(word in marker for word in ("stale", "expired", "unavailable", "timeout", "missing")):
         return "stale"
-    return MODULE_HEALTH_NAMES.get(int(module.health), "unknown")
+    return health
 
 
 def module_snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
@@ -517,7 +558,7 @@ def module_snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
     return {
         "schemaVersion": int(snapshot.schema_version),
         "timestampNs": int(snapshot.ts_ns),
-        "updatedAtMs": int(snapshot.ts_ns // 1_000_000) if snapshot.ts_ns else _now_ms(),
+        "updatedAtMs": _now_ms(),
         "sequence": int(snapshot.seq),
         "modules": modules,
         "summary": _health_summary([str(module["health"]) for module in modules]),
@@ -565,6 +606,14 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _store_hardware_snapshot(snapshot: Any, hardware_state: dict[str, Any]) -> int:
+    previous = hardware_state.get("value")
+    if previous is None or snapshot.ts_ns != previous.ts_ns:
+        hardware_state["received_at_ms"] = _now_ms()
+    hardware_state["value"] = snapshot
+    return hardware_state["received_at_ms"]
+
+
 def _error_text(exc: BaseException) -> str:
     if isinstance(exc, grpc.aio.AioRpcError):
         return f"gRPC {exc.code().name}: {exc.details()}"
@@ -608,7 +657,9 @@ async def _description_loop(
                     await queue.put(
                         {
                             "type": "hardware",
-                            "data": vitals_snapshot_to_dict(snapshot, description),
+                            "data": vitals_snapshot_to_dict(
+                                snapshot, description, hardware_state.get("received_at_ms")
+                            ),
                         }
                     )
             await _put_source(queue, "soma", "ready")
@@ -644,12 +695,12 @@ async def _hardware_loop(
                     response_deserializer=vitals_client_pb2.VitalsSnapshot.FromString,
                 )
                 async for snapshot in call(vitals_client_pb2.StreamVitals_Request()):
-                    hardware_state["value"] = snapshot
+                    received_at_ms = _store_hardware_snapshot(snapshot, hardware_state)
                     await queue.put(
                         {
                             "type": "hardware",
                             "data": vitals_snapshot_to_dict(
-                                snapshot, description_state["value"]
+                                snapshot, description_state["value"], received_at_ms
                             ),
                         }
                     )
@@ -658,6 +709,65 @@ async def _hardware_loop(
             raise
         except Exception as exc:
             await _put_source(queue, "hardware", "error", _error_text(exc))
+            await asyncio.sleep(retry_seconds)
+            retry_seconds = min(retry_seconds * 2.0, 15.0)
+
+
+async def _hardware_poll_loop(
+    settings: ClientSettings,
+    queue: asyncio.Queue[dict[str, Any]],
+    description_state: dict[str, dict[str, Any]],
+    hardware_state: dict[str, Any],
+) -> None:
+    """Re-read the cached snapshot so numeric telemetry does not freeze.
+
+    The stream only pushes on change; this loop supplies the steady cadence.
+    Failures stay silent here because `_hardware_loop` owns the `hardware`
+    source indicator and a poll retry must not flip it back and forth.
+    """
+    retry_seconds = 1.0
+    while True:
+        try:
+            endpoint = await discover_endpoint(
+                settings.atlas_endpoint, CONTRACT_VITALS_GET
+            )
+            retry_seconds = 1.0
+            while True:
+                previous = hardware_state.get("value")
+                response = await _shared_unary_unary(
+                    endpoint,
+                    VITALS_GET_PATH,
+                    vitals_client_pb2.GetVitals_Request(),
+                    vitals_client_pb2.GetVitals_Response,
+                )
+                snapshot = response.snapshot
+                current = hardware_state.get("value")
+                if current is not previous:
+                    hardware_state.pop("poll_reset_candidate", None)
+                    await asyncio.sleep(HARDWARE_POLL_SECONDS)
+                    continue
+                if current is not None and snapshot.ts_ns < current.ts_ns:
+                    candidate = hardware_state.get("poll_reset_candidate")
+                    if candidate is None or snapshot.ts_ns < candidate:
+                        hardware_state["poll_reset_candidate"] = snapshot.ts_ns
+                        await asyncio.sleep(HARDWARE_POLL_SECONDS)
+                        continue
+                    hardware_state.pop("poll_reset_candidate", None)
+                else:
+                    hardware_state.pop("poll_reset_candidate", None)
+                received_at_ms = _store_hardware_snapshot(snapshot, hardware_state)
+                await queue.put(
+                    {
+                        "type": "hardware",
+                        "data": vitals_snapshot_to_dict(
+                            snapshot, description_state["value"], received_at_ms
+                        ),
+                    }
+                )
+                await asyncio.sleep(HARDWARE_POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
             await asyncio.sleep(retry_seconds)
             retry_seconds = min(retry_seconds * 2.0, 15.0)
 
@@ -719,7 +829,7 @@ async def stream_vitals_events(
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
     description_state = {"value": fallback_robot_description()}
-    hardware_state = {"value": None}
+    hardware_state = {"value": None, "received_at_ms": 0}
     yield {
         "type": "description",
         "data": description_state["value"],
@@ -731,6 +841,9 @@ async def stream_vitals_events(
         ),
         asyncio.create_task(
             _hardware_loop(settings, queue, description_state, hardware_state)
+        ),
+        asyncio.create_task(
+            _hardware_poll_loop(settings, queue, description_state, hardware_state)
         ),
         asyncio.create_task(_modules_loop(settings, queue)),
         asyncio.create_task(_providers_loop(settings, queue)),

@@ -1,6 +1,11 @@
 const $ = (id) => document.getElementById(id);
 const maybe = (id) => document.getElementById(id);
 
+const ROBONIX_MARK_PATH = "M159.11,27.03c-2.31-1.41,.08,19.02-20.72,25.72,1.64-8.68-.75-15.71-2.06-16.83-1.34-1.15-1.47,7.18-12.11,8.85-1.1-1.92-2.7-3.94-4.62-5.96,.96-4.77-.35-8.65-1.06-9.27-.08-.07-1.87,2.21-5.01,3.64-.83-.68-1.66-1.36-2.52-2.01-2.34-1.81-4.69-3.25-6.94-4.41,.24-.54,1.68-4.26,.03-8.06-1.73-4-6.24-5.63-10.68-3.97-4.34,1.62-6.11,5.61-6.44,6.48-.02,.05-.04,.11-.06,.16-5.31-1-9.51-1-12.92-.51-1.83-3.12-5.28-5.44-8.82-5.45-2.91,0-6.22,1.33-8.02,4.01-3.01,4.48-1.49,11.63,3.44,14.31,.4,.22,.81,.39,1.23,.54-.43,.08-.9,.09-1.4,.02-3.31-.51-5.72-4.19-7.55-7.01-.02-.02-.05,.03-.08,.04-9.06,5.84-15.87,17.7-17.02,25.21-.93,.65-1.87,1.31-2.82,2-15.53,11.22-28.72,38.2-20.76,79.27,.17,1.19,1.02,2.53,2.35,2.53l14.45,.06c1.37,0,2.54-1,2.74-2.36l.82-5.6c.65-4.39,3.99-8.03,8.38-8.67,5.52-.8,10.47,3.02,11.26,8.35l.88,5.96c.2,1.34,1.35,2.33,2.7,2.33h14.79c1.35,0,2.5-.99,2.7-2.33l.79-5.3c.56-5.15,4.62-9.16,9.82-9.16s9.39,4.06,9.97,9.16l.82,5.62c.17,1.15,1.15,2,2.32,2h14.41c1.24,0,2.19-.73,2.65-2.05,2.76-8.08,2.26-14.58,1.88-17.92-.07-.6-.21-1.02-.3-1.43-13.95-.27-28.02-4.32-38.25-9.72,11.23,3.65,21.72,5.62,27.34,5.82,73.38,2.6,59.58-80.89,54.38-84.06ZM81.48,63.03c-1.47,3.41-5.43,4.99-8.84,3.52-3.41-1.47-4.99-5.43-3.52-8.84,1.47-3.41,5.43-4.99,8.84-3.52s4.99,5.43,3.52,8.84Z";
+function robonixMarkSvg(width, height) {
+  return `<svg width="${width}" height="${height}" viewBox="0 0 170 151" fill="currentColor" aria-hidden="true"><path d="${ROBONIX_MARK_PATH}"/></svg>`;
+}
+
 /// Translate a UI string. Keys are the English source text; i18n.js maps
 /// them for zh-CN. Falls back to the raw key (placeholders interpolated)
 /// if i18n.js has not loaded.
@@ -10,7 +15,7 @@ const t = (key, params) => (window.RobonixI18N
     params && params[name] !== undefined && params[name] !== null ? String(params[name]) : whole
   )));
 
-const SIDEBAR_VIEWS = ["rtdl", "events"];
+const SIDEBAR_VIEWS = ["rtdl", "executor", "events"];
 const TASK_ACTIVE = ["in_progress", "running", "planning", "executing"];
 const TASK_TERMINAL = ["done", "completed", "failed", "cancelled", "canceled", "aborted", "superseded"];
 
@@ -222,14 +227,6 @@ const state = {
     route: { micProviders: [], speakerProviders: [], micDevices: [], speakerDevices: [] },
   },
 };
-
-/// Name captured for a New session click that is still in flight.
-///
-/// Pressing the button blurs the name field first, so without this the typed
-/// name would be committed as a rename of the session being left and the new
-/// one would open unnamed -- two chats from one click. null means no click is
-/// pending and the field behaves as a plain rename box.
-let pendingNewSessionTitle = null;
 
 const DEFAULT_ATLAS_PORT = 50051;
 const AUDIO_LOG_MAX_LINES = 120;
@@ -804,6 +801,8 @@ async function init() {
   bindSettings();
   bindEvents();
   bindSceneLayers();
+  restoreSessionListState();
+  refreshVoiceprintUsers();
   bindSceneView();
   bindPerceptionControls();
   bindStudioControls();
@@ -883,7 +882,6 @@ function bindSettings() {
   if (maybe("speakerDeviceId")) $("speakerDeviceId").value = state.settings.speakerDeviceId || "";
   if (maybe("enrollUserId")) $("enrollUserId").value = state.settings.enrollUserId || "";
   if (maybe("enrollUserName")) $("enrollUserName").value = state.settings.enrollUserName || "";
-  if (state.sessionTitle && maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle;
   const endpointEl = maybe("atlasEndpointDisplay");
   if (endpointEl) endpointEl.textContent = `${state.settings.robotHost || "127.0.0.1"}:${state.settings.atlasPort || DEFAULT_ATLAS_PORT}`;
   const userEl = maybe("userDisplay");
@@ -1010,8 +1008,28 @@ function bindEvents() {
   $("taskInput").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
     event.preventDefault();
-    $("composer").requestSubmit();
+    const form = $("composer");
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+    } else {
+      form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    }
   });
+  $("taskInput").addEventListener("focus", () => {
+    // On iOS Safari / mobile Chrome, scroll messages to bottom after keyboard shows
+    setTimeout(() => {
+      const messages = $("messages");
+      if (messages) messages.scrollTop = messages.scrollHeight;
+    }, 320);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+      if (document.activeElement === $("taskInput")) {
+        const messages = $("messages");
+        if (messages) messages.scrollTop = messages.scrollHeight;
+      }
+    });
+  }
   window.addEventListener("keydown", (event) => {
     if (event.key !== "F2") return;
     event.preventDefault();
@@ -1028,34 +1046,22 @@ function bindEvents() {
   maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
-  // The command bar's name field renames the open session as you type it;
-  // the button beside it starts a new one under whatever name it holds.
-  const sessionTitleInput = maybe("sessionTitleInput");
-  if (sessionTitleInput) {
-    sessionTitleInput.addEventListener("change", commitSessionTitle);
-    sessionTitleInput.addEventListener("blur", commitSessionTitle);
-    sessionTitleInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        sessionTitleInput.blur();
-      }
-    });
-    // Clears a capture left behind by a click that never completed.
-    sessionTitleInput.addEventListener("focus", () => {
-      pendingNewSessionTitle = null;
-    });
-  }
-  const newSessionAction = maybe("newSessionAction");
-  if (newSessionAction) {
-    // mousedown lands before the field's blur, which is the only moment the
-    // typed name is still known to be meant for the session about to open.
-    newSessionAction.addEventListener("mousedown", () => {
-      pendingNewSessionTitle = maybe("sessionTitleInput")?.value.trim() || "";
-    });
-    newSessionAction.addEventListener("click", newSession);
-  }
-  $("renameSession").addEventListener("click", () => renameConversation(state.sessionId));
-  $("clearHistory").addEventListener("click", clearHistory);
+  maybe("sessionListToggle")?.addEventListener("click", toggleSessionList);
+  maybe("newSessionAction")?.addEventListener("click", newSession);
+  maybe("renameSession")?.addEventListener("click", () => renameConversation(state.sessionId));
+  const sessionListActions = maybe("sessionListActions");
+  const sessionListActionsTrigger = maybe("sessionListActionsTrigger");
+  maybe("clearHistory")?.addEventListener("click", () => {
+    sessionListActions.open = false;
+    sessionListActionsTrigger.focus();
+    clearHistory();
+  });
+  document.addEventListener("click", (event) => {
+    if (sessionListActions?.open && !sessionListActions.contains(event.target)) {
+      sessionListActions.open = false;
+    }
+  });
+  bindSessionDialog();
   maybe("connectNow")?.addEventListener("click", async () => {
     state.settings = collectSettings();
     await persistSettings().catch((error) => addTimeline("error", t("settings save failed: {error}", { error })));
@@ -1085,27 +1091,172 @@ function bindEvents() {
   maybe("closeRtdlHistory")?.addEventListener("click", closeRtdlHistory);
   maybe("openActiveRtdl")?.addEventListener("click", openActiveRtdl);
   maybe("closeActiveRtdl")?.addEventListener("click", closeActiveRtdl);
+  maybe("toggleInspector")?.addEventListener("click", () => {
+    const sidebar = $("dashboardSidebar");
+    if (sidebar) {
+      const isOpen = sidebar.classList.toggle("open");
+      maybe("toggleInspector")?.classList.toggle("active", isOpen);
+      maybe("toggleInspector")?.setAttribute("aria-pressed", String(isOpen));
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
+    }
+  });
+  maybe("closeInspectorBtn")?.addEventListener("click", () => {
+    const sidebar = $("dashboardSidebar");
+    if (sidebar) sidebar.classList.remove("open");
+    maybe("toggleInspector")?.classList.remove("active");
+    maybe("toggleInspector")?.setAttribute("aria-pressed", "false");
+    setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
+  });
+  const settingsTrigger = maybe("settingsTriggerBtn");
+  const settingsPopover = maybe("settingsMenuPopover");
+  function setSettingsPopover(open) {
+    if (!settingsTrigger || !settingsPopover) return;
+    settingsPopover.hidden = !open;
+    settingsTrigger.classList.toggle("active", open);
+    settingsTrigger.setAttribute("aria-expanded", String(open));
+  }
+  if (settingsTrigger && settingsPopover) {
+    settingsTrigger.addEventListener("click", () => setSettingsPopover(settingsPopover.hidden));
+    document.addEventListener("click", (event) => {
+      if (!settingsPopover.hidden && !event.target.closest("#settingsDropdownWrapper")) {
+        setSettingsPopover(false);
+      }
+    });
+    settingsPopover.addEventListener("click", (event) => {
+      if (event.target.closest("[data-page]")) setSettingsPopover(false);
+    });
+  }
+
+  // Mobile Sidebar Drawer Management
+  const navRail = document.querySelector(".nav-rail");
+  const sidebarBackdrop = maybe("sidebarBackdrop");
+  const mobileNavToggle = maybe("mobileNavToggle");
+  const sidebarCloseBtn = maybe("sidebarCloseBtn");
+
+  function setMobileSidebar(open) {
+    if (!navRail) return;
+    const shouldOpen = open ?? !navRail.classList.contains("open");
+    navRail.classList.toggle("open", shouldOpen);
+    sidebarBackdrop?.classList.toggle("active", shouldOpen);
+    mobileNavToggle?.classList.toggle("active", shouldOpen);
+    mobileNavToggle?.setAttribute("aria-expanded", String(shouldOpen));
+  }
+
+  mobileNavToggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setMobileSidebar();
+  });
+  sidebarCloseBtn?.addEventListener("click", () => setMobileSidebar(false));
+  sidebarBackdrop?.addEventListener("click", () => setMobileSidebar(false));
+
+  navRail?.addEventListener("click", (event) => {
+    const navItem = event.target.closest("[data-page], .history-open");
+    if (navItem && window.innerWidth <= 860) {
+      setMobileSidebar(false);
+    }
+  });
+
+  // Desktop Sidebar Collapse (n8n-style icon-only rail)
+  const appShell = document.querySelector(".app-shell");
+  const sidebarCollapseBtn = maybe("sidebarCollapseBtn");
+
+  // The icon rail is a desktop layout. Its rules outrank the mobile drawer's,
+  // so below the breakpoint the classes are dropped while the saved
+  // preference is kept for when the window widens again.
+  const desktopLayout = window.matchMedia("(min-width: 861px)");
+
+  function savedSidebarCollapsed() {
+    try {
+      return localStorage.getItem("robonix.sidebar_collapsed") === "true";
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setSidebarCollapsed(collapsed, { persist = true } = {}) {
+    if (!navRail || !appShell) return;
+    const isCollapsed = collapsed ?? !navRail.classList.contains("collapsed");
+    const applied = isCollapsed && desktopLayout.matches;
+    navRail.classList.toggle("collapsed", applied);
+    appShell.classList.toggle("sidebar-collapsed", applied);
+    if (persist) {
+      try {
+        localStorage.setItem("robonix.sidebar_collapsed", isCollapsed ? "true" : "false");
+      } catch (_) {}
+    }
+    if (sidebarCollapseBtn) {
+      const leftIcon = sidebarCollapseBtn.querySelector(".collapse-icon-left");
+      const rightIcon = sidebarCollapseBtn.querySelector(".collapse-icon-right");
+      if (leftIcon) leftIcon.style.display = applied ? "none" : "block";
+      if (rightIcon) rightIcon.style.display = applied ? "block" : "none";
+      const titleKey = applied ? "Expand sidebar" : "Collapse sidebar";
+      sidebarCollapseBtn.setAttribute("title", t(titleKey));
+      sidebarCollapseBtn.setAttribute("aria-label", t(titleKey));
+    }
+    // The width changes in one step, so the new size is already measurable.
+    window.dispatchEvent(new Event("resize"));
+  }
+
+  if (savedSidebarCollapsed()) setSidebarCollapsed(true, { persist: false });
+  desktopLayout.addEventListener("change", () => {
+    setSidebarCollapsed(savedSidebarCollapsed(), { persist: false });
+  });
+
+  sidebarCollapseBtn?.addEventListener("click", () => setSidebarCollapsed());
   maybe("activeRtdlModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeActiveRtdl();
   });
   maybe("rtdlHistoryModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeRtdlHistory();
   });
-  maybe("closeCallDetail")?.addEventListener("click", () => $("callDetailModal").close());
+  maybe("closeCallDetail")?.addEventListener("click", () => {
+    const modal = $("callDetailModal");
+    if (!modal) return;
+    if (typeof modal.close === "function") modal.close();
+    else modal.removeAttribute("open");
+  });
   maybe("callDetailModal")?.addEventListener("click", event => {
     if (event.target !== event.currentTarget) return;
     const r = event.currentTarget.getBoundingClientRect();
-    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) event.currentTarget.close();
+    if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) {
+      if (typeof event.currentTarget.close === "function") event.currentTarget.close();
+      else event.currentTarget.removeAttribute("open");
+    }
   });
   maybe("closeNodeDetail")?.addEventListener("click", closeNodeDetail);
   maybe("nodeDetailModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeNodeDetail();
   });
+  // One Escape closes one layer, the topmost first. The call-detail <dialog>
+  // closes itself on Escape before this listener runs, so its `open` flag is
+  // already false here; capture-phase tracking catches that press instead.
+  let dialogEscape = false;
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && maybe("callDetailModal")?.open) return;
-    if (event.key === "Escape" && !maybe("activeRtdlModal")?.hidden) closeActiveRtdl();
-    if (event.key === "Escape" && !maybe("rtdlHistoryModal")?.hidden) closeRtdlHistory();
-    if (event.key === "Escape" && !maybe("nodeDetailModal")?.hidden) closeNodeDetail();
+    dialogEscape = event.key === "Escape" && Boolean(maybe("callDetailModal")?.open);
+  }, true);
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (dialogEscape || maybe("callDetailModal")?.open) return;
+    if (!maybe("sessionDialog")?.hidden) return closeSessionDialog();
+    if (sessionListActions?.open) {
+      sessionListActions.open = false;
+      sessionListActionsTrigger.focus();
+      return;
+    }
+    if (settingsPopover && !settingsPopover.hidden) {
+      setSettingsPopover(false);
+      settingsTrigger?.focus();
+      return;
+    }
+    if (!maybe("nodeDetailModal")?.hidden) return closeNodeDetail();
+    if (!maybe("activeRtdlModal")?.hidden) return closeActiveRtdl();
+    if (!maybe("rtdlHistoryModal")?.hidden) return closeRtdlHistory();
+    if ($("dashboardSidebar")?.classList.contains("open")) {
+      $("dashboardSidebar").classList.remove("open");
+      maybe("toggleInspector")?.classList.remove("active");
+      maybe("toggleInspector")?.setAttribute("aria-pressed", "false");
+      setTimeout(() => window.dispatchEvent(new Event("resize")), 320);
+    }
   });
 }
 
@@ -1211,6 +1362,7 @@ function renderHandsfree() {
   const active = state.handsfree.enabled && ["starting", "listening", "triggered", "acknowledging", "in_voice"].includes(status);
   button.classList.toggle("offline", !active);
   button.classList.toggle("listening", status === "listening");
+  button.classList.toggle("recording", status === "suspended");
   button.classList.toggle("busy", state.handsfree.busy || ["triggered", "acknowledging", "in_voice"].includes(status));
   button.classList.toggle("error", status === "error" || status === "unavailable");
   label.textContent = state.handsfree.busy
@@ -1383,15 +1535,24 @@ function renderAttachments() {
 function activatePage(name) {
   if (!name) return;
   state.activePage = name;
+  const workspace = document.querySelector(".workspace");
+  if (workspace) workspace.setAttribute("data-active-page", name);
   try {
     localStorage.setItem("robonix.active_page", name);
     if (window.location.hash.slice(1) !== name) {
       history.replaceState(null, "", `#${name}`);
     }
   } catch (_) {}
-  document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
+  document.querySelectorAll("[data-page]").forEach((button) => {
+    const current = button.dataset.page === name;
+    button.classList.toggle("active", current);
+    if (current) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  maybe("settingsTriggerBtn")?.classList.toggle("current-section", name === "audio" || name === "settings");
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   window.dispatchEvent(new CustomEvent("robonix:page", { detail: { name } }));
+  setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
   if (name === "audio") {
     checkAudioServer();
     renderAudioBars();
@@ -1425,25 +1586,35 @@ function forgetActiveTurn() {
   state.expandedActivities.clear();
 }
 
+/// Pilot compacts a conversation's memory only when it receives an explicit
+/// `session_end`; switching to another session id alone leaves the previous
+/// conversation uncompacted. Fire and forget: the switch must not wait on it.
+/// Only a session the user actually spoke in has Pilot memory to compact;
+/// status lines alone (a fresh "new session" notice) do not count.
+function notifySessionEnd() {
+  if (!state.messages.some((item) => item.role === "user")) return;
+  const settings = collectSettings();
+  if (!settings.sessionId) return;
+  fetch("/api/session/end", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ settings }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 function newSession() {
   if (state.busy) {
-    pendingNewSessionTitle = null;
     addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
     return;
   }
-  // Captured at mousedown, before the field blurred. An untouched field still
-  // shows the CURRENT session's name, and naming the new session after it
-  // would clone the name on every click, so only text the user actually
-  // changed counts as a name for the session about to open.
-  const typedTitle = pendingNewSessionTitle ?? (maybe("sessionTitleInput")?.value.trim() || "");
-  pendingNewSessionTitle = null;
-  const requestedTitle = typedTitle && typedTitle !== state.sessionTitle ? typedTitle : "";
   persistCurrentConversation();
+  notifySessionEnd();
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
-  state.sessionTitle = requestedTitle ? uniqueConversationTitle(requestedTitle, state.sessionId) : "";
-  state.customTitle = Boolean(requestedTitle);
+  state.sessionTitle = "";
+  state.customTitle = false;
   state.messages = [];
   state.timeline = [];
   state.plan = null;
@@ -1451,7 +1622,6 @@ function newSession() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
   renderSessionChip();
   // Pilot keys conversation history by session id, so a fresh id is what
   // actually drops the old turns from the next prompt.
@@ -1462,50 +1632,19 @@ function newSession() {
   renderPlan();
   renderSceneAssets();
   renderHistory();
+  if (state.activePage !== "dashboard") {
+    activatePage("dashboard");
+  }
 }
 
-/// Keep the command bar's session chip showing the live conversation title.
-/// It was static markup before, so a reset left the previous name on screen
-/// and made the button look inert.
+function currentConversationTitle() {
+  return state.sessionTitle || truncateTitle(firstUserMessage(), 24) || t("Untitled chat");
+}
+
 function renderSessionChip() {
-  const field = maybe("sessionTitleInput");
-  // Never clobber what the user is in the middle of typing.
-  if (field && document.activeElement !== field) field.value = state.sessionTitle || "";
-}
-
-/// Apply the name field to the open session. Runs on change/blur rather than
-/// on every keystroke so a half-typed name is not written to the sidebar.
-/// An emptied field means "no explicit name", which leaves the conversation
-/// on its message-derived title instead of naming it the empty string.
-function commitSessionTitle() {
-  const field = maybe("sessionTitleInput");
-  if (!field) return;
-  // A New session click is mid-flight and owns this text; renaming the
-  // session being left with it is what produced two chats per click.
-  if (pendingNewSessionTitle !== null) {
-    renderSessionChip();
-    return;
-  }
-  const typed = field.value.trim();
-  if (!typed) {
-    state.customTitle = false;
-    const userPrompt = firstUserMessage();
-    state.sessionTitle = userPrompt ? truncateTitle(userPrompt, 24) : "";
-    if (maybe("promptTitle")) $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
-    renderSessionChip();
-    persistCurrentConversation();
-    return;
-  }
-  if (typed === state.sessionTitle) {
-    renderSessionChip();
-    return;
-  }
-  const title = uniqueConversationTitle(typed, state.sessionId);
-  state.sessionTitle = title;
-  state.customTitle = true;
-  if (maybe("promptTitle")) $("promptTitle").textContent = title;
-  persistCurrentConversation(title, true);
-  renderSessionChip();
+  const title = state.sessionTitle || firstUserMessage() || t("What should Robonix do?");
+  const display = maybe("sessionTitleDisplay");
+  if (display) display.textContent = truncateTitle(title, 72);
 }
 
 async function sendTask() {
@@ -1549,7 +1688,26 @@ async function sendTask() {
       expectedTurnId: wasBusy ? state.activeTurnId : "",
     }));
   };
-  wireStream(socket, () => endStream(socket));
+  wireStream(socket, () => {
+    endStream(socket);
+    settleTurnAfterStream(socket);
+  });
+}
+
+/// A SubmitTask stream ends when its turn is over. The terminal status event
+/// normally clears these pointers, but a dropped frame (proxy restart, older
+/// Pilot) left `activeTurnId`/`taskRunning` set forever, so every later
+/// instruction was labelled as a steer into a turn that had already ended.
+function settleTurnAfterStream(socket) {
+  if (state.activeStreams > 0) return;
+  if (!socket.robonixDone && snapshotHasActiveTasks(state.taskState)) return;
+  if (!state.activeTurnId && !state.taskRunning) return;
+  state.activeTurnId = "";
+  state.activePilotSessionId = "";
+  state.taskRunning = false;
+  state.turnReplied = true;
+  setBusy(false);
+  scheduleRender("messages");
 }
 
 function stopCurrentTask() {
@@ -1560,7 +1718,7 @@ function stopCurrentTask() {
   setButtonLabel(button, t("Aborting"));
   // Everything after this point is teardown; keep the transcript folded.
   state.turnReplied = true;
-  addStatusLine(t("Abort requested; canceling every running task and any robot motion."), "milestone", "Abort requested; canceling every running task and any robot motion.");
+  addStatusLine(t("Abort requested; stopping this session's running task."), "milestone", "Abort requested; stopping this session's running task.");
   addTimeline("cancel", state.activeTurnId
     ? t("abort requested for {turn}", { turn: state.activeTurnId })
     : t("abort requested"));
@@ -1570,7 +1728,6 @@ function stopCurrentTask() {
   const socket = new WebSocket(wsUrl("/ws/abort"));
   socket.onopen = () => socket.send(JSON.stringify({
     settings: interactionSettings(true),
-    expectedTurnId: state.activeTurnId,
   }));
   wireStream(socket, () => (socket.robonixDone ? completeStopState() : resetStopState()));
   socket.addEventListener("message", (event) => {
@@ -1583,7 +1740,7 @@ function stopCurrentTask() {
 function resetStopState() {
   state.stopInFlight = false;
   $("stopButton").disabled = false;
-  setButtonLabel($("stopButton"), t("Abort all tasks"));
+  setButtonLabel($("stopButton"), t("Stop task"));
 }
 
 function completeStopState() {
@@ -1807,6 +1964,13 @@ function handlePilotEvent(event) {
       // The turn is over even if the socket lingers for TTS: fold the run.
       state.turnReplied = true;
       setBusy(state.activeStreams > 0);
+      // Completed/Failed usually arrive without a message. Without this line
+      // the activity group kept previewing the last "in_progress" status and
+      // looked like it was still running after the answer.
+      if (!event.status.message) {
+        const doneKey = Number(event.status.state) === 1 ? "done" : "failed";
+        addStatusLine(t(doneKey), "activity", doneKey);
+      }
     }
     addTimeline(
       "status",
@@ -2140,6 +2304,26 @@ const MD_LINK = /^(https?:\/\/|mailto:)/i;
 /// the message itself (it is persisted to disk as JSON).
 const markdownCache = new WeakMap();
 
+/// `navigator.clipboard` exists only in secure contexts; a phone opening the
+/// client over plain HTTP at the robot's IP has none, so fall back to the
+/// legacy copy command there.
+function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    if (copied) resolve();
+    else reject(new Error("copy failed"));
+  });
+}
+
 function appendAgentMarkdown(el, message) {
   const source = String(message.text || "");
   let cached = markdownCache.get(message);
@@ -2176,12 +2360,36 @@ function markdownNodes(text) {
         i += 1;
       }
       if (i < lines.length) i += 1; // consume the closing fence when present
+      const snippet = document.createElement("div");
+      snippet.className = "code-snippet";
+      const header = document.createElement("header");
+      header.className = "code-snippet-header";
+      const langSpan = document.createElement("span");
+      langSpan.className = "code-lang";
+      langSpan.textContent = fence[1] || "code";
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "code-copy-btn";
+      copyBtn.title = t("Copy code");
+      copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-text">${t("Copy")}</span>`;
+      const codeText = body.join("\n");
+      copyBtn.addEventListener("click", () => {
+        copyText(codeText).then(() => {
+          const span = copyBtn.querySelector(".copy-text");
+          if (span) span.textContent = t("Copied!");
+          setTimeout(() => {
+            if (span) span.textContent = t("Copy");
+          }, 2000);
+        }).catch(() => {});
+      });
+      header.append(langSpan, copyBtn);
       const pre = document.createElement("pre");
       const code = document.createElement("code");
       if (fence[1]) code.className = `language-${fence[1]}`;
-      code.textContent = body.join("\n");
+      code.textContent = codeText;
       pre.appendChild(code);
-      nodes.push(pre);
+      snippet.append(header, pre);
+      nodes.push(snippet);
       continue;
     }
     if (!line.trim()) {
@@ -2429,14 +2637,29 @@ function renderMessageElement(message) {
   el.className = `message ${message.role}`;
   el.dataset.messageId = message.id;
   // Legacy status rows carried meta="status"; the label is noise and the role
-  // is already obvious from the styling.
-  if (message.meta && message.role !== "status") {
+  // is already obvious from the styling. Agent messages show their identity
+  // in .assistant-header (single logo + "Robonix") so omit .meta to avoid duplication.
+  if (message.meta && message.role !== "status" && message.role !== "agent") {
     const meta = document.createElement("span");
     meta.className = "meta";
-    meta.textContent = message.meta;
+    // Stored rows keep the translated label, so a wording change only reaches
+    // new messages. Reverse-map known values back through the i18n table.
+    meta.textContent = window.RobonixI18N?.translateStored?.(message.meta) || message.meta;
     el.appendChild(meta);
   }
   if (message.role === "agent") {
+    const header = document.createElement("div");
+    header.className = "assistant-header";
+    const avatar = document.createElement("div");
+    avatar.className = "assistant-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.innerHTML = robonixMarkSvg(16, 16);
+    const name = document.createElement("span");
+    name.className = "assistant-name";
+    name.textContent = "Robonix";
+    header.append(avatar, name);
+    el.appendChild(header);
+
     const body = document.createElement("div");
     body.className = "agent-markdown-body";
     appendAgentMarkdown(body, message);
@@ -2523,8 +2746,13 @@ function renderMessages() {
     clear(root);
     renderedMessageBlocks = [];
     const empty = document.createElement("div");
-    empty.className = "empty-chat";
-    empty.textContent = t("Ready");
+    empty.className = "empty-chat-hero";
+    empty.innerHTML = `
+      <div class="empty-chat-avatar" aria-hidden="true">
+        ${robonixMarkSvg(34, 34)}
+      </div>
+      <h3 class="empty-chat-title">Robonix</h3>
+    `;
     root.appendChild(empty);
     if (stick) root.scrollTop = root.scrollHeight;
     return;
@@ -2798,9 +3026,11 @@ function enableTreePanZoom(planId, viewport, svg) {
   if (!svg) return;
   treeLiveKeys.add(planId);
 
-  // Read dimensions from viewBox instead of width/height attributes
+  const canvas = svg.querySelector(".bt-canvas") || svg;
   const viewBox = svg.getAttribute("viewBox");
-  const [, , svgWidth, svgHeight] = viewBox ? viewBox.split(/\s+/).map(Number) : [0, 0, 1, 1];
+  const [, , vbWidth, vbHeight] = viewBox ? viewBox.split(/\s+/).map(Number) : [0, 0, 1, 1];
+  const svgWidth = parseFloat(svg.dataset?.contentWidth) || vbWidth || 1;
+  const svgHeight = parseFloat(svg.dataset?.contentHeight) || vbHeight || 1;
   let view = treeViewStates.get(planId);
   let dragging = false;
   let dragDistance = 0;
@@ -2852,7 +3082,12 @@ function enableTreePanZoom(planId, viewport, svg) {
 
   const apply = () => {
     clampView();
-    svg.style.transform = `translate(${Math.round(view.x)}px, ${Math.round(view.y)}px) scale(${view.scale})`;
+    if (canvas && canvas !== svg) {
+      canvas.setAttribute("transform", `translate(${view.x.toFixed(2)}, ${view.y.toFixed(2)}) scale(${view.scale.toFixed(4)})`);
+      svg.style.transform = "";
+    } else {
+      svg.style.transform = `translate(${Math.round(view.x)}px, ${Math.round(view.y)}px) scale(${view.scale})`;
+    }
   };
 
   const fitView = () => {
@@ -2912,7 +3147,104 @@ function enableTreePanZoom(planId, viewport, svg) {
     apply();
   }, { passive: false });
 
+  // Mobile multi-touch gestures: pinch-to-zoom and two-finger panning
+  let touchStartDist = 0;
+  let touchStartScale = 1;
+  let lastTouchMidX = 0;
+  let lastTouchMidY = 0;
+  let isPinching = false;
+  // A tap is one short, unmoved, single-finger touch. Pinches and pans must
+  // not count, or a tap right after zooming would reset the zoom.
+  let lastTapTime = 0;
+  let touchIsTap = false;
+  let touchStartTime = 0;
+  let touchStartX = 0;
+  let touchStartY = 0;
+
+  viewport.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 1) {
+      touchIsTap = true;
+      touchStartTime = Date.now();
+      touchStartX = event.touches[0].clientX;
+      touchStartY = event.touches[0].clientY;
+    } else {
+      touchIsTap = false;
+    }
+    if (event.touches.length === 2) {
+      isPinching = true;
+      dragging = false;
+      viewport.classList.remove("panning");
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      touchStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      touchStartScale = view.scale;
+      lastTouchMidX = (t1.clientX + t2.clientX) / 2;
+      lastTouchMidY = (t1.clientY + t2.clientY) / 2;
+      event.preventDefault();
+    }
+  }, { passive: false });
+
+  viewport.addEventListener("touchmove", (event) => {
+    const touch = event.touches[0];
+    if (touchIsTap && touch && Math.hypot(touch.clientX - touchStartX, touch.clientY - touchStartY) > 8) {
+      touchIsTap = false;
+    }
+    if (event.touches.length === 2 && isPinching) {
+      event.preventDefault();
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (!touchStartDist || dist < 5) return;
+
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const dx = midX - lastTouchMidX;
+      const dy = midY - lastTouchMidY;
+      lastTouchMidX = midX;
+      lastTouchMidY = midY;
+
+      const box = viewport.getBoundingClientRect();
+      const px = midX - box.left - (pad ? pad.left : 0);
+      const py = midY - box.top - (pad ? pad.top : 0);
+
+      const targetScale = touchStartScale * (dist / touchStartDist);
+      const next = Math.min(4, Math.max(0.3, targetScale));
+      const ratio = next / view.scale;
+
+      view.x = px - (px - view.x) * ratio + dx;
+      view.y = py - (py - view.y) * ratio + dy;
+      view.scale = next;
+      view.touched = true;
+      apply();
+    }
+  }, { passive: false });
+
+  const endTouch = (event) => {
+    if (event.touches.length < 2) {
+      isPinching = false;
+      touchStartDist = 0;
+    }
+    if (event.touches.length === 0) {
+      const now = Date.now();
+      const tapped = event.type === "touchend" && touchIsTap && now - touchStartTime < 300;
+      touchIsTap = false;
+      if (!tapped) {
+        lastTapTime = 0;
+        return;
+      }
+      if (now - lastTapTime < 300) {
+        lastTapTime = 0;
+        fitView();
+        return;
+      }
+      lastTapTime = now;
+    }
+  };
+  viewport.addEventListener("touchend", endTouch);
+  viewport.addEventListener("touchcancel", endTouch);
+
   viewport.addEventListener("pointerdown", (event) => {
+    if (isPinching) return;
     if (event.button !== 0) return;
     dragging = true;
     dragDistance = 0;
@@ -2921,9 +3253,10 @@ function enableTreePanZoom(planId, viewport, svg) {
   });
 
   viewport.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
+    if (isPinching || !dragging) return;
     // The pointer was released outside the viewport before capture started.
-    if (event.buttons === 0) {
+    // iOS Safari sometimes reports event.buttons === 0 during touch moves, so exclude touch.
+    if (event.buttons === 0 && event.pointerType !== "touch") {
       endDrag(event);
       return;
     }
@@ -3014,117 +3347,592 @@ function renderBehaviorTree(root, plan, resultMaps, runningIndex, onSelect = ren
   });
 }
 
+function nodeKindMeta(node) {
+  const isLeaf = Boolean(node?.call?.name);
+  if (isLeaf) return { kind: "leaf", tag: "ACT", icon: "⚡" };
+  const rawKind = String(node?.kind || (node?.children?.length ? "sequence" : "leaf")).toLowerCase();
+  if (rawKind === "parallel") return { kind: "parallel", tag: "PAR", icon: "⇉" };
+  if (rawKind === "if") return { kind: "if", tag: "IF", icon: "◇" };
+  if (rawKind === "repeat") return { kind: "repeat", tag: "↺ LOOP", icon: "↺" };
+  if (rawKind === "while") return { kind: "while", tag: "↻ WHILE", icon: "↻" };
+  if (rawKind === "do") return { kind: "do", tag: "DO", icon: "▶" };
+  return { kind: "sequence", tag: "SEQ", icon: "→" };
+}
+
+function findSkippedNodeIndices(plan, resultMaps, runningIndex) {
+  const skipped = new Set();
+  const byIndex = new Map((plan?.nodes || []).map((n) => [Number(n.index), n]));
+  (plan?.nodes || []).forEach((node) => {
+    const k = String(node?.kind || "").toLowerCase();
+    if (k === "if") {
+      const children = (node.children || []).map((idx) => byIndex.get(Number(idx))).filter(Boolean);
+      if (children.length >= 2) {
+        const s0 = statusKey(aggregateNodeStatus(children[0], plan, resultMaps, runningIndex));
+        const s1 = statusKey(aggregateNodeStatus(children[1], plan, resultMaps, runningIndex));
+        if ((s0 === "success" || s0 === "running") && s1 === "pending") {
+          markSubtreeSkipped(children[1]);
+        } else if ((s1 === "success" || s1 === "running") && s0 === "pending") {
+          markSubtreeSkipped(children[0]);
+        }
+      }
+    } else if (k === "repeat" || k === "while") {
+      const parentStatus = statusKey(aggregateNodeStatus(node, plan, resultMaps, runningIndex));
+      if (parentStatus === "success") {
+        (node.children || []).forEach((cIdx) => {
+          const child = byIndex.get(Number(cIdx));
+          if (child && statusKey(aggregateNodeStatus(child, plan, resultMaps, runningIndex)) === "pending") {
+            markSubtreeSkipped(child);
+          }
+        });
+      }
+    }
+  });
+
+  function markSubtreeSkipped(subRoot) {
+    if (!subRoot || skipped.has(Number(subRoot.index))) return;
+    skipped.add(Number(subRoot.index));
+    (subRoot.children || []).forEach((cIdx) => markSubtreeSkipped(byIndex.get(Number(cIdx))));
+  }
+
+  return skipped;
+}
+
+function nodeCardLabels(node, status, kindMeta) {
+  const isLeaf = kindMeta.kind === "leaf";
+  let title = "";
+  let meta = "";
+  if (isLeaf) {
+    title = node.call?.name || node.opId || t("action");
+    meta = node.call ? compactProvider(node.call) : (node.description || displayStatus(status));
+  } else if (kindMeta.kind === "sequence") {
+    title = node.description || t("Sequence");
+    const count = (node.children || []).length;
+    meta = count ? t("{count} steps", { count }) : t("Sequence");
+  } else if (kindMeta.kind === "parallel") {
+    title = node.description || t("Parallel");
+    const count = (node.children || []).length;
+    meta = count ? t("{count} concurrent", { count }) : t("Parallel");
+  } else if (kindMeta.kind === "if") {
+    title = t("If Branch");
+    meta = nodeControlMeta(node) || node.description || t("Condition");
+  } else if (kindMeta.kind === "repeat") {
+    title = node.repeatCount ? t("Repeat ×{count}", { count: node.repeatCount }) : t("Repeat");
+    meta = node.description || (node.repeatCount ? t("{count} iterations", { count: node.repeatCount }) : t("Loop"));
+  } else if (kindMeta.kind === "while") {
+    title = node.maxIterations ? t("While ≤{count}", { count: node.maxIterations }) : t("While");
+    meta = nodeControlMeta(node) || node.description || t("Condition loop");
+  } else {
+    title = nodeLabel(node);
+    meta = nodeControlMeta(node) || displayStatus(status);
+  }
+  return { title, meta };
+}
+
+function fitTextToWidth(text, maxPx, fontPx = 9) {
+  const str = String(text || "");
+  if (!str) return "";
+  let curWidth = 0;
+  const ellipsisWidth = fontPx * 0.9;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    const code = ch.charCodeAt(0);
+    const charW = (code >= 0x4e00 && code <= 0x9fff || code >= 0x3000 && code <= 0x303f || code >= 0xff00 && code <= 0xffef)
+      ? fontPx * 1.05
+      : (/[A-Z]/.test(ch) ? fontPx * 0.72 : (/[0-9_a-z]/.test(ch) ? fontPx * 0.58 : fontPx * 0.45));
+    curWidth += charW;
+  }
+  if (curWidth <= maxPx) return str;
+
+  curWidth = 0;
+  let result = "";
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    const code = ch.charCodeAt(0);
+    const charW = (code >= 0x4e00 && code <= 0x9fff || code >= 0x3000 && code <= 0x303f || code >= 0xff00 && code <= 0xffef)
+      ? fontPx * 1.05
+      : (/[A-Z]/.test(ch) ? fontPx * 0.72 : (/[0-9_a-z]/.test(ch) ? fontPx * 0.58 : fontPx * 0.45));
+    if (curWidth + charW + ellipsisWidth > maxPx) {
+      return result ? `${result}…` : "…";
+    }
+    curWidth += charW;
+    result += ch;
+  }
+  return result ? `${result}…` : str;
+}
+
 function makeBehaviorTreeSvg(treeRoot, plan, resultMaps, runningIndex, onSelect = renderExecutionDetail) {
   const nodes = plan?.nodes || [];
   const byIndex = new Map(nodes.map((node) => [Number(node.index), node]));
-  const nodeStateByIndex = resultMaps.byIndex;
-  const nodeW = 104;
-  const nodeH = 38;
-  const leafGap = 22;
-  const levelGap = 72;
+  const skippedIndices = findSkippedNodeIndices(plan, resultMaps, runningIndex);
+  const nodeW = 126;
+  const nodeH = 42;
+  const gapY = 32;
+  const gapX = 32;
   const topPad = 18;
-  const sidePad = 18;
-  const laid = [];
-  let cursor = sidePad;
+  const sidePad = 36;
+  const railMargin = 28;
+  const loopRailWidth = 60;
 
-  const layout = (node, depth) => {
-    const children = (node.children || []).map((child) => byIndex.get(Number(child))).filter(Boolean);
-    if (!children.length) {
-      const pos = { node, depth, x: cursor + nodeW / 2, y: topPad + depth * levelGap };
-      cursor += nodeW + leafGap;
-      laid.push(pos);
-      return pos;
+  const laidNodes = [];
+  const laidEdges = [];
+  const visited = new Set();
+
+  function layoutSubtree(node) {
+    if (!node || visited.has(Number(node.index))) {
+      return { w: nodeW, h: nodeH, entryX: nodeW / 2, exitX: nodeW / 2, exitY: nodeH, render: () => {} };
     }
-    const childPos = children.map((child) => layout(child, depth + 1));
-    const x = (childPos[0].x + childPos[childPos.length - 1].x) / 2;
-    const pos = { node, depth, x, y: topPad + depth * levelGap };
-    laid.push(pos);
-    return pos;
-  };
+    visited.add(Number(node.index));
 
-  layout(treeRoot, 0);
-  const maxDepth = laid.reduce((m, item) => Math.max(m, item.depth), 0);
-  const width = Math.max(220, cursor + sidePad);
-  const height = Math.max(88, topPad * 2 + nodeH + maxDepth * levelGap);
+    const kind = String(node.kind || (node.children?.length ? "sequence" : "leaf")).toLowerCase();
+    const children = (node.children || []).map((idx) => byIndex.get(Number(idx))).filter(Boolean);
+
+    if (!children.length) {
+      return {
+        w: nodeW,
+        h: nodeH,
+        entryX: nodeW / 2,
+        exitX: nodeW / 2,
+        exitY: nodeH,
+        render: (ox, oy) => {
+          laidNodes.push({ node, kind: "leaf", x: ox, y: oy, w: nodeW, h: nodeH });
+        },
+      };
+    }
+
+    if (kind === "parallel") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const totalChildrenW = childLayouts.reduce((sum, c) => sum + c.w, 0) + (children.length - 1) * gapX;
+      const maxChildH = Math.max(...childLayouts.map((c) => c.h));
+      const w = Math.max(nodeW, totalChildrenW);
+      const parentX = (w - nodeW) / 2;
+      const forkY = nodeH + 14;
+      const childrenY = forkY + 16;
+      const joinY = childrenY + maxChildH + 14;
+      const totalH = joinY + 16;
+
+      return {
+        w,
+        h: totalH,
+        entryX: w / 2,
+        exitX: w / 2,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind: "parallel", x: px, y: py, w: nodeW, h: nodeH });
+
+          let curX = ox + (w - totalChildrenW) / 2;
+          const childEntries = [];
+          const childExits = [];
+
+          childLayouts.forEach((cl) => {
+            const cx = curX;
+            const cy = oy + childrenY;
+            cl.render(cx, cy);
+            childEntries.push({ x: cx + cl.entryX, y: cy });
+            childExits.push({ x: cx + cl.exitX, y: cy + cl.exitY });
+            curX += cl.w + gapX;
+          });
+
+          laidEdges.push({
+            type: "parallel-fork",
+            parentPoint: { x: ox + w / 2, y: oy + nodeH },
+            forkY: oy + forkY,
+            minX: childEntries[0].x,
+            maxX: childEntries[childEntries.length - 1].x,
+            children: childEntries,
+          });
+
+          laidEdges.push({
+            type: "parallel-join",
+            joinY: oy + joinY,
+            minX: childExits[0].x,
+            maxX: childExits[childExits.length - 1].x,
+            children: childExits,
+            exitPoint: { x: ox + w / 2, y: oy + totalH },
+          });
+        },
+      };
+    }
+
+    if (kind === "if") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const totalChildrenW = childLayouts.reduce((sum, c) => sum + c.w, 0) + (children.length - 1) * gapX;
+      const maxChildH = Math.max(...childLayouts.map((c) => c.h));
+      const w = Math.max(nodeW, totalChildrenW);
+      const parentX = (w - nodeW) / 2;
+      const branchGap = 32;
+      const joinY = nodeH + branchGap + maxChildH + 14;
+      const totalH = joinY + 14;
+
+      return {
+        w,
+        h: totalH,
+        entryX: w / 2,
+        exitX: w / 2,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind: "if", x: px, y: py, w: nodeW, h: nodeH });
+
+          let curX = ox + (w - totalChildrenW) / 2;
+          const childExits = [];
+          childLayouts.forEach((cl, i) => {
+            const cx = curX;
+            const cy = oy + nodeH + branchGap;
+            cl.render(cx, cy);
+            const isSkipped = children[i] && skippedIndices.has(Number(children[i].index));
+            laidEdges.push({
+              type: i === 0 ? "if-true" : "if-false",
+              from: { x: ox + w / 2, y: oy + nodeH },
+              to: { x: cx + cl.entryX, y: cy },
+              label: i === 0 ? t("✓ True") : t("✗ False"),
+              isSkipped,
+            });
+            childExits.push({ x: cx + cl.exitX, y: cy + cl.exitY });
+            curX += cl.w + gapX;
+          });
+
+          const minExitX = Math.min(...childExits.map((c) => c.x));
+          const maxExitX = Math.max(...childExits.map((c) => c.x));
+          laidEdges.push({
+            type: "if-join",
+            joinY: oy + joinY,
+            minX: minExitX,
+            maxX: maxExitX,
+            children: childExits,
+            exitPoint: { x: ox + w / 2, y: oy + totalH },
+            skippedChildren: children.map((c) => c && skippedIndices.has(Number(c.index))),
+          });
+        },
+      };
+    }
+
+    if (kind === "repeat" || kind === "while") {
+      const childLayouts = children.map((c) => layoutSubtree(c));
+      const leftW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.entryX));
+      const rightW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.w - c.entryX));
+      const axisX = leftW;
+      const w = leftW + rightW + loopRailWidth;
+      const parentX = axisX - nodeW / 2;
+      const childTotalH = childLayouts.reduce((sum, c) => sum + c.h, 0) + (children.length - 1) * gapY;
+      const loopMarginBottom = 16;
+      const totalH = nodeH + gapY + childTotalH + loopMarginBottom;
+
+      return {
+        w,
+        h: totalH,
+        entryX: axisX,
+        exitX: axisX,
+        exitY: totalH,
+        render: (ox, oy) => {
+          const px = ox + parentX;
+          const py = oy;
+          laidNodes.push({ node, kind, x: px, y: py, w: nodeW, h: nodeH });
+
+          let curY = oy + nodeH + gapY;
+          let lastExit = { x: ox + axisX, y: py + nodeH };
+          const loopBadgeText = node.repeatCount
+            ? `×${node.repeatCount}`
+            : (node.maxIterations ? `≤${node.maxIterations}` : "↺");
+
+          childLayouts.forEach((cl, i) => {
+            const cx = ox + axisX - cl.entryX;
+            const cy = curY;
+            cl.render(cx, cy);
+            laidEdges.push({
+              type: i === 0 ? "loop-entry" : "sequence-step",
+              from: lastExit,
+              to: { x: ox + axisX, y: cy },
+            });
+            lastExit = { x: cx + cl.exitX, y: cy + cl.exitY };
+            curY += cl.h + gapY;
+          });
+
+          // Loopback from exit of loop body back up to Repeat/While card
+          const railX = ox + axisX + rightW + railMargin;
+          laidEdges.push({
+            type: "loopback",
+            kind,
+            nodeIndex: node.index,
+            from: lastExit,
+            to: { x: px + nodeW, y: py + nodeH / 2 },
+            railX,
+            badge: loopBadgeText,
+          });
+        },
+      };
+    }
+
+    // Default: Sequence (Cascade Vertically)
+    const childLayouts = children.map((c) => layoutSubtree(c));
+    const leftW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.entryX));
+    const rightW = Math.max(nodeW / 2, ...childLayouts.map((c) => c.w - c.entryX));
+    const axisX = leftW;
+    const w = leftW + rightW;
+    const parentX = axisX - nodeW / 2;
+    const childTotalH = childLayouts.reduce((sum, c) => sum + c.h, 0) + (children.length - 1) * gapY;
+    const totalH = nodeH + gapY + childTotalH;
+
+    return {
+      w,
+      h: totalH,
+      entryX: axisX,
+      exitX: axisX,
+      exitY: totalH,
+      render: (ox, oy) => {
+        const px = ox + parentX;
+        const py = oy;
+        laidNodes.push({ node, kind: "sequence", x: px, y: py, w: nodeW, h: nodeH });
+
+        let curY = oy + nodeH + gapY;
+        let lastExit = { x: ox + axisX, y: py + nodeH };
+
+        childLayouts.forEach((cl) => {
+          const cx = ox + axisX - cl.entryX;
+          const cy = curY;
+          cl.render(cx, cy);
+          laidEdges.push({
+            type: "sequence-step",
+            from: lastExit,
+            to: { x: ox + axisX, y: cy },
+          });
+          lastExit = { x: cx + cl.exitX, y: cy + cl.exitY };
+          curY += cl.h + gapY;
+        });
+      },
+    };
+  }
+
+  const rootLayout = layoutSubtree(treeRoot);
+  rootLayout.render(sidePad, topPad);
+
+  const width = Math.max(220, rootLayout.w + sidePad * 2);
+  const height = Math.max(88, rootLayout.h + topPad * 2);
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("class", "bt-svg");
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  // Size the element like the drawing itself. Without this the SVG stretches to
-  // the panel, the browser fits the viewBox inside it, and the pan/zoom
-  // transform ends up scaling a box that no longer matches the tree.
-  svg.setAttribute("width", String(width));
-  svg.setAttribute("height", String(height));
+  svg.dataset.contentWidth = String(width);
+  svg.dataset.contentHeight = String(height);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
 
-  const posByIndex = new Map(laid.map((item) => [Number(item.node.index), item]));
-  laid.forEach(({ node, x, y }) => {
-    const childPositions = (node.children || [])
-      .map((child) => posByIndex.get(Number(child)))
-      .filter(Boolean);
-    if (!childPositions.length) return;
-    const y1 = y + nodeH;
-    const y2 = childPositions[0].y;
-    const branchY = y1 + (y2 - y1) / 2;
-    const minX = Math.min(...childPositions.map((child) => child.x));
-    const maxX = Math.max(...childPositions.map((child) => child.x));
-    const path = document.createElementNS(ns, "path");
-    const segments = [`M ${x} ${y1} V ${branchY}`];
-    if (childPositions.length > 1) segments.push(`M ${minX} ${branchY} H ${maxX}`);
-    childPositions.forEach((child) => segments.push(`M ${child.x} ${branchY} V ${child.y}`));
-    path.setAttribute("class", "bt-edge");
-    path.setAttribute("d", segments.join(" "));
-    svg.appendChild(path);
-  });
+  const canvas = document.createElementNS(ns, "g");
+  canvas.setAttribute("class", "bt-canvas");
+  canvas.setAttribute("transform", "translate(0, 0) scale(1)");
+  svg.appendChild(canvas);
 
-  const rootPos = posByIndex.get(Number(treeRoot?.index));
-  if (rootPos) {
-    const entry = document.createElementNS(ns, "circle");
-    entry.setAttribute("class", "bt-entry");
-    entry.setAttribute("cx", String(rootPos.x));
-    entry.setAttribute("cy", "8");
-    entry.setAttribute("r", "3");
-    svg.appendChild(entry);
-    const line = document.createElementNS(ns, "path");
-    line.setAttribute("class", "bt-edge");
-    line.setAttribute("d", `M ${rootPos.x} 11 L ${rootPos.x} ${rootPos.y}`);
-    svg.appendChild(line);
+  function createSvgPath(d, className) {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("class", className);
+    p.setAttribute("d", d);
+    return p;
   }
 
-  laid.forEach(({ node, x, y }) => {
+  function createSvgRect(x, y, w, h, rx, className) {
+    const r = document.createElementNS(ns, "rect");
+    r.setAttribute("class", className);
+    r.setAttribute("x", String(x));
+    r.setAttribute("y", String(y));
+    r.setAttribute("width", String(w));
+    r.setAttribute("height", String(h));
+    r.setAttribute("rx", String(rx));
+    return r;
+  }
+
+  function createSvgText(x, y, text, className) {
+    const t = document.createElementNS(ns, "text");
+    t.setAttribute("class", className);
+    t.setAttribute("x", String(x));
+    t.setAttribute("y", String(y));
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = text;
+    return t;
+  }
+
+  function createSvgArrow(x, y, dir = "down") {
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("class", "bt-arrow");
+    if (dir === "left") {
+      p.setAttribute("d", `M ${x + 4.5} ${y - 3} L ${x} ${y} L ${x + 4.5} ${y + 3} Z`);
+    } else {
+      p.setAttribute("d", `M ${x - 3} ${y - 4.5} L ${x} ${y} L ${x + 3} ${y - 4.5} Z`);
+    }
+    return p;
+  }
+
+  // Draw Edges first (rendered underneath cards)
+  laidEdges.forEach((e) => {
+    if (e.type === "parallel-fork") {
+      canvas.appendChild(createSvgPath(`M ${e.parentPoint.x} ${e.parentPoint.y} V ${e.forkY}`, "bt-edge"));
+      canvas.appendChild(createSvgPath(`M ${e.minX} ${e.forkY} H ${e.maxX}`, "bt-edge-bus"));
+      const badgeW = 50;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(e.parentPoint.x - badgeW / 2, e.forkY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
+      canvas.appendChild(createSvgText(e.parentPoint.x, e.forkY + 3.2, t("PARALLEL"), "bt-bus-text"));
+      e.children.forEach((ch) => {
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${e.forkY} V ${ch.y}`, "bt-edge"));
+        canvas.appendChild(createSvgArrow(ch.x, ch.y, "down"));
+      });
+    } else if (e.type === "parallel-join") {
+      e.children.forEach((ch) => {
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${ch.y} V ${e.joinY}`, "bt-edge"));
+      });
+      canvas.appendChild(createSvgPath(`M ${e.minX} ${e.joinY} H ${e.maxX}`, "bt-edge-bus"));
+      const badgeW = 36;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(e.exitPoint.x - badgeW / 2, e.joinY - badgeH / 2, badgeW, badgeH, 6.5, "bt-bus-badge"));
+      canvas.appendChild(createSvgText(e.exitPoint.x, e.joinY + 3.2, t("JOIN"), "bt-bus-text"));
+      canvas.appendChild(createSvgPath(`M ${e.exitPoint.x} ${e.joinY} V ${e.exitPoint.y}`, "bt-edge"));
+    } else if (e.type === "if-join") {
+      e.children.forEach((ch, idx) => {
+        const isSkipped = Boolean(e.skippedChildren && e.skippedChildren[idx]);
+        canvas.appendChild(createSvgPath(`M ${ch.x} ${ch.y} V ${e.joinY}`, `bt-edge ${isSkipped ? "bt-edge-skipped" : ""}`));
+      });
+      if (Math.abs(e.minX - e.maxX) > 1) {
+        canvas.appendChild(createSvgPath(`M ${e.minX} ${e.joinY} H ${e.maxX}`, "bt-edge bt-edge-if-bus"));
+      }
+      canvas.appendChild(createSvgPath(`M ${e.exitPoint.x} ${e.joinY} V ${e.exitPoint.y}`, "bt-edge"));
+    } else if (e.type === "sequence-step") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const d = Math.abs(e.from.x - e.to.x) < 2
+        ? `M ${e.from.x} ${e.from.y} V ${e.to.y}`
+        : `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      canvas.appendChild(createSvgPath(d, "bt-edge"));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+    } else if (e.type === "if-true" || e.type === "if-false") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const midX = (e.from.x + e.to.x) / 2;
+      const d = `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      const isTrue = e.type === "if-true";
+      canvas.appendChild(createSvgPath(d, `bt-edge ${e.isSkipped ? "bt-edge-skipped" : ""}`));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+      const badgeW = isTrue ? 40 : 42;
+      const badgeH = 13;
+      canvas.appendChild(createSvgRect(midX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH, 3.5, `bt-branch-badge branch-${isTrue ? "true" : "false"}`));
+      canvas.appendChild(createSvgText(midX, midY + 3.2, e.label, `bt-branch-text branch-${isTrue ? "true" : "false"}-text`));
+    } else if (e.type === "loop-entry") {
+      const midY = (e.from.y + e.to.y) / 2;
+      const d = Math.abs(e.from.x - e.to.x) < 2
+        ? `M ${e.from.x} ${e.from.y} V ${e.to.y}`
+        : `M ${e.from.x} ${e.from.y} V ${midY} H ${e.to.x} V ${e.to.y}`;
+      canvas.appendChild(createSvgPath(d, "bt-edge bt-edge-loop-entry"));
+      canvas.appendChild(createSvgArrow(e.to.x, e.to.y, "down"));
+    } else if (e.type === "loopback") {
+      const centerX = e.from.x;
+      const exitY = e.from.y;
+      const splitY = exitY + 10;
+      const targetX = e.to.x;
+      const targetY = e.to.y;
+      const railX = e.railX;
+
+      const d = `M ${centerX} ${exitY} V ${splitY} C ${centerX} ${splitY + 8}, ${centerX + 6} ${splitY + 12}, ${centerX + 14} ${splitY + 12} H ${railX - 14} C ${railX - 6} ${splitY + 12}, ${railX} ${splitY + 8}, ${railX} ${splitY} V ${targetY + 12} C ${railX} ${targetY + 4}, ${railX - 6} ${targetY}, ${railX - 14} ${targetY} H ${targetX + 5}`;
+
+      canvas.appendChild(createSvgPath(d, "bt-edge bt-edge-loop"));
+
+      const arrow = document.createElementNS(ns, "polygon");
+      arrow.setAttribute("class", "bt-loop-arrow");
+      arrow.setAttribute("points", `${targetX + 6},${targetY - 3.5} ${targetX},${targetY} ${targetX + 6},${targetY + 3.5}`);
+      canvas.appendChild(arrow);
+
+      if (e.badge) {
+        const midY = (splitY + targetY) / 2;
+        const icon = e.kind === "while" ? "↻" : "↺";
+        const textStr = `${icon} ${e.badge}`;
+        const badgeW = Math.max(34, textStr.length * 6.5 + 12);
+        const badgeH = 14;
+        canvas.appendChild(createSvgRect(railX - badgeW / 2, midY - badgeH / 2, badgeW, badgeH, 7, "bt-loop-badge"));
+        canvas.appendChild(createSvgText(railX, midY + 3.2, textStr, "bt-loop-text"));
+      }
+    }
+  });
+
+  // Entry marker at the top of root
+  const rootNodeItem = laidNodes.find((item) => Number(item.node.index) === Number(treeRoot?.index));
+  if (rootNodeItem) {
+    const rx = rootNodeItem.x + rootNodeItem.w / 2;
+    const ry = rootNodeItem.y;
+    const entry = document.createElementNS(ns, "circle");
+    entry.setAttribute("class", "bt-entry");
+    entry.setAttribute("cx", String(rx));
+    entry.setAttribute("cy", String(Math.max(4, ry - 8)));
+    entry.setAttribute("r", "3");
+    canvas.appendChild(entry);
+    if (ry > 10) {
+      canvas.appendChild(createSvgPath(`M ${rx} ${Math.max(6, ry - 6)} L ${rx} ${ry}`, "bt-edge"));
+    }
+  }
+
+  // Draw Nodes on top of Edges
+  laidNodes.forEach(({ node, x, y, w, h }) => {
     const status = aggregateNodeStatus(node, plan, resultMaps, runningIndex);
     const key = statusKey(status);
+    const isRunning = isRunningNode(node, runningIndex);
+    const isSkipped = skippedIndices.has(Number(node.index));
+    const kindMeta = nodeKindMeta(node);
+    const { title: titleText, meta: metaText } = nodeCardLabels(node, status, kindMeta);
+
     const g = document.createElementNS(ns, "g");
-    g.setAttribute("class", `bt-node status-${key}${isRunningNode(node, runningIndex) ? " active" : ""}`);
-    g.setAttribute("transform", `translate(${x - nodeW / 2}, ${y})`);
+    g.setAttribute("class", `bt-node status-${key} kind-${kindMeta.kind}${isRunning ? " active" : ""}${isSkipped ? " status-skipped" : ""}`);
+    g.setAttribute("transform", `translate(${x}, ${y})`);
     g.setAttribute("role", "button");
     g.style.cursor = "pointer";
+
     const title = document.createElementNS(ns, "title");
     title.textContent = `${nodeLabel(node)} · ${capabilityLabel(node)} · ${displayStatus(status)}`;
+
     const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("width", String(nodeW));
-    rect.setAttribute("height", String(nodeH));
-    rect.setAttribute("rx", "5");
+    rect.setAttribute("class", "bt-node-box");
+    rect.setAttribute("width", String(w));
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("rx", "6");
+
     const accent = document.createElementNS(ns, "rect");
     accent.setAttribute("class", "bt-node-accent");
     accent.setAttribute("x", "0");
     accent.setAttribute("y", "4");
     accent.setAttribute("width", "2.5");
-    accent.setAttribute("height", String(nodeH - 8));
+    accent.setAttribute("height", String(h - 8));
     accent.setAttribute("rx", "1.25");
-    const text = document.createElementNS(ns, "text");
-    text.setAttribute("x", String(nodeW / 2));
-    text.setAttribute("y", "16");
-    text.setAttribute("text-anchor", "middle");
-    text.textContent = ellipsize(nodeLabel(node), 15);
-    const meta = document.createElementNS(ns, "text");
-    meta.setAttribute("class", "bt-node-meta");
-    meta.setAttribute("x", String(nodeW / 2));
-    meta.setAttribute("y", "30");
-    meta.setAttribute("text-anchor", "middle");
-    meta.textContent = node.call ? ellipsize(compactProvider(node.call), 17) : displayStatus(status);
-    g.append(title, rect, accent, text, meta);
+
+    const badgeW = kindMeta.tag.length >= 6 ? 36 : kindMeta.tag.length >= 4 ? 26 : 22;
+    const kindBadge = document.createElementNS(ns, "rect");
+    kindBadge.setAttribute("class", "bt-node-kind-badge");
+    kindBadge.setAttribute("x", "6");
+    kindBadge.setAttribute("y", "5.5");
+    kindBadge.setAttribute("width", String(badgeW));
+    kindBadge.setAttribute("height", "11.5");
+    kindBadge.setAttribute("rx", "2.5");
+
+    const kindText = document.createElementNS(ns, "text");
+    kindText.setAttribute("class", "bt-node-kind-text");
+    kindText.setAttribute("x", String(6 + badgeW / 2));
+    kindText.setAttribute("y", "13.8");
+    kindText.setAttribute("text-anchor", "middle");
+    kindText.textContent = kindMeta.tag;
+
+    const titleX = 6 + badgeW + 5;
+    const maxTitlePx = Math.max(20, w - titleX - 8);
+    const nodeTitle = document.createElementNS(ns, "text");
+    nodeTitle.setAttribute("class", "bt-node-title");
+    nodeTitle.setAttribute("x", String(titleX));
+    nodeTitle.setAttribute("y", "14.5");
+    nodeTitle.setAttribute("text-anchor", "start");
+    nodeTitle.textContent = fitTextToWidth(titleText, maxTitlePx, 9);
+
+    const maxMetaPx = Math.max(20, w - 8 - 8);
+    const nodeMeta = document.createElementNS(ns, "text");
+    nodeMeta.setAttribute("class", "bt-node-meta");
+    nodeMeta.setAttribute("x", "8");
+    nodeMeta.setAttribute("y", "31");
+    nodeMeta.setAttribute("text-anchor", "start");
+    nodeMeta.textContent = fitTextToWidth(metaText, maxMetaPx, 7.5);
+
+    g.append(title, rect, accent, kindBadge, kindText, nodeTitle, nodeMeta);
     g.addEventListener("click", () => onSelect(node, status, resultForNode(node, resultMaps)));
-    svg.appendChild(g);
+    canvas.appendChild(g);
   });
 
   return svg;
@@ -3151,7 +3959,12 @@ function makePlanRow(node, status, depth, runningIndex) {
   const meta = document.createElement("div");
   meta.className = "node-meta";
   const type = document.createElement("span");
-  type.textContent = `#${node.index} · ${node.kind || "op"}`;
+  const control = nodeControlMeta(node);
+  const kindMeta = nodeKindMeta(node);
+  const kindBadge = document.createElement("span");
+  kindBadge.className = `kind-tag kind-${kindMeta.kind}`;
+  kindBadge.textContent = kindMeta.tag;
+  type.append(kindBadge, document.createTextNode(`#${node.index} · ${node.kind || "op"}${control ? ` · ${control}` : ""}`));
   const provider = document.createElement("span");
   provider.textContent = capabilityLabel(node);
   meta.append(type, provider);
@@ -3159,6 +3972,18 @@ function makePlanRow(node, status, depth, runningIndex) {
   row.append(rail, body);
   row.addEventListener("click", () => showNodeDetail(node, status));
   return row;
+}
+
+// Repeat count, while cap, do-node binding, or a one-line condition. Empty for
+// plain sequence/parallel nodes so their meta line stays as it was.
+function nodeControlMeta(node) {
+  if (!node) return "";
+  if (node.repeatCount) return `×${node.repeatCount}`;
+  if (node.maxIterations) return `≤${node.maxIterations}`;
+  if (node.bind) return `→ ${node.bind}`;
+  const condition = node.condition ?? node.conditionJson;
+  if (condition === undefined || condition === "") return "";
+  return typeof condition === "string" ? condition : JSON.stringify(condition);
 }
 
 function nodeLabel(node) {
@@ -3281,8 +4106,24 @@ function ellipsize(text, max) {
 
 function pickRunningIndex(plan, nodeStateByIndex) {
   const callable = plan.nodes.filter((node) => node.call);
-  const explicitRunning = plan.nodes.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
-  if (explicitRunning) return explicitRunning.index;
+  const explicitRunningCall = callable.find((node) => nodeStateByIndex.get(node.index)?.state === "RUNNING");
+  if (explicitRunningCall) return explicitRunningCall.index;
+  const explicitRunningOperator = plan.nodes.find((node) => !node.call && nodeStateByIndex.get(node.index)?.state === "RUNNING");
+  if (explicitRunningOperator) {
+    const byIndex = new Map(plan.nodes.map((node) => [Number(node.index), node]));
+    const activeLeaf = (node) => {
+      if (node.call) return nodeStateByIndex.has(node.index) ? null : node;
+      const children = (node.children || []).map((index) => byIndex.get(Number(index))).filter(Boolean);
+      const runningChild = children.find((child) => nodeStateByIndex.get(child.index)?.state === "RUNNING");
+      if (runningChild) return activeLeaf(runningChild);
+      for (const child of children) {
+        const pending = activeLeaf(child);
+        if (pending) return pending;
+      }
+      return null;
+    };
+    return activeLeaf(explicitRunningOperator)?.index ?? explicitRunningOperator.index;
+  }
   const firstPending = callable.find((node) => !nodeStateByIndex.has(node.index));
   return firstPending?.index ?? callable.at(-1)?.index ?? plan.rootIndex ?? 0;
 }
@@ -3544,14 +4385,19 @@ function renderActivePlans(error = "") {
   const modalSummary = maybe("activeRtdlModalSummary");
   if (!root || !count) return;
   clear(root);
+  const button = maybe("openActiveRtdl");
   if (error) {
-    count.textContent = t("unavailable");
+    // The count badge is a few characters wide; the reason goes in the
+    // tooltip and the modal instead of a truncated word.
+    count.textContent = "—";
+    button?.setAttribute("title", `${t("Plan overview")}: ${t("Live Executor query failed")}`);
     if (modalSummary) modalSummary.textContent = t("Live Executor query failed");
     root.appendChild(executorErrorNotice(error));
     return;
   }
   const planCount = state.executorPlans.length;
   count.textContent = String(planCount);
+  button?.setAttribute("title", t("Plan overview"));
   if (modalSummary) modalSummary.textContent = t(
     planCount === 1 ? "{count} live plan reported by Executor" : "{count} live plans reported by Executor",
     { count: planCount },
@@ -3750,13 +4596,19 @@ function detailProvider(node) {
 function detailPayload(node, status, nodeState, leaf = leafResultForDisplay(nodeState?.leafResult)) {
   if (!node) return {};
   if (!node.call) {
-    return {
+    const payload = {
       kind: node.kind || "op",
       opId: node.opId || "",
       description: node.description || "",
       status: displayStatus(status),
-      children: node.children || [],
+      children: childRoles(node),
     };
+    if (node.condition !== undefined) payload.condition = node.condition;
+    else if (node.conditionJson) payload.condition = node.conditionJson;
+    if (node.repeatCount) payload.repeatCount = node.repeatCount;
+    if (node.maxIterations) payload.maxIterations = node.maxIterations;
+    if (node.bind) payload.bind = node.bind;
+    return payload;
   }
   return {
     call: {
@@ -3769,6 +4621,19 @@ function detailPayload(node, status, nodeState, leaf = leafResultForDisplay(node
     result: leaf || null,
     state: nodeState?.state || displayStatus(status),
   };
+}
+
+// if: [then, optional else]; repeat/while: [body]. Other kinds have no roles,
+// so their children stay a plain index list.
+function childRoles(node) {
+  const children = node.children || [];
+  if (node.kind === "if") {
+    return children.map((index, i) => ({ role: i === 0 ? "then" : "else", index }));
+  }
+  if ((node.kind === "repeat" || node.kind === "while") && children.length) {
+    return [{ role: "body", index: children[0] }];
+  }
+  return children;
 }
 
 function planCalls(plan) {
@@ -3907,7 +4772,11 @@ function showCallDetails(context) {
   }, null, 2);
   root.append(fields, source, payload);
   renderDetailImage(payload, image);
-  if (!$("callDetailModal").open) $("callDetailModal").showModal();
+  const modal = $("callDetailModal");
+  if (modal && !modal.open) {
+    if (typeof modal.showModal === "function") modal.showModal();
+    else modal.setAttribute("open", "");
+  }
 }
 
 function executionSummaries() {
@@ -4081,10 +4950,15 @@ function renderSystem(data) {
   $("connectionState").textContent = t(stateLabel);
   $("refreshSystem").classList.toggle("offline", !online);
   $("refreshSystem").classList.toggle("online", online);
+  $("refreshSystem").classList.toggle("degraded", summary.state === "degraded");
+  maybe("endpointBadge")?.classList.toggle("online", online);
+  maybe("endpointBadge")?.classList.toggle("offline", !online);
   if (maybe("connectNow")) {
-    $("connectNow").textContent = online ? t("Connected") : t("Connect");
-    $("connectNow").classList.toggle("connected", online);
-    $("connectNow").title = online ? t("Atlas is reachable") : t("Check Atlas connection");
+    const connectBtn = $("connectNow");
+    const label = connectBtn.querySelector(".connect-label") || connectBtn;
+    label.textContent = online ? t("Connected") : t("Connect");
+    connectBtn.classList.toggle("connected", online);
+    connectBtn.title = online ? t("Atlas is reachable") : t("Check Atlas connection");
   }
   if (maybe("metricState")) $("metricState").textContent = t(stateLabel);
   if (maybe("metricActive")) $("metricActive").textContent = String(summary.active || 0);
@@ -4294,7 +5168,6 @@ function persistCurrentConversation(titleHint = "", force = false) {
 
   const title = uniqueConversationTitle(baseTitle, state.sessionId);
   state.sessionTitle = title;
-  if (maybe("promptTitle")) $("promptTitle").textContent = title;
   renderSessionChip();
 
   const conversation = {
@@ -4323,6 +5196,37 @@ function persistCurrentConversation(titleHint = "", force = false) {
 }
 
 let renderedHistorySignature = "";
+const SESSION_LIST_COLLAPSED_KEY = "robonix.session_list_collapsed";
+let sessionDialogAction = null;
+let sessionDialogReturnFocus = null;
+
+function toggleSessionList() {
+  const section = maybe("sessionListSection");
+  const toggle = maybe("sessionListToggle");
+  const list = maybe("historyList");
+  if (!section || !toggle || !list) return;
+  const collapsed = !section.classList.contains("collapsed");
+  section.classList.toggle("collapsed", collapsed);
+  list.hidden = collapsed;
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  toggle.setAttribute("aria-label", t(collapsed ? "Expand session list" : "Collapse session list"));
+  try {
+    localStorage.setItem(SESSION_LIST_COLLAPSED_KEY, String(collapsed));
+  } catch (_) {}
+}
+
+function restoreSessionListState() {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(SESSION_LIST_COLLAPSED_KEY) === "true";
+  } catch (_) {}
+  const section = maybe("sessionListSection");
+  if (!section) return;
+  section.classList.toggle("collapsed", collapsed);
+  if (maybe("historyList")) maybe("historyList").hidden = collapsed;
+  maybe("sessionListToggle")?.setAttribute("aria-expanded", String(!collapsed));
+  maybe("sessionListToggle")?.setAttribute("aria-label", t(collapsed ? "Expand session list" : "Collapse session list"));
+}
 
 function renderHistory() {
   pendingRenders.delete("history");
@@ -4366,16 +5270,19 @@ function renderHistory() {
     const actions = document.createElement("div");
     actions.className = "history-actions";
 
-    const rename = document.createElement("button");
-    rename.type = "button";
-    rename.className = "history-action-btn history-rename";
-    rename.title = t("Rename conversation");
-    rename.setAttribute("aria-label", t("Rename {name}", { name: item.title || t("conversation") }));
-    rename.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
-    rename.addEventListener("click", (event) => {
-      event.stopPropagation();
-      renameConversation(item.id);
-    });
+    if (item.id !== state.sessionId) {
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "history-action-btn history-rename";
+      rename.title = t("Rename conversation");
+      rename.setAttribute("aria-label", t("Rename {name}", { name: item.title || t("conversation") }));
+      rename.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+      rename.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renameConversation(item.id);
+      });
+      actions.appendChild(rename);
+    }
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -4388,35 +5295,126 @@ function renderHistory() {
       deleteConversation(item.id);
     });
 
-    actions.append(rename, remove);
+    actions.appendChild(remove);
     row.append(open, actions);
     root.appendChild(row);
   });
 }
 
+function bindSessionDialog() {
+  const dialog = maybe("sessionDialog");
+  const form = maybe("sessionDialogForm");
+  if (!dialog || !form) return;
+  maybe("sessionDialogClose")?.addEventListener("click", closeSessionDialog);
+  maybe("sessionDialogCancel")?.addEventListener("click", closeSessionDialog);
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab") return;
+    const focusable = [...dialog.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), [href], [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element.getClientRects().length);
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeSessionDialog();
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (sessionDialogAction?.kind === "rename") {
+      const nextTitle = maybe("sessionDialogInput")?.value.trim() || "";
+      if (!nextTitle) {
+        maybe("sessionDialogInput")?.focus();
+        return;
+      }
+      commitConversationRename(sessionDialogAction.sessionId, nextTitle);
+    } else if (sessionDialogAction?.kind === "clear") {
+      performClearHistory();
+    }
+    closeSessionDialog();
+  });
+}
+
+function openSessionDialog(action) {
+  const dialog = maybe("sessionDialog");
+  const title = maybe("sessionDialogTitle");
+  const kicker = maybe("sessionDialogKicker");
+  const label = maybe("sessionDialogLabel");
+  const input = maybe("sessionDialogInput");
+  const description = maybe("sessionDialogDescription");
+  const submit = maybe("sessionDialogSubmit");
+  if (!dialog || !action) return;
+  sessionDialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  sessionDialogAction = action;
+  const isRename = action.kind === "rename";
+  if (kicker) kicker.textContent = t(isRename ? "Session" : "Clear sessions");
+  if (title) title.textContent = t(isRename ? "Rename session" : "Clear all sessions?");
+  if (label) {
+    label.textContent = t("Session name");
+    label.hidden = !isRename;
+  }
+  if (input) {
+    input.hidden = !isRename;
+    input.value = isRename ? action.currentTitle : "";
+  }
+  if (description) {
+    description.textContent = isRename
+      ? t("Choose a clear name so you can find this session later.")
+      : t("Are you sure you want to clear all conversation history? This cannot be undone.");
+  }
+  if (submit) {
+    submit.textContent = t(isRename ? "Save name" : "Clear all sessions");
+    submit.classList.toggle("destructive", !isRename);
+  }
+  dialog.hidden = false;
+  document.body.classList.add("session-dialog-open");
+  requestAnimationFrame(() => (isRename ? input : maybe("sessionDialogCancel"))?.focus());
+}
+
+function closeSessionDialog() {
+  const dialog = maybe("sessionDialog");
+  if (!dialog || dialog.hidden) return;
+  dialog.hidden = true;
+  document.body.classList.remove("session-dialog-open");
+  sessionDialogAction = null;
+  const returnFocus = sessionDialogReturnFocus;
+  sessionDialogReturnFocus = null;
+  requestAnimationFrame(() => {
+    if (returnFocus?.isConnected) returnFocus.focus();
+    else maybe("renameSession")?.focus();
+  });
+}
+
 function renameConversation(sessionId) {
-  // window.prompt blocks the event loop, which would stall a live event
-  // stream, so renaming waits. Say so rather than ignoring the click.
   if (state.busy) {
     addStatusLine(t("Renaming is unavailable while a task is running."), "milestone", "Renaming is unavailable while a task is running.");
     return;
   }
   if (sessionId === state.sessionId) persistCurrentConversation("", true);
   const conversation = state.history.find((item) => item.id === sessionId);
-  const currentTitle = conversation?.title || state.sessionTitle || truncateTitle(firstUserMessage(), 24) || t("Untitled chat");
-  const nextTitle = window.prompt(t("Rename session"), currentTitle);
-  if (nextTitle === null) return;
-  const trimmed = nextTitle.trim();
-  if (!trimmed) return;
-  const title = uniqueConversationTitle(trimmed, sessionId);
+  const currentTitle = conversation?.title || (sessionId === state.sessionId ? currentConversationTitle() : t("Untitled chat"));
+  openSessionDialog({ kind: "rename", sessionId, currentTitle });
+}
+
+function commitConversationRename(sessionId, rawTitle) {
+  const title = uniqueConversationTitle(rawTitle, sessionId);
   if (sessionId === state.sessionId) {
     state.sessionTitle = title;
     state.customTitle = true;
-    if (maybe("promptTitle")) $("promptTitle").textContent = title;
     renderSessionChip();
   }
+  const conversation = state.history.find((item) => item.id === sessionId);
   if (conversation) {
-    // Renaming must not reorder the list either -- see persistCurrentConversation.
     conversation.title = title;
     conversation.customTitle = true;
     conversation.updatedAt = Date.now();
@@ -4429,12 +5427,17 @@ function renameConversation(sessionId) {
 }
 
 function deleteConversation(sessionId) {
+  if (sessionId === state.sessionId && state.busy) {
+    addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
+    return;
+  }
   // A scheduled save of the chat being deleted would bring it straight back.
   if (sessionId === state.sessionId) cancelPendingPersist();
   else flushPersist();
   state.history = state.history.filter((item) => item.id !== sessionId);
   saveConversations();
   if (sessionId === state.sessionId) {
+    notifySessionEnd();
     state.sessionId = getSessionId();
     rememberLastSession(state.sessionId);
     forgetActiveTurn();
@@ -4447,7 +5450,6 @@ function deleteConversation(sessionId) {
     state.batches = [];
     state.nodeStates = {};
     state.activeAgentId = null;
-    if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
     renderSessionChip();
     renderMessages();
     renderTimeline();
@@ -4458,10 +5460,20 @@ function deleteConversation(sessionId) {
 }
 
 function clearHistory() {
+  if (state.busy) {
+    addStatusLine(t("Abort the running task before starting a new session."), "milestone", "Abort the running task before starting a new session.");
+    return;
+  }
+  if (!state.history.length && !state.messages.length) return;
+  openSessionDialog({ kind: "clear" });
+}
+
+function performClearHistory() {
   cancelPendingPersist();
   state.history = [];
   saveConversations();
   attachmentStore.clear().catch(() => {});
+  notifySessionEnd();
   state.sessionId = getSessionId();
   rememberLastSession(state.sessionId);
   forgetActiveTurn();
@@ -4474,7 +5486,6 @@ function clearHistory() {
   state.batches = [];
   state.nodeStates = {};
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = t("What should Robonix do?");
   renderSessionChip();
   renderMessages();
   renderTimeline();
@@ -4495,6 +5506,7 @@ function openConversation(sessionId) {
   persistCurrentConversation();
   const conversation = state.history.find((item) => item.id === sessionId);
   if (!conversation) return;
+  notifySessionEnd();
   state.sessionId = conversation.id;
   rememberLastSession(conversation.id);
   state.sessionTitle = conversation.title || "";
@@ -4513,7 +5525,6 @@ function openConversation(sessionId) {
   state.selectedTaskId = conversation.selectedTaskId || "";
   state.followLatestTask = conversation.followLatestTask !== false;
   state.activeAgentId = null;
-  if (maybe("promptTitle")) $("promptTitle").textContent = conversation.title || t("What should Robonix do?");
   renderSessionChip();
   $("taskInput").value = "";
   autoGrowInput();
@@ -4522,6 +5533,9 @@ function openConversation(sessionId) {
   renderPlan();
   renderSceneAssets();
   renderHistory();
+  if (state.activePage !== "dashboard") {
+    activatePage("dashboard");
+  }
 }
 
 function firstUserMessage() {
@@ -4987,6 +6001,7 @@ async function enrollVoice() {
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   $("enrollVoice").classList.remove("busy");
   renderEnroll(result);
+  refreshVoiceprintUsers();
 }
 
 async function testSpeaker() {
@@ -5002,7 +6017,8 @@ async function testSpeaker() {
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   $("testSpeaker").classList.remove("busy");
   const text = result.ok
-    ? t("speaker ok: played {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint })
+    ? t("speaker ok: played {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint }) +
+      (result.streamed ? ` · ${t("streamed audio")}` : "")
     : t("speaker failed: {error}", { error: result.error });
   const status = $("audioTestStatus");
   status.textContent = text;
@@ -5059,6 +6075,71 @@ function renderEnroll(result) {
     note.className = "small";
     note.textContent = result.message;
     root.appendChild(note);
+  }
+}
+
+async function refreshVoiceprintUsers() {
+  const el = $("voiceprintUsers");
+  if (!el) return;
+  try {
+    const result = await fetch("/api/voiceprint/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings() }),
+    }).then((r) => r.json());
+    clear(el);
+    if (!result.ok) {
+      el.textContent = t("voiceprint users unavailable: {error}", { error: result.error || "" });
+      return;
+    }
+    const users = result.users || [];
+    if (!users.length) {
+      el.textContent = t("No enrolled users. If the voiceprint model changed, existing records were skipped and must be re-enrolled.");
+      return;
+    }
+    const summary = document.createElement("div");
+    summary.textContent = t("{count} enrolled:", { count: result.count ?? users.length });
+    el.appendChild(summary);
+    users.forEach((user) => {
+      const row = document.createElement("div");
+      row.className = "voiceprint-user-row";
+      const name = document.createElement("span");
+      name.textContent = user.user_name || user.user_id;
+      name.title = user.user_id || "";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button form-button";
+      remove.textContent = t("Delete");
+      remove.title = t("Remove this enrolled speaker");
+      remove.addEventListener("click", () => deleteVoiceprintUser(user, remove));
+      row.append(name, remove);
+      el.appendChild(row);
+    });
+  } catch (error) {
+    el.textContent = t("voiceprint users unavailable: {error}", { error: String(error) });
+  }
+}
+
+async function deleteVoiceprintUser(user, button) {
+  const userId = user.user_id || "";
+  if (!userId) return;
+  button.disabled = true;
+  try {
+    const result = await fetch("/api/voiceprint/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: collectSettings(), userId }),
+    }).then((r) => r.json());
+    if (!result.ok) {
+      addTimeline("error", t("delete voiceprint failed: {error}", { error: result.error || "" }));
+      button.disabled = false;
+      return;
+    }
+    addTimeline("voiceprint", t("removed voiceprint user {userId}", { userId }));
+    await refreshVoiceprintUsers();
+  } catch (error) {
+    addTimeline("error", t("delete voiceprint failed: {error}", { error: String(error) }));
+    button.disabled = false;
   }
 }
 
@@ -5138,6 +6219,7 @@ function setBusy(value) {
     if (steerIcon) steerIcon.style.display = value ? "" : "none";
     setButtonLabel(sendBtn, value ? t("Steer") : t("Send"));
     sendBtn.title = value ? t("Send to the running task (Enter)") : t("Send task (Enter)");
+    sendBtn.setAttribute("aria-label", value ? t("Steer") : t("Send"));
   }
   if (maybe("stopButton")) $("stopButton").hidden = !value;
   // Left enabled while busy on purpose: a disabled button swallows the click
@@ -5380,7 +6462,7 @@ function applyPerceptionLayout() {
 
   // On narrow screens let the CSS media query own the single-column layout;
   // inline grid templates would otherwise override it.
-  if (window.matchMedia && window.matchMedia("(max-width: 720px)").matches) {
+  if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) {
     grid.style.gridTemplateColumns = "";
     grid.style.gridTemplateRows = "";
     return;
@@ -5494,7 +6576,13 @@ function regionPolygons(regions) {
       poly.push(p);
     }
     if (ok && poly.length >= 3) {
-      out.push({ name: r.name || r.id || "room", kind: r.kind || "room", poly });
+      out.push({
+        name: r.name || r.id || "room",
+        kind: r.kind || "room",
+        poly,
+        stale: Boolean(r.stale),
+        staleReason: r.stale_reason || "",
+      });
     }
   }
   return out;
@@ -5599,6 +6687,45 @@ function drawScaleBar(ctx, w, h, scale) {
   ctx.fillText(`${metres} m`, x0, y0 - 8);
 }
 
+// Scene labels sit on top of an arbitrary map image. A translucent plate keeps
+// the text readable over light floors as well as dark ones, and gives hovered
+// labels (which carry the freshness details) a clear focus state.
+function drawSceneLabel(ctx, text, x, y, options = {}) {
+  const {
+    font = "11px system-ui",
+    color = "#e8eef8",
+    background = "rgba(7, 11, 18, 0.68)",
+    border = "",
+    padX = 4,
+    padY = 2,
+    alpha = 1,
+  } = options;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const width = ctx.measureText(text).width;
+  const boxW = width + padX * 2;
+  const boxH = 14 + padY * 2;
+  const x0 = x - boxW / 2;
+  const y0 = y - boxH / 2;
+  const rounded = typeof ctx.roundRect === "function";
+  ctx.fillStyle = background;
+  ctx.beginPath();
+  if (rounded) ctx.roundRect(x0, y0, boxW, boxH, 4);
+  else ctx.rect(x0, y0, boxW, boxH);
+  ctx.fill();
+  if (border) {
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
 // Object labels, largest box first, skipping any that would land on a label
 // already placed. A dense scene then reads as a map instead of a wall of text;
 // whatever gets skipped is still reachable by hovering it (which always wins).
@@ -5622,8 +6749,8 @@ function drawObjectLabels(ctx, candidates) {
       if (c.minExtent < 26) continue;
       if (budget <= 0) continue;
     }
-    const half = ctx.measureText(c.text).width / 2 + 2;
-    const box = { x0: c.x - half, x1: c.x + half, y0: c.y - 10, y1: c.y + 3 };
+    const half = ctx.measureText(c.text).width / 2 + 5;
+    const box = { x0: c.x - half, x1: c.x + half, y0: c.y - 10, y1: c.y + 10 };
     if (!c.force && placed.some((p) => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) {
       continue;
     }
@@ -5633,8 +6760,9 @@ function drawObjectLabels(ctx, candidates) {
   }
   candidates.forEach((c, i) => {
     if (!visible[i]) return;
-    ctx.fillStyle = c.force ? "#ffffff" : "#dfe6f5";
-    ctx.fillText(c.text, c.x, c.y);
+    drawSceneLabel(ctx, c.text, c.x, c.y, c.force
+      ? { font: "12px system-ui", color: "#ffffff", background: "rgba(5, 8, 14, 0.92)", border: "rgba(255, 255, 255, 0.5)" }
+      : { color: "#dfe6f5", alpha: c.alpha != null ? c.alpha : 1 });
   });
 }
 
@@ -5706,6 +6834,18 @@ function drawSceneStandby(canvas) {
   ctx.fillText(t("Spatial context inactive"), cx, cy + 34);
 }
 
+function sceneObjectAgeSeconds(obj) {
+  const seen = Number(obj?.last_seen_unix);
+  if (!Number.isFinite(seen) || seen <= 0) return null;
+  return Math.max(0, Date.now() / 1000 - seen);
+}
+
+function formatSceneAge(seconds) {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 function drawScene(canvas, scene) {
   const { ctx, w, h } = fitCanvas(canvas);
   ctx.clearRect(0, 0, w, h);
@@ -5724,7 +6864,7 @@ function drawScene(canvas, scene) {
     const p = scenePoint(o.x, o.y);
     if (p) pts.push(p);
   }
-  const rp = scenePoint(robot.x, robot.y);
+  const rp = robot.pose_known === false ? null : scenePoint(robot.x, robot.y);
   if (rp) pts.push(rp);
   for (const poly of polys) pts.push(...poly.poly);
 
@@ -5791,9 +6931,14 @@ function drawScene(canvas, scene) {
     ctx.stroke();
   }
 
+  const deferredRegionLabels = [];
+  const objectLabels = [];
+
   if (layers.regions !== false) {
     polys.forEach((r, i) => {
-      const color = regionColor(i);
+      const color = r.stale
+        ? { fill: "rgba(154,169,173,0.08)", stroke: "#9aa9ad" }
+        : regionColor(i);
       ctx.beginPath();
       r.poly.forEach((p, j) => {
         const x = toX(p.x);
@@ -5806,19 +6951,23 @@ function drawScene(canvas, scene) {
       ctx.fill();
       ctx.strokeStyle = color.stroke;
       ctx.lineWidth = 1.5;
+      ctx.setLineDash(r.stale ? [6, 4] : []);
       ctx.stroke();
+      ctx.setLineDash([]);
       const cx = r.poly.reduce((s, p) => s + p.x, 0) / r.poly.length;
       const cy = r.poly.reduce((s, p) => s + p.y, 0) / r.poly.length;
-      ctx.fillStyle = color.stroke;
-      ctx.font = "11px system-ui";
-      ctx.textAlign = "center";
-      ctx.fillText(r.name, toX(cx), toY(cy));
+      deferredRegionLabels.push({
+        text: r.stale ? `${r.name} · ${t("stale")}` : r.name,
+        x: toX(cx),
+        y: toY(cy),
+        options: { color: r.stale ? "#c3ccd4" : "#e8eef8" },
+      });
     });
   }
 
   if (layers.objects !== false) {
     const palette = ["#5b8def", "#35e0a0", "#ffd166", "#f2726f", "#c58bf2", "#5ad1e6"];
-    const labels = [];
+    const labels = objectLabels;
     objects.forEach((o, i) => {
       if ((o.label || "") === "robot") return;
       const p = scenePoint(o.x, o.y);
@@ -5837,6 +6986,7 @@ function drawScene(canvas, scene) {
       const hitIndex = perception.sceneHit.length;
       perception.sceneHit.push({ x, y, w: bw, h: bh, label: o.label || "object" });
       const hovered = hitIndex === perception.sceneHover;
+      const age = sceneObjectAgeSeconds(o);
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(-yaw);
@@ -5848,16 +6998,23 @@ function drawScene(canvas, scene) {
       ctx.lineWidth = hovered ? 2 : 1;
       ctx.strokeRect(-ow / 2, -oh / 2, ow, oh);
       ctx.restore();
+      let text = o.label || "object";
+      if (hovered) {
+        const details = [];
+        if (age != null) details.push(t("seen {age} ago", { age: formatSceneAge(age) }));
+        if (Number(o.observation_count) > 0) details.push(t("{count} observations", { count: o.observation_count }));
+        if (o.frame_id) details.push(o.frame_id);
+        if (details.length) text = `${o.label || "object"} · ${details.join(" · ")}`;
+      }
       labels.push({
         x,
         y: y + oh / 2 + 12,
-        text: o.label || "object",
+        text,
         area: bw * bh,
         minExtent: Math.min(bw, bh),
         force: hovered,
       });
     });
-    drawObjectLabels(ctx, labels);
   }
   if (perception.sceneHover >= perception.sceneHit.length) perception.sceneHover = -1;
 
@@ -5924,11 +7081,15 @@ function drawScene(canvas, scene) {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-    ctx.fillStyle = "#ffd166";
-    ctx.font = "11px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText("robot", x, y + 18);
+    drawSceneLabel(ctx, "robot", x, y + 20, { color: "#ffd166" });
   }
+
+  // Labels are an overlay: draw them last so lidar rays and the robot arrow
+  // never cut through region names or the hovered object's freshness details.
+  deferredRegionLabels.forEach((label) => {
+    drawSceneLabel(ctx, label.text, label.x, label.y, label.options);
+  });
+  drawObjectLabels(ctx, objectLabels);
 
   // Update HUD compass needle if available
   const compassNeedle = document.getElementById("sceneCompassNeedle");
@@ -5963,11 +7124,14 @@ async function perceptionPollScene() {
   perception.lastScene = data.scene;
 
   // The base map is fetched if available. Never wipe lastMap on transient poll failures!
+  let mapError = "";
   if (perception.mapAvailable && perception.sceneLayers.map !== false) {
     try {
       const mapData = await perceptionFetch("map");
       if (mapData && mapData.ok && mapData.occupancy) {
         perception.lastMap = mapData.occupancy;
+      } else if (!perception.lastMap) {
+        mapError = (mapData && mapData.error) || t("Map service unreachable");
       }
     } catch (_) {
       // Retain last known valid map to prevent flashing/flickering
@@ -5991,10 +7155,14 @@ async function perceptionPollScene() {
 
   const objects = (data.scene.objects && data.scene.objects.objects) || [];
   const regions = (data.scene.regions && data.scene.regions.regions) || [];
-  const room = (data.scene.robot && data.scene.robot.room_name) || "";
+  const robot = data.scene.robot || {};
+  const room = robot.region_name || "";
   const parts = [`${objects.length} objects`];
   if (regions.length) parts.push(`${regions.length} regions`);
   if (room) parts.push(room);
+  if (robot.pose_known === false) parts.push(t("pose unknown"));
+  if (robot.stale) parts.push(t("stale"));
+  if (mapError) parts.push(mapError);
   perceptionMeta("scene", parts.join(" · "));
 }
 
@@ -6161,6 +7329,12 @@ function bindSceneLayers() {
   const root = document.querySelector('.perception-tile[data-tile="scene"]');
   if (!root || root.dataset.layersBound) return;
   root.dataset.layersBound = "1";
+  root.querySelectorAll(".perception-layer-pill input").forEach((input) => {
+    const pill = input.closest(".perception-layer-pill");
+    const sync = () => pill?.classList.toggle("is-checked", input.checked);
+    sync();
+    input.addEventListener("change", sync);
+  });
   root.querySelectorAll("[data-scene-layer]").forEach((input) => {
     const key = input.dataset.sceneLayer;
     input.addEventListener("change", () => {
@@ -6192,7 +7366,62 @@ function bindSceneView() {
   canvas.dataset.viewBound = "1";
   const view = perception.sceneView;
 
+  // Multi-touch pinch-to-zoom for Scene Map on mobile
+  let scenePinching = false;
+  let sceneStartDist = 0;
+  let sceneStartScale = 1;
+
+  canvas.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      scenePinching = true;
+      perception.scenePan = null;
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      sceneStartDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      sceneStartScale = view.scale;
+      event.preventDefault();
+    }
+  }, { passive: false });
+
+  canvas.addEventListener("touchmove", (event) => {
+    if (event.touches.length === 2 && scenePinching) {
+      event.preventDefault();
+      const t1 = event.touches[0];
+      const t2 = event.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      if (!sceneStartDist || dist < 5 || !view.scale || !view.center) return;
+
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const { px, py } = sceneCanvasPoint(canvas, { clientX: midX, clientY: midY });
+
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      const wx = view.center.x + (px - w / 2) / view.scale;
+      const wy = view.center.y - (py - h / 2) / view.scale;
+
+      const targetScale = sceneStartScale * (dist / sceneStartDist);
+      view.scale = Math.min(400, Math.max(2, targetScale));
+      view.center = {
+        x: wx - (px - w / 2) / view.scale,
+        y: wy + (py - h / 2) / view.scale,
+      };
+      view.auto = false;
+      redrawScene();
+    }
+  }, { passive: false });
+
+  const endSceneTouch = (event) => {
+    if (event.touches.length < 2) {
+      scenePinching = false;
+      sceneStartDist = 0;
+    }
+  };
+  canvas.addEventListener("touchend", endSceneTouch);
+  canvas.addEventListener("touchcancel", endSceneTouch);
+
   canvas.addEventListener("pointerdown", (event) => {
+    if (scenePinching) return;
     if (event.button !== 0) return;
     event.preventDefault();
     // Touching the map hands the viewport to the operator: no more auto-fit.
@@ -6203,6 +7432,7 @@ function bindSceneView() {
   });
 
   canvas.addEventListener("pointermove", (event) => {
+    if (scenePinching) return;
     const pan = perception.scenePan;
     if (pan && pan.id === event.pointerId) {
       if (view.center && view.scale) {
@@ -6600,12 +7830,7 @@ async function scanStudioServices(force = false) {
   studioLastScanTs = Date.now();
 
   const rescanBtn = document.getElementById("studioRescanBtn");
-  const badge = document.getElementById("studioServiceBadge");
-  const badgeText = document.getElementById("studioBadgeText");
-
   if (rescanBtn) rescanBtn.classList.add("scanning");
-  if (badge) badge.classList.add("scanning");
-  if (badgeText) badgeText.textContent = t("Scanning services...");
 
   try {
     const host = getStudioHost();
@@ -6631,7 +7856,6 @@ async function scanStudioServices(force = false) {
       studioScanning = false;
       studioScanController = null;
       if (rescanBtn) rescanBtn.classList.remove("scanning");
-      if (badge) badge.classList.remove("scanning");
     }
   }
 
@@ -6639,12 +7863,10 @@ async function scanStudioServices(force = false) {
   if (scanToken !== studioScanGeneration) return;
 
   if (!studioDiscoveredServices.length) {
-    // A stale port would keep the old service's name in the badge and make the
-    // next language switch skip updating it.
+    // A stale port would point the frame at a service that is gone.
     activeStudioPort = null;
     renderStudioTabs();
     renderStudioEmptyState(true);
-    if (badgeText) badgeText.textContent = `0 ${t("Services Online")}`;
     return;
   }
 
@@ -6662,20 +7884,12 @@ async function scanStudioServices(force = false) {
 
 function switchStudioServiceByPort(port) {
   const numPort = Number(port);
-  const service = studioDiscoveredServices.find((s) => s.port === numPort);
   activeStudioPort = numPort;
 
   // Update tabs active state
   document.querySelectorAll(".studio-service-tab").forEach((tab) => {
     tab.classList.toggle("active", Number(tab.dataset.studioPort) === numPort);
   });
-
-  // Update status badge
-  const badgeText = document.getElementById("studioBadgeText");
-  if (badgeText) {
-    const sName = service ? t(service.name) : "Service";
-    badgeText.textContent = `${sName} · Port ${numPort}`;
-  }
 
   const vp = document.getElementById("studioViewport");
   const frame = document.getElementById("studioFrame");
@@ -6850,18 +8064,15 @@ window.addEventListener("resize", () => {
 
 /// Re-render every dynamic region after a language switch. Static markup is
 /// handled by i18n.js walking data-i18n; this covers everything app.js writes
-/// from state. promptTitle is excluded from data-i18n for the same reason:
-/// it shows the live session title once one exists.
+/// from state.
 function handleI18nChange() {
-  if (maybe("promptTitle")) {
-    $("promptTitle").textContent = state.sessionTitle || t("What should Robonix do?");
-  }
   renderSessionChip();
   renderMessages();
   renderTimeline();
   renderPlan();
   renderActivePlans(state.activePlansError);
   renderHistory();
+  restoreSessionListState();
   // The argument payload embeds a translated status, so an open node popup has
   // to be rebuilt for the new language (renderPlan skips it on purpose).
   if (detailSelections.live) {
@@ -6879,12 +8090,6 @@ function handleI18nChange() {
   updatePerceptionEmptyDiagnostics((perception && perception.tiles) || {});
   redrawPerceptionCanvases();
   renderStudioTabs();
-  const badgeText = document.getElementById("studioBadgeText");
-  if (badgeText && activeStudioPort) {
-    const s = studioDiscoveredServices.find((item) => item.port === activeStudioPort);
-    const sName = s ? t(s.name) : "Service";
-    badgeText.textContent = `${sName} · Port ${activeStudioPort}`;
-  }
   syncStudioFrameLang();
 }
 
