@@ -1049,7 +1049,18 @@ function bindEvents() {
   maybe("sessionListToggle")?.addEventListener("click", toggleSessionList);
   maybe("newSessionAction")?.addEventListener("click", newSession);
   maybe("renameSession")?.addEventListener("click", () => renameConversation(state.sessionId));
-  maybe("clearHistory")?.addEventListener("click", clearHistory);
+  const sessionListActions = maybe("sessionListActions");
+  const sessionListActionsTrigger = maybe("sessionListActionsTrigger");
+  maybe("clearHistory")?.addEventListener("click", () => {
+    sessionListActions.open = false;
+    sessionListActionsTrigger.focus();
+    clearHistory();
+  });
+  document.addEventListener("click", (event) => {
+    if (sessionListActions?.open && !sessionListActions.contains(event.target)) {
+      sessionListActions.open = false;
+    }
+  });
   bindSessionDialog();
   maybe("connectNow")?.addEventListener("click", async () => {
     state.settings = collectSettings();
@@ -1098,30 +1109,23 @@ function bindEvents() {
   });
   const settingsTrigger = maybe("settingsTriggerBtn");
   const settingsPopover = maybe("settingsMenuPopover");
+  function setSettingsPopover(open) {
+    if (!settingsTrigger || !settingsPopover) return;
+    settingsPopover.hidden = !open;
+    settingsTrigger.classList.toggle("active", open);
+    settingsTrigger.setAttribute("aria-expanded", String(open));
+  }
   if (settingsTrigger && settingsPopover) {
-    settingsTrigger.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const isHidden = settingsPopover.hidden;
-      settingsPopover.hidden = !isHidden;
-      settingsTrigger.classList.toggle("active", isHidden);
-    });
+    settingsTrigger.addEventListener("click", () => setSettingsPopover(settingsPopover.hidden));
     document.addEventListener("click", (event) => {
       if (!settingsPopover.hidden && !event.target.closest("#settingsDropdownWrapper")) {
-        settingsPopover.hidden = true;
-        settingsTrigger.classList.remove("active");
+        setSettingsPopover(false);
       }
     });
+    settingsPopover.addEventListener("click", (event) => {
+      if (event.target.closest("[data-page]")) setSettingsPopover(false);
+    });
   }
-  maybe("settingsMenuAudio")?.addEventListener("click", () => {
-    activatePage("audio");
-    if (settingsPopover) settingsPopover.hidden = true;
-    if (settingsTrigger) settingsTrigger.classList.remove("active");
-  });
-  maybe("settingsMenuSettings")?.addEventListener("click", () => {
-    activatePage("settings");
-    if (settingsPopover) settingsPopover.hidden = true;
-    if (settingsTrigger) settingsTrigger.classList.remove("active");
-  });
 
   // Mobile Sidebar Drawer Management
   const navRail = document.querySelector(".nav-rail");
@@ -1146,7 +1150,7 @@ function bindEvents() {
   sidebarBackdrop?.addEventListener("click", () => setMobileSidebar(false));
 
   navRail?.addEventListener("click", (event) => {
-    const navItem = event.target.closest(".nav-item, .history-open, .settings-menu-item");
+    const navItem = event.target.closest("[data-page], .history-open");
     if (navItem && window.innerWidth <= 860) {
       setMobileSidebar(false);
     }
@@ -1234,9 +1238,14 @@ function bindEvents() {
     if (event.key !== "Escape") return;
     if (dialogEscape || maybe("callDetailModal")?.open) return;
     if (!maybe("sessionDialog")?.hidden) return closeSessionDialog();
+    if (sessionListActions?.open) {
+      sessionListActions.open = false;
+      sessionListActionsTrigger.focus();
+      return;
+    }
     if (settingsPopover && !settingsPopover.hidden) {
-      settingsPopover.hidden = true;
-      if (settingsTrigger) settingsTrigger.classList.remove("active");
+      setSettingsPopover(false);
+      settingsTrigger?.focus();
       return;
     }
     if (!maybe("nodeDetailModal")?.hidden) return closeNodeDetail();
@@ -1353,6 +1362,7 @@ function renderHandsfree() {
   const active = state.handsfree.enabled && ["starting", "listening", "triggered", "acknowledging", "in_voice"].includes(status);
   button.classList.toggle("offline", !active);
   button.classList.toggle("listening", status === "listening");
+  button.classList.toggle("recording", status === "suspended");
   button.classList.toggle("busy", state.handsfree.busy || ["triggered", "acknowledging", "in_voice"].includes(status));
   button.classList.toggle("error", status === "error" || status === "unavailable");
   label.textContent = state.handsfree.busy
@@ -1533,7 +1543,13 @@ function activatePage(name) {
       history.replaceState(null, "", `#${name}`);
     }
   } catch (_) {}
-  document.querySelectorAll("[data-page]").forEach((button) => button.classList.toggle("active", button.dataset.page === name));
+  document.querySelectorAll("[data-page]").forEach((button) => {
+    const current = button.dataset.page === name;
+    button.classList.toggle("active", current);
+    if (current) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  maybe("settingsTriggerBtn")?.classList.toggle("current-section", name === "audio" || name === "settings");
   document.querySelectorAll("[data-page-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.pagePanel === name));
   window.dispatchEvent(new CustomEvent("robonix:page", { detail: { name } }));
   setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
@@ -5254,16 +5270,19 @@ function renderHistory() {
     const actions = document.createElement("div");
     actions.className = "history-actions";
 
-    const rename = document.createElement("button");
-    rename.type = "button";
-    rename.className = "history-action-btn history-rename";
-    rename.title = t("Rename conversation");
-    rename.setAttribute("aria-label", t("Rename {name}", { name: item.title || t("conversation") }));
-    rename.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
-    rename.addEventListener("click", (event) => {
-      event.stopPropagation();
-      renameConversation(item.id);
-    });
+    if (item.id !== state.sessionId) {
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "history-action-btn history-rename";
+      rename.title = t("Rename conversation");
+      rename.setAttribute("aria-label", t("Rename {name}", { name: item.title || t("conversation") }));
+      rename.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+      rename.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renameConversation(item.id);
+      });
+      actions.appendChild(rename);
+    }
 
     const remove = document.createElement("button");
     remove.type = "button";
@@ -5276,7 +5295,7 @@ function renderHistory() {
       deleteConversation(item.id);
     });
 
-    actions.append(rename, remove);
+    actions.appendChild(remove);
     row.append(open, actions);
     root.appendChild(row);
   });
@@ -8053,6 +8072,7 @@ function handleI18nChange() {
   renderPlan();
   renderActivePlans(state.activePlansError);
   renderHistory();
+  restoreSessionListState();
   // The argument payload embeds a translated status, so an open node popup has
   // to be rebuilt for the new language (renderPlan skips it on purpose).
   if (detailSelections.live) {

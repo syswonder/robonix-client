@@ -58,10 +58,20 @@
           </nav>
 
           <section class="sidebar-section sidebar-history-section" id="sessionListSection">
-            <button class="sidebar-section-header session-list-toggle" id="sessionListToggle" type="button" aria-expanded="true" aria-controls="historyList" aria-label="Collapse session list" data-i18n-aria-label="Collapse session list">
-              <span data-i18n="Session list">Session list</span>
-              <svg class="session-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
-            </button>
+            <div class="session-list-header">
+              <button class="sidebar-section-header session-list-toggle" id="sessionListToggle" type="button" aria-expanded="true" aria-controls="historyList" aria-label="Collapse session list">
+                <span data-i18n="Session list">Session list</span>
+                <svg class="session-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <details class="session-list-actions" id="sessionListActions">
+                <summary id="sessionListActionsTrigger" aria-label="Session list actions" data-i18n-aria-label="Session list actions" title="Session list actions" data-i18n-title="Session list actions">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+                </summary>
+                <div class="session-list-popover">
+                  <button class="settings-menu-item" id="clearHistory" type="button" data-i18n="Clear all sessions">Clear all sessions</button>
+                </div>
+              </details>
+            </div>
             <div class="conversation-history" id="historyList"></div>
           </section>
         </div>
@@ -105,7 +115,7 @@
               </div>
             </div>
 
-            <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" title="Settings" data-i18n-title="Settings">
+            <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" aria-expanded="false" aria-controls="settingsMenuPopover" title="Settings" data-i18n-title="Settings">
               <div class="settings-trigger-main">
                 <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
                 <span class="settings-trigger-label" data-i18n="Settings">Settings</span>
@@ -145,8 +155,9 @@
             </span>
             <span id="connectionState" data-i18n="offline">offline</span>
           </button>
-          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
+          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" aria-labelledby="handsfreeState" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
             <svg class="handsfree-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <svg class="handsfree-icon handsfree-recording-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>
             <span id="handsfreeState" data-i18n="Hands-free off">Hands-free off</span>
           </button>
           <button class="button connect-button" id="connectNow" type="button" title="Check Atlas connection" data-i18n-title="Check Atlas connection">
@@ -158,7 +169,6 @@
         <section class="page dashboard-page active" data-page-panel="dashboard">
           <section class="dashboard-grid">
             <section class="panel conversation-panel">
-              <!-- Inside-Chat Header with 2 buttons -->
               <header class="conversation-header">
                 <div class="session-title-wrap">
                   <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -168,9 +178,6 @@
                 <div class="conversation-header-actions">
                   <button class="ghost-button header-icon-btn" id="renameSession" type="button" aria-label="Rename session" data-i18n-aria-label="Rename session" data-tooltip="Rename session" data-i18n-tooltip="Rename session">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                  </button>
-                  <button class="ghost-button header-icon-btn" id="clearHistory" type="button" aria-label="Clear sessions" data-i18n-aria-label="Clear sessions" data-tooltip="Clear sessions" data-i18n-tooltip="Clear sessions">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                   </button>
                   <button class="ghost-button header-icon-btn" id="newSessionAction" type="button" aria-label="New chat" data-i18n-aria-label="New chat" data-tooltip="New chat" data-i18n-tooltip="New chat">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -652,7 +659,8 @@
           </div>
         </section>
 
-        <section class="page work-page audio-page" data-page-panel="audio">
+        <section class="page work-page audio-page" data-page-panel="audio" aria-labelledby="audioTitle">
+          <header class="page-heading"><h1 id="audioTitle" data-i18n="Audio">Audio</h1></header>
           <section class="audio-layout">
             <section class="audio-column audio-config-column">
             <section class="panel audio-panel">
@@ -664,7 +672,7 @@
                 <span id="audioServerState" data-i18n="offline">offline</span>
               </div>
               <div class="audio-actions">
-                <button class="button" id="startAudioServer" type="button" data-i18n="Start Audio">Start Audio</button>
+                <button class="button work-primary-action" id="startAudioServer" type="button" data-i18n="Start Audio">Start Audio</button>
                 <button class="button" id="checkAudioServer" type="button" data-i18n="Check">Check</button>
                 <button class="button" id="refreshAudioDevices" type="button" data-i18n="Refresh Devices">Refresh Devices</button>
               </div>
@@ -698,7 +706,7 @@
               </div>
               <div class="audio-device-actions">
                 <button class="button" id="refreshAudioRoute" type="button" data-i18n="Refresh Route">Refresh Route</button>
-                <button class="button" id="applyAudioRoute" type="button" data-i18n="Apply Route">Apply Route</button>
+                <button class="button work-primary-action" id="applyAudioRoute" type="button" data-i18n="Apply Route">Apply Route</button>
               </div>
               <span class="audio-route-status" id="audioRouteStatus" data-i18n="No Robonix audio route loaded.">No Robonix audio route loaded.</span>
             </section>
@@ -783,12 +791,13 @@
           </section>
         </section>
 
-        <section class="page work-page" data-page-panel="settings">
+        <section class="page work-page settings-page" data-page-panel="settings" aria-labelledby="connectionTitle">
+          <header class="page-heading"><h1 id="connectionTitle" data-i18n="Connection">Connection</h1></header>
           <section class="settings-page-grid">
             <section class="panel">
               <div class="panel-header">
                 <div>
-                  <h2 data-i18n="Connection">Connection</h2>
+                  <h2 data-i18n="Connection settings">Connection settings</h2>
                   <span data-i18n="Saved only in this client browser.">Saved only in this client browser.</span>
                 </div>
               </div>
@@ -815,7 +824,7 @@
                 </label>
               </div>
               <div class="audio-device-actions">
-                <button class="button" id="saveClientSettings" type="button" data-i18n="Save Settings">Save Settings</button>
+                <button class="button work-primary-action" id="saveClientSettings" type="button" data-i18n="Save Settings">Save Settings</button>
               </div>
               <span class="audio-route-status" id="settingsStatus" data-i18n="Changes are saved locally.">Changes are saved locally.</span>
             </section>

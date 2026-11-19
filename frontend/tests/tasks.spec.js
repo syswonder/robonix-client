@@ -151,6 +151,96 @@ test('running leaf takes precedence over active loop and sequence operators', as
   expect(active).toBe(2);
 });
 
+test('offline Connect fits the shared phone top bar', async ({page}) => {
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const body = path === '/api/defaults' ? {robotHost: 'robot-with-a-long-hostname.local', atlasPort: 50051}
+      : path === '/api/system' ? {error: 'offline'} : {available: false};
+    return route.fulfill({json: body});
+  });
+  await page.goto('/#dashboard');
+  const connect = page.locator('#connectNow');
+  await expect(page.locator('#refreshSystem')).toHaveClass(/offline/);
+  for (const width of [320, 390]) {
+    await page.setViewportSize({width, height: 844});
+    for (const lang of ['en', 'zh']) {
+      await page.evaluate(lang => window.RobonixI18N.setLang(lang), lang);
+      for (const name of ['dashboard', 'vitals', 'audio', 'settings', 'perception', 'studio']) {
+        await page.evaluate(name => activatePage(name), name);
+        await expect(connect).toHaveText(lang === 'en' ? 'Connect' : '连接');
+        await expect(connect).toBeInViewport({ratio: 1});
+        await expect(page.locator('#handsfreeToggle')).toBeInViewport({ratio: 1});
+        expect(await page.locator('.command-bar').evaluate(bar => bar.scrollWidth)).toBe(width);
+      }
+    }
+  }
+});
+
+test('compact hands-free control visibly distinguishes recording from off', async ({page}) => {
+  await page.setViewportSize({width: 320, height: 700});
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await page.evaluate(() => window.RobonixI18N.setLang('en'));
+  const button = page.locator('#handsfreeToggle');
+  const mic = button.locator('.handsfree-icon:not(.handsfree-recording-icon)');
+  const recording = button.locator('.handsfree-recording-icon');
+  const setStatus = (status) => page.evaluate(status => {
+    Object.assign(state.handsfree, {state: status, enabled: status === 'suspended', busy: false});
+    renderHandsfree();
+  }, status);
+  await setStatus('off');
+  await expect(button).toHaveAccessibleName('Hands-free off');
+  await expect(mic).toBeVisible();
+  await expect(recording).toBeHidden();
+  await setStatus('suspended');
+  await expect(button).toHaveAccessibleName('Recording');
+  await expect(mic).toBeHidden();
+  await expect(recording).toBeInViewport({ratio: 1});
+});
+
+test('clear sessions is reachable in a short phone drawer', async ({page}) => {
+  await page.setViewportSize({width: 568, height: 210});
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await page.evaluate(() => {
+    state.messages = [{id:'m1', role:'user', text:'Original task'}];
+    persistCurrentConversation();
+  });
+  await page.locator('#mobileNavToggle').click();
+  await page.locator('#sessionListActionsTrigger').click();
+  await page.locator('#clearHistory').click({timeout: 3000});
+  await expect(page.locator('#sessionDialog')).toBeVisible();
+});
+
+test('settings sections show headings and keep the sidebar selection', async ({page}) => {
+  await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
+  await page.goto('/#dashboard');
+  await expect(page.locator('.workspace')).toHaveAttribute('data-active-page', 'dashboard');
+  await page.evaluate(() => window.RobonixI18N.setLang('zh'));
+  const trigger = page.locator('#settingsTriggerBtn');
+  const openNavigation = async () => {
+    const toggle = page.locator('#mobileNavToggle');
+    if (await toggle.isVisible() && (await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  };
+  await openNavigation();
+  await trigger.click();
+  await page.locator('#settingsMenuAudio').click();
+  await expect(page.locator('#audioTitle')).toHaveText('音频');
+  await expect(page.locator('#audioTitle')).toBeVisible();
+  await expect(page.getByText('输入原语', {exact: true})).toBeVisible();
+  await expect(trigger).toHaveClass(/current-section/);
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  await openNavigation();
+  await trigger.click();
+  await expect(page.locator('#settingsMenuAudio')).toHaveAttribute('aria-current', 'page');
+  await page.locator('#settingsMenuSettings').click();
+  await expect(page.locator('#connectionTitle')).toHaveText('连接');
+  await expect(page.locator('#connectionTitle')).toBeVisible();
+  await expect(trigger).toHaveClass(/current-section/);
+  await page.evaluate(() => activatePage('dashboard'));
+  await expect(trigger).not.toHaveClass(/current-section/);
+});
+
 test('session list collapses, remembers state, and session dialogs are custom', async ({page}, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'session list and conversation controls are in the desktop navigation');
   await page.setViewportSize({width: 1000, height: 850});
@@ -189,15 +279,23 @@ test('session list collapses, remembers state, and session dialogs are custom', 
   await expect(page.locator('#sessionTitleDisplay')).toHaveText('Renamed task');
   await expect(page.locator('#renameSession')).toBeFocused();
   await page.evaluate(() => window.RobonixI18N.setLang('zh'));
+  await expect(page.locator('.conversation-header #clearHistory')).toHaveCount(0);
+  await expect(page.locator('.history-item.active .history-rename')).toHaveCount(0);
+  const actions = page.locator('#sessionListActionsTrigger');
+  await expect(actions).toHaveAccessibleName('会话列表操作');
+  await actions.click();
   await page.locator('#clearHistory').click();
   await expect(page.locator('#sessionDialog')).toBeVisible();
   await expect(page.locator('#sessionDialogDescription')).toHaveText('确定要清空所有会话记录吗？此操作无法撤销。');
   await page.keyboard.press('Escape');
   await expect(page.locator('#sessionDialog')).toBeHidden();
   await expect(page.locator('#dashboardSidebar')).toHaveClass(/open/);
+  await expect(actions).toBeFocused();
+  await actions.click();
   await page.locator('#clearHistory').click();
   await page.locator('#sessionDialogSubmit').click();
   await expect(page.locator('#historyList .history-item')).toHaveCount(0);
+  await expect(actions).toBeFocused();
 });
 
 test('executor updates keep panel and tree positions stable', async ({page}) => {
