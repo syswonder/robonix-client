@@ -208,10 +208,16 @@ async def index() -> FileResponse:
 async def defaults() -> dict[str, Any]:
     atlas_endpoint = os.environ.get("ROBONIX_ATLAS_ENDPOINT", DEFAULT_ATLAS)
     robot_host, atlas_port = _split_default_atlas(atlas_endpoint)
-    launch_overrides = []
+    robot_host = os.environ.get("ROBONIX_ROBOT_HOST", robot_host)
+    atlas_port = int(os.environ.get("ROBONIX_ATLAS_PORT", str(atlas_port)))
+    cli_endpoint_overrides = os.environ.get("ROBONIX_CLIENT_CLI_ENDPOINT_OVERRIDES", "").split(",")
+    launch_overrides = [
+        key for key in ("ROBONIX_ROBOT_HOST", "ROBONIX_ATLAS_PORT")
+        if key in cli_endpoint_overrides and os.environ.get(key)
+    ]
+    if launch_overrides:
+        atlas_endpoint = f"{robot_host}:{atlas_port}"
     for key in (
-        "ROBONIX_ROBOT_HOST",
-        "ROBONIX_ATLAS_PORT",
         "ROBONIX_CLIENT_USER_ID",
         "ROBONIX_CLIENT_SESSION_ID",
         "ROBONIX_CLIENT_SESSION_TITLE",
@@ -225,8 +231,8 @@ async def defaults() -> dict[str, Any]:
             launch_overrides.append(key)
     return {
         "atlasEndpoint": atlas_endpoint,
-        "robotHost": os.environ.get("ROBONIX_ROBOT_HOST", robot_host),
-        "atlasPort": int(os.environ.get("ROBONIX_ATLAS_PORT", str(atlas_port))),
+        "robotHost": robot_host,
+        "atlasPort": atlas_port,
         "liaisonEndpoint": os.environ.get("ROBONIX_LIAISON_ENDPOINT", ""),
         "userId": os.environ.get("ROBONIX_CLIENT_USER_ID", ""),
         "sessionId": os.environ.get("ROBONIX_CLIENT_SESSION_ID", ""),

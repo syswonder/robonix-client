@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 
 import uvicorn
 
@@ -11,8 +10,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="robonix-client")
     parser.add_argument("--host", default="127.0.0.1", help="WebUI bind host")
     parser.add_argument("--port", type=int, default=7860, help="WebUI bind port")
-    parser.add_argument("--robot-host", default="", help="Default remote Robonix host shown in the UI")
-    parser.add_argument("--atlas-port", type=int, default=50051, help="Default remote Atlas gRPC port")
+    parser.add_argument("--robot-host", help="Remote Robonix host to use for this launch")
+    parser.add_argument("--atlas-port", type=int, help="Remote Atlas gRPC port to use for this launch")
     parser.add_argument("--user-id", default="", help="Default client user id, for example voice:wheatfox")
     parser.add_argument("--session-id", default="", help="Initial session id")
     parser.add_argument("--session-title", default="", help="Initial session title shown in chat")
@@ -28,14 +27,19 @@ def main() -> int:
     parser.add_argument("--reload", action="store_true", help="reload during local development")
     args = parser.parse_args()
 
-    def explicitly_set(flag: str) -> bool:
-        return flag in sys.argv or any(argument.startswith(f"{flag}=") for argument in sys.argv)
-
-    if args.robot_host:
-        os.environ["ROBONIX_ROBOT_HOST"] = args.robot_host
-        os.environ["ROBONIX_ATLAS_ENDPOINT"] = f"{args.robot_host}:{args.atlas_port}"
-    if explicitly_set("--atlas-port"):
+    endpoint_overrides = []
+    if args.robot_host is not None:
+        host = args.robot_host.strip()
+        if not host:
+            parser.error("--robot-host must not be empty")
+        os.environ["ROBONIX_ROBOT_HOST"] = host
+        endpoint_overrides.append("ROBONIX_ROBOT_HOST")
+    if args.atlas_port is not None:
+        if not 1 <= args.atlas_port <= 65535:
+            parser.error("--atlas-port must be between 1 and 65535")
         os.environ["ROBONIX_ATLAS_PORT"] = str(args.atlas_port)
+        endpoint_overrides.append("ROBONIX_ATLAS_PORT")
+    os.environ["ROBONIX_CLIENT_CLI_ENDPOINT_OVERRIDES"] = ",".join(endpoint_overrides)
     if args.user_id:
         os.environ["ROBONIX_CLIENT_USER_ID"] = args.user_id
     if args.session_id:

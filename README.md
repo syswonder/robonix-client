@@ -84,6 +84,10 @@ desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 - `--host 127.0.0.1` controls where this Web UI listens.
 - `--robot-host ROBOT_IP` selects the remote Robonix machine.
 
+Explicit `--robot-host` and `--atlas-port` values override their saved settings
+for this launch without changing them. Omit either flag to use its saved value
+or, if none is saved, its default.
+
 Most users only need `--robot-host`.
 
 ## Connecting to a Robonix Machine

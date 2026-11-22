@@ -231,6 +231,7 @@ const state = {
 const DEFAULT_ATLAS_PORT = 50051;
 const AUDIO_LOG_MAX_LINES = 120;
 const AUDIO_LOG_MAX_CHARS = 260;
+const launchEndpointOverrides = new Map();
 
 function getSessionId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -247,17 +248,28 @@ function audioServerWsUrl(path) {
   return `${state.audio.wsUrl.replace(/\/$/, "")}${path}`;
 }
 
-function saveSettings() {
-  localStorage.setItem("robonix.settings", JSON.stringify(collectSettings()));
+function settingsForStorage(settings, storage) {
+  if (!launchEndpointOverrides.size) return settings;
+  const saved = { ...settings };
+  for (const [field, previous] of launchEndpointOverrides) {
+    if (previous[storage] === undefined) delete saved[field];
+    else saved[field] = previous[storage];
+  }
+  saved.atlasEndpoint = buildAtlasEndpoint(saved.robotHost, saved.atlasPort);
+  return saved;
+}
+
+function saveSettings(settings = collectSettings()) {
+  localStorage.setItem("robonix.settings", JSON.stringify(settingsForStorage(settings, "browser")));
 }
 
 async function persistSettings() {
   const settings = collectSettings();
-  saveSettings();
+  saveSettings(settings);
   const result = await fetch("/api/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings }),
+    body: JSON.stringify({ settings: settingsForStorage(settings, "server") }),
   }).then((response) => response.json()).catch((error) => ({ ok: false, error: String(error) }));
   if (!result.ok) throw new Error(result.error || t("settings write failed"));
   return result;
@@ -787,9 +799,17 @@ async function init() {
     ...stored,
     ...persisted,
   };
-  // CLI/environment values are launch defaults, not immutable policy. Stored
-  // browser settings must win so changing robot host or audio routing survives
-  // a refresh even when the client was initially launched with --robot-host.
+  // Only explicit endpoint flags override preferences. Keep the originals
+  // for saves triggered by unrelated settings or audio discovery.
+  for (const [flag, field] of [
+    ["ROBONIX_ROBOT_HOST", "robotHost"],
+    ["ROBONIX_ATLAS_PORT", "atlasPort"],
+  ]) {
+    if (!defaults.launchOverrides?.includes(flag)) continue;
+    launchEndpointOverrides.set(field, { browser: stored?.[field], server: persisted[field] });
+    state.settings[field] = defaults[field];
+  }
+  state.settings.atlasEndpoint = buildAtlasEndpoint(state.settings.robotHost, state.settings.atlasPort);
   // An explicitly launched session id wins; otherwise come back to whatever
   // conversation was open before the reload instead of a fresh empty one.
   if (defaults.sessionId) {
@@ -917,6 +937,8 @@ async function syncConnectionSettings(fromSettings = false, persist = false) {
   const portSource = (fromSettings || document.activeElement?.id === "atlasPortSettings") && maybe("atlasPortSettings") ? "atlasPortSettings" : "atlasPort";
   const host = maybe(hostSource) ? normalizeRobotHost($(hostSource).value) : "";
   const port = maybe(portSource) ? normalizeAtlasPort($(portSource).value) : DEFAULT_ATLAS_PORT;
+  if (host !== normalizeRobotHost(state.settings.robotHost)) launchEndpointOverrides.delete("robotHost");
+  if (port !== normalizeAtlasPort(state.settings.atlasPort)) launchEndpointOverrides.delete("atlasPort");
   if (maybe("robotHost")) $("robotHost").value = host;
   if (maybe("robotHostSettings")) $("robotHostSettings").value = host;
   if (maybe("atlasPort")) $("atlasPort").value = port;
