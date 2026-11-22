@@ -63,6 +63,10 @@ class UrdfAssetStore:
                 self._resource_sets.popitem(last=False)
         return resource_set_id
 
+    def contains(self, resource_set_id: str) -> bool:
+        with self._lock:
+            return resource_set_id in self._resource_sets
+
     def get(self, resource_set_id: str, path: str) -> CachedUrdfAsset:
         """Return one cached asset and refresh its resource set's LRU age."""
         normalized_path = self.normalize_path(path)

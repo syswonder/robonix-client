@@ -216,6 +216,11 @@ const MOBILE_MANIPULATOR_HARDWARE = {
   signals: [],
 };
 
+const SOMA_MESH_BASE_URL = "/api/vitals/urdf-assets/test-assets/";
+const SOMA_MESH_ROUTE = `**${SOMA_MESH_BASE_URL}meshes/test.stl`;
+const STL_RESPONSE = { status: 200, contentType: "model/stl", body: ASCII_STL };
+const MISSING_MESH_RESPONSE = { status: 404, body: "mesh not found" };
+
 const SOMA_URDF_DESCRIPTION = {
   id: "browser_mesh_robot",
   displayName: "Browser Mesh Robot",
@@ -223,7 +228,7 @@ const SOMA_URDF_DESCRIPTION = {
   rootPart: "body",
   dimensions: { lengthM: 0.4, widthM: 0.4, heightM: 0.4 },
   render: { mode: "urdf", modelUrl: "", urdfRootLink: "base_link", urdfModelName: "browser_mesh_robot" },
-  urdfAssetBaseUrl: "/api/vitals/urdf-assets/test-assets/",
+  urdfAssetBaseUrl: SOMA_MESH_BASE_URL,
   urdfXml: `
     <robot name="browser_mesh_robot">
       <link name="base_link">
@@ -239,6 +244,26 @@ const SOMA_URDF_DESCRIPTION = {
   components: [
     { id: "body", localId: "body", parentId: "", label: "Browser Mesh Robot", type: "robot", urdfLink: "base_link", urdfJoint: "", providers: [] },
   ],
+};
+
+const REPLACEMENT_URDF_DESCRIPTION = {
+  ...SOMA_URDF_DESCRIPTION,
+  urdfAssetBaseUrl: "/api/vitals/urdf-assets/replacement-assets/",
+  urdfXml: SOMA_URDF_DESCRIPTION.urdfXml.replace(
+    "</link>",
+    '<visual><geometry><box size="0.2 0.2 0.2"/></geometry></visual></link>',
+  ),
+};
+const REPLACEMENT_MESH_ROUTE = `**${REPLACEMENT_URDF_DESCRIPTION.urdfAssetBaseUrl}meshes/test.stl`;
+const PROVISIONAL_DESCRIPTION = {
+  ...SOMA_URDF_DESCRIPTION,
+  id: "robot",
+  displayName: "Robot",
+  rootPart: "",
+  components: [{ ...SOMA_URDF_DESCRIPTION.components[0], label: "Robot", urdfLink: "" }],
+  render: { mode: "procedural", modelUrl: "", urdfRootLink: "", urdfModelName: "" },
+  urdfAssetBaseUrl: "",
+  urdfXml: "",
 };
 
 const SOMA_URDF_HARDWARE = {
@@ -285,6 +310,17 @@ async function installVitalsSocket(page, description = DESCRIPTION, hardware = H
   const alerts = alertPayload(description, hardware);
   await page.addInitScript(({ description, hardware, modules, providers, alerts }) => {
     const NativeWebSocket = window.WebSocket;
+    const fixture = { subscriptions: [], descriptions: [], nextDescription: null, assetRequests: [] };
+    window.__vitalsFixture = fixture;
+
+    // Observe request initiation before an intercepted request reaches the test runner.
+    const nativeFetch = window.fetch;
+    window.fetch = function (request, ...args) {
+      const url = request?.url ?? String(request);
+      if (url.includes("/api/vitals/urdf-assets/")) fixture.assetRequests.push(url);
+      return nativeFetch.call(this, request, ...args);
+    };
+
     class FixtureWebSocket extends EventTarget {
       static CONNECTING = 0;
       static OPEN = 1;
@@ -305,11 +341,14 @@ async function installVitalsSocket(page, description = DESCRIPTION, hardware = H
         }, 20);
       }
 
-      send() {
+      send(message) {
+        fixture.subscriptions.push(JSON.parse(message));
+        const descriptionEvent = fixture.nextDescription ?? { type: "description", data: description };
+        fixture.nextDescription = null;
         const events = [
           { type: "accepted", atlasEndpoint: "127.0.0.1:50051" },
           { type: "alerts", data: { alerts: [], summary: { open: 0, active: 0, recovered: 0 }, notifyAlertIds: [] } },
-          { type: "description", data: description },
+          descriptionEvent,
           { type: "source", source: "soma", state: "ready", updatedAtMs: Date.now() },
           { type: "source", source: "hardware", state: "ready", updatedAtMs: Date.now() },
           { type: "source", source: "modules", state: "ready", updatedAtMs: Date.now() },
@@ -325,6 +364,8 @@ async function installVitalsSocket(page, description = DESCRIPTION, hardware = H
       }
 
       emit(payload) {
+        if (this.readyState !== FixtureWebSocket.OPEN) return;
+        if (payload.type === "description") fixture.descriptions.push(payload);
         const event = new MessageEvent("message", { data: JSON.stringify(payload) });
         this.onmessage?.(event);
         this.dispatchEvent(event);
@@ -366,6 +407,27 @@ async function waitForRenderMode(page, mode) {
   await expect.poll(
     () => page.evaluate(() => window.__robonixVitalsDebug.state().renderMode),
   ).toBe(mode);
+}
+
+function emitDescription(page, description) {
+  return page.evaluate((data) => window.__emitVitals({ type: "description", data }), description);
+}
+
+function modelStats(page) {
+  return page.evaluate(() => window.__robonixVitalsDebug.state().modelStats);
+}
+
+async function expectOriginalMesh(page) {
+  const { stats, visual } = await page.evaluate(() => ({
+    stats: window.__robonixVitalsDebug.state().modelStats,
+    visual: window.__robonixVitalsDebug.componentVisualStats("body"),
+  }));
+  expect(stats).toMatchObject({ source: "soma:urdf", meshCount: 1, mappedComponents: 1 });
+  expect(visual.materialCount).toBeGreaterThan(0);
+}
+
+function vitalsFixture(page) {
+  return page.evaluate(() => window.__vitalsFixture);
 }
 
 test("renders adaptive robot health workspace", async ({ page }, testInfo) => {
@@ -526,20 +588,105 @@ test("renders a disabled actuator yellow without creating an alert", async ({ pa
   expect(visual.maxYellowDominance).toBeGreaterThan(0.1);
 });
 
-test("loads a relative mesh attached to a Soma URDF", async ({ page }) => {
+test("retries a relative Soma URDF mesh after a 404 without another description", async ({ page }) => {
   let assetRequests = 0;
-  await page.route("**/api/vitals/urdf-assets/test-assets/meshes/test.stl", async (route) => {
+  await page.route(SOMA_MESH_ROUTE, (route) => {
     assetRequests += 1;
-    await route.fulfill({ status: 200, contentType: "model/stl", body: ASCII_STL });
+    return route.fulfill(assetRequests === 1 ? MISSING_MESH_RESPONSE : STL_RESPONSE);
   });
   await openVitals(page, SOMA_URDF_DESCRIPTION, SOMA_URDF_HARDWARE);
   await waitForRenderMode(page, "urdf");
   const debug = await page.evaluate(() => window.__robonixVitalsDebug.state());
   expect(debug.robotId).toBe("browser_mesh_robot");
-  expect(debug.modelStats.source).toBe("soma:urdf");
-  expect(debug.modelStats.meshCount).toBe(1);
-  expect(debug.modelStats.mappedComponents).toBe(1);
-  expect(assetRequests).toBe(1);
+  await expectOriginalMesh(page);
+  expect(assetRequests).toBe(2);
+  const fixture = await vitalsFixture(page);
+  expect(fixture.descriptions).toHaveLength(1);
+  expect(fixture.subscriptions).toHaveLength(1);
+});
+
+test("keeps a loaded mesh through a failed Soma replacement and reconnect", async ({ page }) => {
+  let originalRequests = 0;
+  let replacementRequests = 0;
+  let releaseFirstAttempt;
+  const firstAttempt = new Promise((resolve) => { releaseFirstAttempt = resolve; });
+  await page.route(SOMA_MESH_ROUTE, (route) => {
+    originalRequests += 1;
+    return route.fulfill(STL_RESPONSE);
+  });
+  await page.route(REPLACEMENT_MESH_ROUTE, async (route) => {
+    replacementRequests += 1;
+    if (replacementRequests === 1) await firstAttempt;
+    await route.fulfill(MISSING_MESH_RESPONSE);
+  });
+  await openVitals(page, SOMA_URDF_DESCRIPTION, SOMA_URDF_HARDWARE);
+  await waitForRenderMode(page, "urdf");
+  expect((await modelStats(page)).fallbackReason).toBe("");
+
+  try {
+    await emitDescription(page, REPLACEMENT_URDF_DESCRIPTION);
+    await expect.poll(() => replacementRequests).toBe(1);
+    await expectOriginalMesh(page);
+  } finally {
+    releaseFirstAttempt();
+  }
+  await expect.poll(async () => (await modelStats(page)).fallbackReason).toBeTruthy();
+  expect(replacementRequests).toBe(2);
+  await expectOriginalMesh(page);
+
+  await page.evaluate((data) => {
+    window.__vitalsFixture.nextDescription = { type: "description", data, provisional: true };
+    window.__vitalsFixtureSocket.close();
+  }, PROVISIONAL_DESCRIPTION);
+  await expect.poll(async () => (await vitalsFixture(page)).descriptions.at(-1)?.provisional).toBe(true);
+  const afterReconnect = await vitalsFixture(page);
+  expect(afterReconnect.subscriptions.at(-1).refreshModel ?? false).toBe(false);
+  expect(afterReconnect.assetRequests).toHaveLength(3);
+  await expect(page.locator("#vitalsRobotName")).toHaveText(SOMA_URDF_DESCRIPTION.displayName);
+  await expectOriginalMesh(page);
+
+  await emitDescription(page, {
+    ...SOMA_URDF_DESCRIPTION,
+    urdfAssetBaseUrl: "",
+    urdfWarning: "unavailable",
+  });
+  await expect(page.locator("#vitalsRenderMode")).toContainText("URDF unavailable");
+  await expectOriginalMesh(page);
+  expect((await vitalsFixture(page)).assetRequests).toEqual(afterReconnect.assetRequests);
+
+  // The authoritative replay of the displayed description should reuse its mesh.
+  await emitDescription(page, SOMA_URDF_DESCRIPTION);
+  await expectOriginalMesh(page);
+  expect((await vitalsFixture(page)).assetRequests).toEqual(afterReconnect.assetRequests);
+  expect(originalRequests).toBe(1);
+  expect(replacementRequests).toBe(2);
+
+  // Unlike a same-Atlas reconnect, changing Atlas must drop the old scene.
+  await page.evaluate(() => window.__emitVitals({ type: "accepted", atlasEndpoint: "127.0.0.1:50052" }));
+  await expect.poll(async () => (await modelStats(page)).source).not.toBe("soma:urdf");
+  const visual = await page.evaluate(() => window.__robonixVitalsDebug.componentVisualStats("body"));
+  expect(visual.materialCount).toBe(0);
+});
+
+test("only retries an exhausted Soma mesh again on explicit refresh", async ({ page }) => {
+  let meshAvailable = false;
+  await page.route(SOMA_MESH_ROUTE, (route) => route.fulfill(meshAvailable ? STL_RESPONSE : MISSING_MESH_RESPONSE));
+  await openVitals(page, SOMA_URDF_DESCRIPTION, SOMA_URDF_HARDWARE);
+  await expect.poll(async () => (await modelStats(page)).fallbackReason).toBeTruthy();
+  expect((await vitalsFixture(page)).assetRequests).toHaveLength(2);
+
+  await page.evaluate(() => window.__vitalsFixtureSocket.close());
+  await expect.poll(async () => (await vitalsFixture(page)).descriptions.length).toBe(2);
+  const afterReconnect = await vitalsFixture(page);
+  expect(afterReconnect.subscriptions[1].refreshModel ?? false).toBe(false);
+  expect(afterReconnect.assetRequests).toHaveLength(2);
+
+  meshAvailable = true;
+  await page.locator("#vitalsReconnect").click();
+  await expect.poll(async () => (await vitalsFixture(page)).subscriptions[2]?.refreshModel).toBe(true);
+  await waitForRenderMode(page, "urdf");
+  await expectOriginalMesh(page);
+  expect((await vitalsFixture(page)).assetRequests).toHaveLength(3);
 });
 
 test("renders a mobile manipulator with both base and arm", async ({ page }, testInfo) => {

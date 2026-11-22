@@ -13,8 +13,11 @@ from robonix_client.proto import (
     soma_client_pb2,
     vitals_client_pb2,
 )
-from robonix_client.transport import ClientSettings
+from robonix_client.transport import ClientSettings, _TtlCache
+from robonix_client.urdf_assets import UrdfAssetStore
 from robonix_client.vitals_transport import (
+    SOMA_GET_URDF_PATH,
+    SOMA_GET_YAML_PATH,
     _description_loop,
     _hardware_loop,
     _hardware_poll_loop,
@@ -266,116 +269,94 @@ class RobotDescriptionTest(unittest.TestCase):
 
 
 class RobotDescriptionLoadTest(unittest.IsolatedAsyncioTestCase):
-    async def test_get_urdf_requests_and_stages_attached_assets(self):
-        responses = [
-            soma_client_pb2.GetYaml_Response(
-                robot_id="test_robot",
-                yaml_text=SOMA_YAML,
-            ),
-            soma_client_pb2.GetUrdf_Response(
-                robot_id="test_robot",
-                urdf_xml=(
-                    "<robot><link name=\"base\"><visual><geometry>"
-                    "<mesh filename=\"meshes/base.stl\"/>"
-                    "</geometry></visual></link></robot>"
-                ),
-                assets=[
-                    soma_client_pb2.UrdfAsset(
-                        path="meshes/base.stl",
-                        data=b"solid base",
-                    )
-                ],
-            ),
-        ]
-        with (
-            patch(
-                "robonix_client.vitals_transport.discover_endpoint",
-                AsyncMock(side_effect=["127.0.0.1:50092", "127.0.0.1:50092"]),
-            ),
-            patch(
-                "robonix_client.vitals_transport._unary_unary",
-                AsyncMock(side_effect=responses),
-            ) as unary,
-        ):
-            description = await load_robot_description(ClientSettings())
+    def setUp(self):
+        self.xml = '<robot><link name="base"><visual><geometry><mesh filename="meshes/base.stl"/></geometry></visual></link></robot>'
+        self.assets = [soma_client_pb2.UrdfAsset(path="meshes/base.stl", data=b"solid base")]
+        self.asset_error = None
+        self.store = UrdfAssetStore(max_resource_sets=1)
+        self.enterContext(patch("robonix_client.vitals_transport.urdf_asset_store", self.store))
+        self.enterContext(patch("robonix_client.vitals_transport._urdf_resource_ids", _TtlCache(float("inf"))))
+        self.enterContext(patch(
+            "robonix_client.vitals_transport.discover_endpoint",
+            AsyncMock(return_value="127.0.0.1:50092"),
+        ))
+        self.unary = self.enterContext(patch(
+            "robonix_client.vitals_transport._unary_unary",
+            AsyncMock(side_effect=self.rpc),
+        ))
 
-        request = unary.await_args_list[1].args[2]
+    async def rpc(self, _endpoint, path, request, _response_type, **_kwargs):
+        if path == SOMA_GET_YAML_PATH:
+            return soma_client_pb2.GetYaml_Response(robot_id="test_robot", yaml_text=SOMA_YAML)
+        self.assertEqual(path, SOMA_GET_URDF_PATH)
         self.assertEqual(request.robot_id, "test_robot")
-        self.assertTrue(request.include_assets)
-        self.assertRegex(
-            description["urdfAssetBaseUrl"],
-            r"^/api/vitals/urdf-assets/[0-9a-f]{64}/$",
+        if request.include_assets and self.asset_error:
+            raise self.asset_error
+        return soma_client_pb2.GetUrdf_Response(
+            robot_id="test_robot", urdf_xml=self.xml,
+            assets=self.assets if request.include_assets else [],
         )
-        self.assertEqual(description["render"]["mode"], "urdf")
+
+    def asset_calls(self):
+        return [call for call in self.unary.await_args_list
+                if call.args[1] == SOMA_GET_URDF_PATH and call.args[2].include_assets]
+
+    async def test_reuses_assets_across_checks_and_concurrent_connections(self):
+        settings = ClientSettings()
+        first, simultaneous = await asyncio.gather(
+            load_robot_description(settings), load_robot_description(settings),
+        )
+        self.assertEqual(first, simultaneous)
+        self.assertEqual(first, await load_robot_description(settings))
+        self.assertEqual(len(self.asset_calls()), 1)
+        self.assertEqual(self.asset_calls()[0].kwargs["timeout"], 15.0)
+        self.assertRegex(first["urdfAssetBaseUrl"], r"^/api/vitals/urdf-assets/[0-9a-f]{64}/$")
+        self.assertEqual(first["render"]["mode"], "urdf")
+
+    async def test_loads_again_on_change_eviction_or_explicit_refresh(self):
+        settings = ClientSettings()
+        first = await load_robot_description(settings)
+        self.assets[0].data = b"new mesh"
+        self.assertEqual(first, await load_robot_description(settings))
+        updated = await load_robot_description(settings, refresh_model=True)
+        self.assertNotEqual(first["urdfAssetBaseUrl"], updated["urdfAssetBaseUrl"])
+        self.assertEqual(len(self.asset_calls()), 2)
+        self.xml = self.xml.replace('name="base"', 'name="updated"')
+        changed = await load_robot_description(settings)
+        self.assertNotEqual(changed["urdfXml"], updated["urdfXml"])
+        self.assertEqual(len(self.asset_calls()), 3)
+        self.store.put([("another.stl", b"different model")])
+        self.assertEqual(changed, await load_robot_description(settings))
+        self.assertEqual(len(self.asset_calls()), 4)
+        await load_robot_description(ClientSettings(atlas_endpoint="other:50051"))
+        self.assertEqual(len(self.asset_calls()), 5)
 
     async def test_get_urdf_without_assets_remains_compatible(self):
-        responses = [
-            soma_client_pb2.GetYaml_Response(
-                robot_id="test_robot",
-                yaml_text=SOMA_YAML,
-            ),
-            soma_client_pb2.GetUrdf_Response(
-                robot_id="test_robot",
-                urdf_xml=(
-                    "<robot><link name=\"base\"><visual><geometry>"
-                    "<box size=\"1 1 1\"/>"
-                    "</geometry></visual></link></robot>"
-                ),
-            ),
-        ]
-        with (
-            patch(
-                "robonix_client.vitals_transport.discover_endpoint",
-                AsyncMock(side_effect=["127.0.0.1:50092", "127.0.0.1:50092"]),
-            ),
-            patch(
-                "robonix_client.vitals_transport._unary_unary",
-                AsyncMock(side_effect=responses),
-            ),
-        ):
-            description = await load_robot_description(ClientSettings())
-
+        self.xml = self.xml.replace('<mesh filename="meshes/base.stl"/>', '<box size="1 1 1"/>')
+        self.assets = []
+        description = await load_robot_description(ClientSettings())
         self.assertEqual(description["urdfAssetBaseUrl"], "")
         self.assertEqual(description["render"]["mode"], "urdf")
+        self.assertEqual(description, await load_robot_description(ClientSettings()))
+        self.assertEqual(len(self.asset_calls()), 1)
 
-    async def test_get_urdf_retries_text_only_when_assets_missing(self):
-        """A missing mesh must degrade to text URDF *and* say so."""
-        responses = [
-            soma_client_pb2.GetYaml_Response(
-                robot_id="test_robot",
-                yaml_text=SOMA_YAML,
-            ),
-            grpc.aio.AioRpcError(
-                grpc.StatusCode.FAILED_PRECONDITION,
-                None,
-                None,
-                details="mesh file missing",
-            ),
-            soma_client_pb2.GetUrdf_Response(
-                robot_id="test_robot",
-                urdf_xml=(
-                    "<robot><link name=\"base\"><visual><geometry>"
-                    "<box size=\"1 1 1\"/>"
-                    "</geometry></visual></link></robot>"
-                ),
-            ),
-        ]
-        with (
-            patch(
-                "robonix_client.vitals_transport.discover_endpoint",
-                AsyncMock(side_effect=["127.0.0.1:50092", "127.0.0.1:50092"]),
-            ),
-            patch(
-                "robonix_client.vitals_transport._unary_unary",
-                AsyncMock(side_effect=responses),
-            ) as unary,
+    async def test_reports_asset_failures_without_caching_them(self):
+        settings = ClientSettings()
+        for code, warning in (
+            (grpc.StatusCode.FAILED_PRECONDITION, "assets_missing"),
+            (grpc.StatusCode.DEADLINE_EXCEEDED, "unavailable"),
         ):
-            description = await load_robot_description(ClientSettings())
-
-        self.assertEqual(description["urdfWarning"], "assets_missing")
-        self.assertEqual(description["urdfAssetBaseUrl"], "")
-        self.assertEqual(description["render"]["mode"], "urdf")
-        self.assertFalse(unary.await_args_list[2].args[2].include_assets)
+            with self.subTest(code=code):
+                self.asset_error = grpc.aio.AioRpcError(code, None, None)
+                description = await load_robot_description(settings)
+                self.assertEqual(description["urdfWarning"], warning)
+                self.assertEqual(description["urdfAssetBaseUrl"], "")
+                self.assertEqual(description["urdfXml"], self.xml)
+        self.asset_error = None
+        recovered = await load_robot_description(settings)
+        self.assertEqual(recovered["urdfWarning"], "")
+        self.assertTrue(recovered["urdfAssetBaseUrl"])
+        self.assertEqual(len(self.asset_calls()), 3)
 
 
 class VitalsPollingTest(unittest.IsolatedAsyncioTestCase):
@@ -799,6 +780,32 @@ class ComponentHealthTest(unittest.TestCase):
 
 
 class VitalsStreamOrderingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_model_refresh_failure_keeps_previous_description(self):
+        previous = normalize_robot_description(
+            SOMA_YAML, '<robot name="previous"/>', urdf_asset_base_url="/meshes/"
+        )
+        degraded = {**previous, "urdfXml": "", "urdfAssetBaseUrl": "", "urdfWarning": "unavailable"}
+        replacement = {**previous, "urdfXml": '<robot name="replacement"/>'}
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        state = {"value": previous}
+        with (
+            patch(
+                "robonix_client.vitals_transport.load_robot_description",
+                AsyncMock(side_effect=[degraded, replacement]),
+            ),
+            patch("robonix_client.vitals_transport.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        ):
+            sleep.side_effect = [None, asyncio.CancelledError]
+            with self.assertRaises(asyncio.CancelledError):
+                await _description_loop(ClientSettings(), queue, state, {"value": None})
+
+        error, changed, ready = [queue.get_nowait() for _ in range(3)]
+        self.assertEqual((error["type"], error["state"]), ("source", "error"))
+        self.assertEqual(changed, {"type": "description", "data": replacement})
+        self.assertEqual((ready["type"], ready["state"]), ("source", "ready"))
+        self.assertTrue(queue.empty())
+        self.assertEqual(state["value"], replacement)
+
     async def test_description_reprojects_hardware_that_arrived_first(self):
         """A slow Soma description must replace provisional health topology."""
         description = normalize_robot_description(SOMA_YAML)
