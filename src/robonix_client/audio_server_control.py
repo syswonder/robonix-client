@@ -81,6 +81,77 @@ async def health(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_POR
         return {"reachable": False, "url": url, "error": str(exc)}
 
 
+def local_port() -> int:
+    """Port of this machine's audio device server, as last started from this client."""
+    return _last_port
+
+
+async def _local_request(path: str, body: dict[str, Any] | None = None, timeout_s: float = 3.0) -> dict[str, Any]:
+    """One request/response exchange with this machine's audio device server."""
+    url = f"ws://{DEFAULT_BRIDGE_HOST}:{_last_port}{path}"
+    async with websockets.connect(url, open_timeout=timeout_s, proxy=None) as ws:
+        if body is not None:
+            await ws.send(json.dumps(body))
+        message = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
+    result = json.loads(message) if isinstance(message, str) else None
+    if not isinstance(result, dict):
+        raise RuntimeError(f"audio device server {path} returned an invalid response")
+    return result
+
+
+async def local_devices(provider_id: str) -> dict[str, Any]:
+    """This machine's audio devices, in the shape the provider device list uses.
+
+    A reverse bridge only forwards to whichever client holds it, so listing
+    through the provider can show another client's devices. The local server
+    is always this machine.
+    """
+    payload = await _local_request("/devices")
+    devices = []
+    for entry in payload.get("devices", []):
+        in_ch = int(entry.get("max_input_channels", 0))
+        out_ch = int(entry.get("max_output_channels", 0))
+        if in_ch == 0 and out_ch == 0:
+            continue
+        name = str(entry.get("name", ""))
+        kind = "duplex" if in_ch and out_ch else "input" if in_ch else "output"
+        devices.append(
+            {
+                "id": str(entry["id"]),
+                "name": name,
+                "kind": kind,
+                "isDefault": (kind != "output" and entry["id"] == payload.get("input_default"))
+                or (kind != "input" and entry["id"] == payload.get("output_default")),
+                "channels": max(in_ch, out_ch),
+                "note": "bluetooth"
+                if any(hint in name.lower() for hint in ("airpods", "bluetooth", "iphone", "ipad"))
+                else "",
+            }
+        )
+    current_in = payload.get("input_current")
+    current_out = payload.get("output_current")
+    return {
+        "providerId": provider_id,
+        "devices": devices,
+        "currentInputId": "" if current_in is None else str(current_in),
+        "currentOutputId": "" if current_out is None else str(current_out),
+    }
+
+
+async def select_local_device(kind: str, device_id: str) -> None:
+    """Choose this machine's input or output device; blank restores the OS default."""
+    if kind not in {"input", "output"}:
+        raise ValueError(f"unsupported audio device kind: {kind}")
+    raw = device_id.strip()
+    if raw and not raw.lstrip("-").isdigit():
+        # Silently turning an unknown id into the OS default would report a choice that was not made.
+        raise ValueError(f"invalid {kind} device id: {device_id!r}")
+    value: int | None = int(raw) if raw else None
+    result = await _local_request("/set_device", {kind: value})
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or f"audio device server rejected {kind} device")
+
+
 def _blocking_health(host: str, port: int, timeout_s: float) -> dict[str, Any]:
     result: dict[str, Any] = {}
 

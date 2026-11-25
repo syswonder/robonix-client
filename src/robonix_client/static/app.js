@@ -213,14 +213,11 @@ const state = {
   audio: {
     port: 60000,
     wsUrl: "",
-    devices: [],
-    inputCurrent: null,
-    outputCurrent: null,
+    applyingRoute: false,
     vuSocket: null,
     vuState: "idle",
     logSocket: null,
     logLines: [],
-    levelHistory: Array(28).fill(0),
     outputLevelTarget: 0,
     auraLevel: 0,
     auraFrame: 0,
@@ -829,7 +826,6 @@ async function init() {
   bindCameraSnapshot();
   bindDepthColormap();
   bindDepthHover();
-  renderAudioBars();
   renderHistory();
   renderMessages();
   renderTimeline();
@@ -882,6 +878,7 @@ async function init() {
   setInterval(() => { if (!document.hidden) refreshSystem(); }, 7000);
   setInterval(() => { if (!document.hidden && state.activePage === "dashboard") refreshActivePlans(); }, 2000);
   setInterval(() => { if (!document.hidden) refreshHandsfree(); }, 2500);
+  setInterval(() => { if (!document.hidden) refreshReverseBridge(); }, 4000);
   setInterval(() => { if (!document.hidden) refreshVoiceFinishSupport(); }, 7000);
 }
 
@@ -919,10 +916,6 @@ function bindSettings() {
     "recordSeconds",
     "settingsRecordSeconds",
     "language",
-    "micNodeId",
-    "micDeviceId",
-    "speakerNodeId",
-    "speakerDeviceId",
     "enrollUserId",
     "enrollUserName",
   ].forEach((id) => maybe(id)?.addEventListener("change", syncConnectionSettings));
@@ -1068,6 +1061,7 @@ function bindEvents() {
   maybe("voiceButton")?.addEventListener("click", startVoice);
   $("refreshSystem").addEventListener("click", refreshSystem);
   maybe("handsfreeToggle")?.addEventListener("click", toggleHandsfree);
+  renderHandsfree();
   maybe("sessionListToggle")?.addEventListener("click", toggleSessionList);
   maybe("newSessionAction")?.addEventListener("click", newSession);
   maybe("renameSession")?.addEventListener("click", () => renameConversation(state.sessionId));
@@ -1092,11 +1086,21 @@ function bindEvents() {
   });
   maybe("startAudioServer")?.addEventListener("click", startAudioServer);
   maybe("checkAudioServer")?.addEventListener("click", checkAudioServer);
-  maybe("refreshAudioDevices")?.addEventListener("click", loadAudioDevices);
+  maybe("refreshAudioDevices")?.addEventListener("click", refreshAudioRoute);
   maybe("refreshAudioRoute")?.addEventListener("click", refreshAudioRoute);
-  maybe("applyAudioRoute")?.addEventListener("click", applyAudioRoute);
-  maybe("micNodeId")?.addEventListener("change", () => loadAudioRouteDevices("mic"));
-  maybe("speakerNodeId")?.addEventListener("change", () => loadAudioRouteDevices("speaker"));
+  maybe("audioBridgeAction")?.addEventListener("click", () => connectReverseAudio(selectedBridgeProvider()));
+  maybe("micDeviceId")?.addEventListener("change", () => {
+    state.settings.micDeviceId = maybe("micDeviceId")?.value || "";
+    renderDeviceHint("mic");
+    saveSettings();
+  });
+  maybe("speakerDeviceId")?.addEventListener("change", () => {
+    state.settings.speakerDeviceId = maybe("speakerDeviceId")?.value || "";
+    renderDeviceHint("speaker");
+    saveSettings();
+  });
+  maybe("micNodeId")?.addEventListener("change", () => applyAudioRoute("mic"));
+  maybe("speakerNodeId")?.addEventListener("change", () => applyAudioRoute("speaker"));
   maybe("enrollVoice")?.addEventListener("click", enrollVoice);
   maybe("testMicrophone")?.addEventListener("click", testMicrophone);
   maybe("testSpeaker")?.addEventListener("click", testSpeaker);
@@ -1329,16 +1333,63 @@ function closeRtdlHistory() {
   maybe("openRtdlHistory")?.focus();
 }
 
-async function configureReverseAudio(providerId) {
+function selectedBridgeProvider() {
+  const bridges = (state.audio.route.bridgeProviders || []).map((provider) => provider.id);
+  const selected = [maybe("micNodeId")?.value, maybe("speakerNodeId")?.value];
+  return selected.find((id) => id && bridges.includes(id)) || "";
+}
+
+// Connects this client to the robot's audio bridge. An occupied bridge is never
+// taken silently: the user is asked first, and `onConnected` runs afterwards.
+async function connectReverseAudio(providerId, { takeOver = false, onConnected = null } = {}) {
   if (!providerId) return { ok: false, skipped: true };
   const result = await fetch("/api/audio-reverse/connect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings: collectSettings(), providerId }),
+    body: JSON.stringify({ settings: collectSettings(), providerId, takeOver }),
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
+  if (result.busy) {
+    promptBridgeTakeover(providerId, onConnected);
+  } else {
   appendAudioLog(result.ok
     ? t("reverse audio target {target}", { target: result.target })
     : t("reverse audio error: {error}", { error: result.error || "unknown" }));
+    if (result.ok && onConnected) onConnected();
+  }
+  refreshReverseBridge();
+  return result;
+}
+
+function promptBridgeTakeover(providerId, onConnected = null) {
+  openSessionDialog({
+    kind: "takeover",
+    onConfirm: () => connectReverseAudio(providerId, { takeOver: true, onConnected }),
+  });
+}
+
+async function refreshReverseBridge() {
+  const row = maybe("audioBridgeRow");
+  const label = maybe("audioBridgeState");
+  const button = maybe("audioBridgeAction");
+  if (!row || !label || !button) return;
+  const provider = selectedBridgeProvider();
+  if (!provider) {
+    row.hidden = true;
+    return;
+  }
+  const status = await fetch("/api/audio-reverse/status")
+    .then((r) => r.json())
+    .catch(() => null);
+  if (!status || selectedBridgeProvider() !== provider) return;
+  const mine = status.connected && status.providerId === provider;
+  label.textContent = mine
+    ? t("Connected: the robot uses this computer's audio.")
+    : status.takenOver && status.providerId === provider
+      ? t("Taken over by another client.")
+      : t("Not connected: the robot is not using this computer's audio.");
+  setButtonLabel(button, status.takenOver && !mine ? t("Take back") : t("Connect"));
+  button.hidden = mine;
+  row.hidden = false;
 }
 
 async function refreshHandsfree() {
@@ -1368,6 +1419,12 @@ async function toggleHandsfree() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ settings: collectSettings(), enabled }),
   }).then((r) => r.json()).catch((error) => ({ available: false, ok: false, state: "unavailable", error: String(error) }));
+  if (result.busy) {
+    state.handsfree.busy = false;
+    renderHandsfree();
+    promptBridgeTakeover(result.providerId, toggleHandsfree);
+    return;
+  }
   state.handsfree = { ...state.handsfree, ...result, busy: false };
   renderHandsfree();
   syncHandsfreeEventStream();
@@ -1386,23 +1443,33 @@ function renderHandsfree() {
   button.classList.toggle("listening", status === "listening");
   button.classList.toggle("recording", status === "suspended");
   button.classList.toggle("busy", state.handsfree.busy || ["triggered", "acknowledging", "in_voice"].includes(status));
-  button.classList.toggle("error", status === "error" || status === "unavailable");
+  button.classList.toggle("unavailable", status === "unavailable");
+  button.classList.toggle("error", status === "error");
+  const statusLabels = {
+    unavailable: "Hands-free unavailable",
+    error: "Hands-free error",
+    listening: "Listening",
+    acknowledging: "Acknowledging",
+    in_voice: "Hands-free active",
+    suspended: "Recording",
+  };
+  const statusLabel = statusLabels[status];
   label.textContent = state.handsfree.busy
     ? t("Hands-free...")
-    : status === "listening"
-      ? t("Listening")
-      : status === "acknowledging"
-        ? t("Acknowledging")
-      : status === "in_voice"
-        ? t("Hands-free active")
-        : status === "suspended"
-          ? t("Recording")
+    : statusLabel
+      ? t(statusLabel)
         : state.handsfree.enabled
           ? t("Hands-free {status}", { status: t(status) })
           : t("Hands-free off");
-  button.title = state.handsfree.lastError || state.handsfree.error || (state.handsfree.keyword
+  if (status === "unavailable") {
+    button.title = state.handsfree.error || t(statusLabel);
+  } else if (status === "error") {
+    button.title = state.handsfree.lastError || t(statusLabel);
+  } else {
+    button.title = state.handsfree.keyword
     ? t("Last wake phrase: {phrase}", { phrase: state.handsfree.keyword })
-    : t("Robot-local wake phrase configured by Speech"));
+      : t("Robot-local wake phrase configured by Speech");
+  }
   syncVoiceControls();
 }
 
@@ -1491,6 +1558,11 @@ function syncHandsfreeEventStream() {
     const payload = JSON.parse(message.data);
     if (payload.type === "voice_event") handleVoiceEvent(payload.event);
     if (payload.type === "accepted") addTimeline("voice", t("hands-free event stream connected"));
+    // The stream reconnects every 1.5 s, so say it once instead of prompting each time.
+    if (payload.type === "bridge_busy" && !state.handsfreeBridgeBusyShown) {
+      state.handsfreeBridgeBusyShown = true;
+      addStatusLine(t("The audio bridge is in use by another client."), "activity", "The audio bridge is in use by another client.");
+    }
     if (payload.type === "error") addMessage("error", payload.error || t("hands-free event stream failed"));
   };
   socket.onclose = () => {
@@ -1577,7 +1649,6 @@ function activatePage(name) {
   setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
   if (name === "audio") {
     checkAudioServer();
-    renderAudioBars();
     renderAudioLog();
   }
   if (name === "dashboard") {
@@ -1878,6 +1949,14 @@ function wireStream(socket, done, voiceSocket = null) {
         state.connectionAnnounced = true;
         addStatusLine(t("Connected; waiting for Robonix events."), "milestone", "Connected; waiting for Robonix events.");
       }
+    }
+    if (payload.type === "bridge_busy") {
+      addStatusLine(t("The audio bridge is in use by another client."), "activity", "The audio bridge is in use by another client.");
+      promptBridgeTakeover(payload.providerId, () => addStatusLine(
+        t("Audio bridge taken over. Start voice input again."),
+        "activity",
+        "Audio bridge taken over. Start voice input again.",
+      ));
     }
     if (payload.type === "status") addTimeline("status", payload.message || t("status"));
     if (payload.type === "finish_requested") {
@@ -5362,10 +5441,34 @@ function bindSessionDialog() {
       commitConversationRename(sessionDialogAction.sessionId, nextTitle);
     } else if (sessionDialogAction?.kind === "clear") {
       performClearHistory();
+    } else if (sessionDialogAction?.kind === "takeover") {
+      sessionDialogAction.onConfirm?.();
     }
     closeSessionDialog();
   });
 }
+
+const SESSION_DIALOG_COPY = {
+  rename: {
+    kicker: "Session",
+    title: "Rename session",
+    description: "Choose a clear name so you can find this session later.",
+    submit: "Save name",
+  },
+  clear: {
+    kicker: "Clear sessions",
+    title: "Clear all sessions?",
+    description: "Are you sure you want to clear all conversation history? This cannot be undone.",
+    submit: "Clear all sessions",
+    destructive: true,
+  },
+  takeover: {
+    kicker: "Audio bridge",
+    title: "Take over the audio bridge?",
+    description: "Another client is using this robot's audio bridge. Taking it over interrupts that client's voice session, and the robot's spoken replies and hands-free wake-up will use this computer from now on.",
+    submit: "Take over",
+  },
+};
 
 function openSessionDialog(action) {
   const dialog = maybe("sessionDialog");
@@ -5379,8 +5482,9 @@ function openSessionDialog(action) {
   sessionDialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sessionDialogAction = action;
   const isRename = action.kind === "rename";
-  if (kicker) kicker.textContent = t(isRename ? "Session" : "Clear sessions");
-  if (title) title.textContent = t(isRename ? "Rename session" : "Clear all sessions?");
+  const copy = SESSION_DIALOG_COPY[action.kind] || SESSION_DIALOG_COPY.clear;
+  if (kicker) kicker.textContent = t(copy.kicker);
+  if (title) title.textContent = t(copy.title);
   if (label) {
     label.textContent = t("Session name");
     label.hidden = !isRename;
@@ -5389,14 +5493,10 @@ function openSessionDialog(action) {
     input.hidden = !isRename;
     input.value = isRename ? action.currentTitle : "";
   }
-  if (description) {
-    description.textContent = isRename
-      ? t("Choose a clear name so you can find this session later.")
-      : t("Are you sure you want to clear all conversation history? This cannot be undone.");
-  }
+  if (description) description.textContent = t(copy.description);
   if (submit) {
-    submit.textContent = t(isRename ? "Save name" : "Clear all sessions");
-    submit.classList.toggle("destructive", !isRename);
+    submit.textContent = t(copy.submit);
+    submit.classList.toggle("destructive", Boolean(copy.destructive));
   }
   dialog.hidden = false;
   document.body.classList.add("session-dialog-open");
@@ -5578,6 +5678,273 @@ function routeOption(select, value, label) {
   select.appendChild(option);
 }
 
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function sanitizeId(str) {
+  return String(str || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function updateSessionRoleBadges() {
+  const currentMic = maybe("micNodeId")?.value || "";
+  const currentSpeaker = maybe("speakerNodeId")?.value || "";
+
+  document.querySelectorAll(".primitive-card").forEach((card) => {
+    const pid = card.dataset.providerId;
+    const badgeWrap = card.querySelector(".primitive-role-badges");
+    if (!badgeWrap) return;
+    badgeWrap.innerHTML = "";
+    if (pid && pid === currentMic) {
+      const b = document.createElement("span");
+      b.className = "session-role-badge input";
+      b.textContent = t("Session Input");
+      badgeWrap.appendChild(b);
+    }
+    if (pid && pid === currentSpeaker) {
+      const b = document.createElement("span");
+      b.className = "session-role-badge output";
+      b.textContent = t("Session Output");
+      badgeWrap.appendChild(b);
+    }
+  });
+}
+
+function createPrimitiveCardElement(provider, route) {
+  const safeId = "prim_" + sanitizeId(provider.id);
+  const row = document.createElement("div");
+  row.className = "audio-device-row primitive-card";
+  row.id = `${safeId}_card`;
+  row.dataset.providerId = provider.id;
+
+  const supportsInput = (route.micProviders || []).some((p) => p.id === provider.id) ||
+    (route.bridgeProviders || []).some((p) => p.id === provider.id);
+  const supportsOutput = (route.speakerProviders || []).some((p) => p.id === provider.id) ||
+    (route.bridgeProviders || []).some((p) => p.id === provider.id);
+
+  row.innerHTML = `
+    <div class="audio-device-heading">
+      <div class="pipeline-icon-badge primitive" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          <rect x="9" y="9" width="6" height="6" />
+          <path d="M9 1v3" /><path d="M15 1v3" /><path d="M9 20v3" /><path d="M15 20v3" />
+          <path d="M20 9h3" /><path d="M20 14h3" /><path d="M1 9h3" /><path d="M1 14h3" />
+        </svg>
+      </div>
+      <div class="prim-info">
+        <div class="prim-name-row">
+          <span class="primitive-title">${escapeHtml(provider.id)}</span>
+        </div>
+        <div class="primitive-role-badges"></div>
+      </div>
+    </div>
+
+    <div class="audio-device-actions">
+      <div class="primitive-status-badge" id="${safeId}_status">
+        <span class="primitive-status-dot" aria-hidden="true"></span>
+        <span class="primitive-status-text" id="${safeId}_statusText">${t("Checking...")}</span>
+      </div>
+      <button class="button icon-btn compact-button" id="${safeId}_refreshBtn" type="button" title="${t("Refresh")}" data-i18n-title="Refresh">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+        </svg>
+      </button>
+      <button class="button compact-button takeover-action-btn" id="${safeId}_takeoverBtn" type="button" hidden>
+        <span data-i18n="Take over">${t("Take over")}</span>
+      </button>
+    </div>
+    <div class="audio-device-fields">
+      ${[
+        ["input", "Physical Input Device", supportsInput],
+        ["output", "Physical Output Device", supportsOutput],
+      ].filter(([, , supported]) => supported).map(([kind, label]) => `
+        <label class="audio-device-field">
+          <span class="audio-field-label" data-i18n="${label}">${t(label)}</span>
+          <select class="audio-select" id="${safeId}_${kind}" disabled></select>
+        </label>
+      `).join("")}
+    </div>
+    <small class="audio-device-hint" id="${safeId}_hint" role="status"></small>
+  `;
+
+  return row;
+}
+
+async function autoApplyPrimitiveDevice(provider, card, kind, deviceId) {
+  const safeId = "prim_" + sanitizeId(provider.id);
+  const inputSelect = maybe(`${safeId}_input`);
+  const outputSelect = maybe(`${safeId}_output`);
+  const hintEl = maybe(`${safeId}_hint`);
+  if (hintEl) hintEl.textContent = t("Applying...");
+
+  const selects = [inputSelect, outputSelect].filter(Boolean);
+  const refreshBtn = maybe(`${safeId}_refreshBtn`);
+  if (refreshBtn) refreshBtn.disabled = true;
+  selects.forEach((select) => { select.disabled = true; });
+
+  const applyRes = await fetch("/api/audio-route/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      settings: collectSettings(),
+      providerId: provider.id,
+      [kind === "input" ? "inputId" : "outputId"]: deviceId,
+    }),
+  }).then((r) => r.json()).catch((err) => ({ ok: false, error: String(err) }));
+
+  let saveError = "";
+  const side = kind === "input" ? "mic" : "speaker";
+  if (applyRes.ok && provider.id === state.settings[`${side}NodeId`]) {
+    const deviceKey = `${side}DeviceId`;
+    state.settings[deviceKey] = deviceId;
+    if (maybe(deviceKey)) $(deviceKey).value = deviceId;
+    try {
+      await persistSettings();
+    } catch (error) {
+      saveError = error.message;
+    }
+  }
+  if (!card.isConnected) return;
+  await loadPrimitiveCardDevices(provider, card);
+  if (hintEl && (!applyRes.ok || saveError || !hintEl.textContent)) {
+    hintEl.classList.toggle("is-error", !applyRes.ok || Boolean(saveError));
+    hintEl.textContent = !applyRes.ok
+      ? t("Route apply failed: {error}", { error: applyRes.error || t("unknown error") })
+      : saveError ? t("Settings save failed: {error}", { error: saveError }) : t("Saved");
+  }
+}
+
+async function loadPrimitiveCardDevices(provider, card) {
+  const safeId = "prim_" + sanitizeId(provider.id);
+  const statusBadge = maybe(`${safeId}_status`);
+  const statusText = maybe(`${safeId}_statusText`);
+  const inputSelect = maybe(`${safeId}_input`);
+  const outputSelect = maybe(`${safeId}_output`);
+  const hintEl = maybe(`${safeId}_hint`);
+  const takeoverBtn = maybe(`${safeId}_takeoverBtn`);
+  const refreshBtn = maybe(`${safeId}_refreshBtn`);
+
+  if (statusText) statusText.textContent = t("Checking...");
+  if (statusBadge) statusBadge.className = "primitive-status-badge";
+  if (hintEl) {
+    hintEl.textContent = "";
+    hintEl.classList.remove("is-error");
+  }
+  if (takeoverBtn) takeoverBtn.hidden = true;
+  if (refreshBtn) refreshBtn.disabled = true;
+  if (inputSelect) inputSelect.disabled = true;
+  if (outputSelect) outputSelect.disabled = true;
+
+  const result = await fetch("/api/audio-route/devices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings: collectSettings(), providerId: provider.id }),
+  }).then((r) => r.json()).catch((err) => ({ error: String(err) }));
+  if (!card.isConnected) return;
+
+  if (statusBadge && statusText) {
+    if (result.error || result.bridgeError) {
+      statusBadge.className = "primitive-status-badge error";
+      statusText.textContent = t("Offline");
+    } else if (result.isBridge) {
+      if (result.mine) {
+        statusBadge.className = "primitive-status-badge connected";
+        statusText.textContent = t("Connected (this client)");
+        if (takeoverBtn) takeoverBtn.hidden = true;
+      } else if (result.bridgeConnected) {
+        statusBadge.className = "primitive-status-badge busy";
+        const occupant = result.bridgeDetail ? `: ${result.bridgeDetail}` : "";
+        statusText.textContent = `${t("Occupied")}${occupant}`;
+        if (takeoverBtn) {
+          takeoverBtn.hidden = false;
+          takeoverBtn.onclick = () => connectReverseAudio(provider.id, { takeOver: true, onConnected: () => loadPrimitiveCardDevices(provider, card) });
+        }
+      } else {
+        statusBadge.className = "primitive-status-badge available";
+        statusText.textContent = t("Available");
+        if (takeoverBtn) takeoverBtn.hidden = true;
+      }
+    } else {
+      statusBadge.className = "primitive-status-badge available";
+      statusText.textContent = t("Available");
+      if (takeoverBtn) takeoverBtn.hidden = true;
+    }
+  }
+
+  const deviceError = result.error || result.deviceError;
+  const cardError = [deviceError, result.bridgeError].filter(Boolean).join(" · ");
+  if (hintEl && cardError) hintEl.textContent = cardError;
+  const devices = result.devices || [];
+  for (const [select, kind, current] of [
+    [inputSelect, "input", result.currentInputId],
+    [outputSelect, "output", result.currentOutputId],
+  ]) {
+    if (!select) continue;
+    const choices = devices.filter((device) => device.kind === kind || device.kind === "duplex");
+    const selected = choices.find((device) => device.id === current);
+    clear(select);
+    const canSelectDefault = result.isBridge && !deviceError;
+    if (canSelectDefault) routeOption(select, "", t("OS default"));
+    if (!selected && (current || !canSelectDefault)) {
+      const label = current ? t("{name} (unavailable)", { name: current }) : t(choices.length ? "OS default" : "No devices");
+      routeOption(select, current || "", deviceError ? t("Offline") : label);
+      select.options[select.options.length - 1].disabled = true;
+    }
+    choices.forEach((device) => {
+      const name = device.name || device.id;
+      const duplicate = choices.some((other) => other.id !== device.id && other.name === device.name);
+      const details = [device.channels && t("{channels} ch", { channels: device.channels }), duplicate && `#${device.id}`].filter(Boolean);
+      routeOption(select, device.id, details.length ? `${name} (${details.join(", ")})` : name);
+    });
+    select.value = current || "";
+    select.title = select.selectedOptions[0]?.textContent || "";
+    select.disabled = Boolean(deviceError) || (!choices.length && !canSelectDefault);
+    select.onchange = () => autoApplyPrimitiveDevice(provider, card, kind, select.value);
+  }
+  if (refreshBtn) {
+    refreshBtn.disabled = false;
+    refreshBtn.onclick = () => loadPrimitiveCardDevices(provider, card);
+  }
+}
+
+async function renderAllPrimitiveCards(route) {
+  const container = maybe("primitiveCardsContainer");
+  if (!container) return;
+
+  const allProviders = [];
+  const seen = new Set();
+  [...(route.micProviders || []), ...(route.speakerProviders || []), ...(route.bridgeProviders || [])].forEach((p) => {
+    if (p && p.id && !seen.has(p.id)) {
+      seen.add(p.id);
+      allProviders.push(p);
+    }
+  });
+
+  if (allProviders.length === 0) {
+    container.innerHTML = `<div class="primitive-empty-notice" data-i18n="No audio primitives discovered from Atlas.">${t("No audio primitives discovered from Atlas.")}</div>`;
+    return;
+  }
+
+  clear(container);
+  const cardMap = new Map();
+  for (const provider of allProviders) {
+    const card = createPrimitiveCardElement(provider, route);
+    container.appendChild(card);
+    cardMap.set(provider.id, card);
+  }
+
+  updateSessionRoleBadges();
+  window.RobonixI18N?.applyDocument();
+
+  await Promise.all(allProviders.map((p) => loadPrimitiveCardDevices(p, cardMap.get(p.id))));
+}
+
 function renderAudioRouteProviders(route) {
   const mic = maybe("micNodeId");
   const speaker = maybe("speakerNodeId");
@@ -5588,11 +5955,13 @@ function renderAudioRouteProviders(route) {
   clear(speaker);
   routeOption(mic, "", t("Select input primitive"));
   routeOption(speaker, "", t("Select output primitive"));
+  mic.options[0].disabled = true;
+  speaker.options[0].disabled = true;
   (route.micProviders || []).forEach((provider) => {
-    routeOption(mic, provider.id, provider.namespace ? `${provider.id} (${provider.namespace})` : provider.id);
+    routeOption(mic, provider.id, provider.id);
   });
   (route.speakerProviders || []).forEach((provider) => {
-    routeOption(speaker, provider.id, provider.namespace ? `${provider.id} (${provider.namespace})` : provider.id);
+    routeOption(speaker, provider.id, provider.id);
   });
   const micAvailable = (route.micProviders || []).some((provider) => provider.id === savedMic);
   const speakerAvailable = (route.speakerProviders || []).some((provider) => provider.id === savedSpeaker);
@@ -5600,6 +5969,9 @@ function renderAudioRouteProviders(route) {
   if (savedSpeaker && !speakerAvailable) routeOption(speaker, savedSpeaker, t("{name} (unavailable)", { name: savedSpeaker }));
   mic.value = savedMic || "";
   speaker.value = savedSpeaker || "";
+  mic.disabled = state.audio.applyingRoute || !route.micProviders?.length;
+  speaker.disabled = state.audio.applyingRoute || !route.speakerProviders?.length;
+  updateSessionRoleBadges();
 }
 
 function renderAudioRouteDevices(side, result) {
@@ -5614,12 +5986,35 @@ function renderAudioRouteDevices(side, result) {
     .filter((device) => device.kind === wantedKind || device.kind === "duplex")
     .forEach((device) => {
       const suffix = [device.channels ? t("{channels} ch", { channels: device.channels }) : "", device.note || ""].filter(Boolean).join(", ");
-      routeOption(select, device.id, suffix ? `${device.name} (${suffix})` : device.name || device.id);
+      const label = suffix ? `${device.name} (${suffix})` : device.name || device.id;
+      routeOption(select, device.id, label);
     });
   const devices = result.devices || [];
+  state.audio.route[side === "mic" ? "micCurrent" : "speakerCurrent"] = current || "";
   const target = devices.some((device) => device.id === saved) ? saved : (current || "");
   select.value = target;
+  renderDeviceHint(side);
   renderBridgeDeviceReadout(side, result, target);
+  const activeNameEl = maybe(side === "mic" ? "micActiveDeviceName" : "speakerActiveDeviceName");
+  if (activeNameEl) {
+    const activeDevice = devices.find((device) => device.id === current);
+    activeNameEl.textContent = activeDevice ? activeDevice.name : t("OS default");
+  }
+}
+
+function renderDeviceHint(side) {
+  const hint = maybe(side === "mic" ? "micDeviceHint" : "speakerDeviceHint");
+  const select = maybe(side === "mic" ? "micDeviceId" : "speakerDeviceId");
+  if (!hint || !select) return;
+  const route = state.audio.route;
+  const current = (side === "mic" ? route.micCurrent : route.speakerCurrent) || "";
+  const devices = (side === "mic" ? route.micDevices : route.speakerDevices) || [];
+  if (!select.value || select.value === current) {
+    hint.textContent = "";
+    return;
+  }
+  const active = devices.find((device) => device.id === current);
+  hint.textContent = t("Not applied yet. In use: {device}", { device: active ? active.name : t("OS default") });
 }
 
 function renderBridgeDeviceReadout(side, result, selectedId) {
@@ -5627,18 +6022,20 @@ function renderBridgeDeviceReadout(side, result, selectedId) {
   const target = maybe(side === "mic" ? "bridgeInputDevice" : "bridgeOutputDevice");
   if (!target) return;
   if (provider !== "audio_client_bridge") {
-    target.textContent = t("Not using client bridge");
+    target.textContent = "—";
     return;
   }
   const device = (result.devices || []).find((entry) => entry.id === selectedId);
-  target.textContent = device
-    ? `${device.name}${device.channels ? ` (${t("{channels} ch", { channels: device.channels })})` : ""}`
-    : t("OS default");
+  target.textContent = device ? device.name : t("OS default");
 }
 
 async function refreshAudioRoute() {
+  const refresh = maybe("refreshAudioRoute");
+  if (refresh?.disabled) return;
   const settings = collectSettings();
   if (!settings.atlasEndpoint) return;
+  if (refresh) refresh.disabled = true;
+  try {
   setText("audioRouteStatus", t("Discovering audio primitives from Atlas..."));
   const route = await fetch("/api/audio-route/providers", {
     method: "POST",
@@ -5649,39 +6046,49 @@ async function refreshAudioRoute() {
     setText("audioRouteStatus", t("Audio route unavailable: {error}", { error: route.error }));
     return;
   }
+    setText("audioRouteStatus", "");
   state.audio.route = { ...state.audio.route, ...route };
   renderAudioRouteProviders(route);
-  await Promise.all([loadAudioRouteDevices("mic"), loadAudioRouteDevices("speaker")]);
+    await Promise.all([
+      loadAudioRouteDevices("mic"),
+      loadAudioRouteDevices("speaker"),
+      renderAllPrimitiveCards(route),
+    ]);
   state.settings = collectSettings();
   saveSettings();
-  setText("audioRouteStatus", t("Route loaded. Apply to select devices in their providers."));
+    await refreshReverseBridge();
+  } finally {
+    if (refresh) refresh.disabled = false;
+  }
 }
 
 async function loadAudioRouteDevices(side) {
   const provider = maybe(side === "mic" ? "micNodeId" : "speakerNodeId")?.value || "";
   const select = maybe(side === "mic" ? "micDeviceId" : "speakerDeviceId");
+  const targetNodeEl = maybe(side === "mic" ? "micConfigTargetNode" : "speakerConfigTargetNode");
+  if (targetNodeEl) targetNodeEl.textContent = provider || "—";
   if (!provider) {
     if (select) {
       clear(select);
       routeOption(select, "", t("OS default"));
     }
+    const activeNameEl = maybe(side === "mic" ? "micActiveDeviceName" : "speakerActiveDeviceName");
+    if (activeNameEl) activeNameEl.textContent = "—";
     return;
   }
-  const isReverseBridge = (state.audio.route.bridgeProviders || [])
-    .some((candidate) => candidate.id === provider);
-  if (isReverseBridge) await configureReverseAudio(provider);
   const result = await fetch("/api/audio-route/devices", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ settings: collectSettings(), providerId: provider }),
   }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
-  if (result.error) {
+  const error = result.error || result.deviceError;
+  if (error) {
     if (select) {
       clear(select);
-      routeOption(select, "", t("Unavailable: {error}", { error: result.error }));
+      routeOption(select, "", t("Unavailable: {error}", { error }));
       select.disabled = true;
     }
-    setText("audioRouteStatus", t("{provider}: {error}", { provider, error: result.error }));
+    setText("audioRouteStatus", t("{provider}: {error}", { provider, error }));
     return;
   }
   if (select) select.disabled = false;
@@ -5699,24 +6106,59 @@ async function loadAudioRouteDevices(side) {
   renderAudioRouteDevices(side, result);
 }
 
-async function applyAudioRoute() {
-  state.settings = collectSettings();
-  await persistSettings().catch((error) => {
-    setText("audioRouteStatus", t("Settings save failed: {error}", { error }));
-  });
+async function applyAudioRoute(side) {
+  const nodeKey = `${side}NodeId`;
+  const deviceKey = `${side}DeviceId`;
+  const nodeSelect = $(nodeKey);
+  const providerId = nodeSelect.value;
+  nodeSelect.value = state.settings[nodeKey] || "";
+  if (!providerId || state.audio.applyingRoute) return;
+
+  state.audio.applyingRoute = true;
+  $("micNodeId").disabled = true;
+  $("speakerNodeId").disabled = true;
+  const kind = side === "mic" ? "input" : "output";
+  const device = maybe(`prim_${sanitizeId(providerId)}_${kind}`);
+  const deviceId = device?.value || "";
   setText("audioRouteStatus", t("Applying selected devices..."));
+  try {
+    if (deviceId) {
   const result = await fetch("/api/audio-route/apply", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings: state.settings }),
-  }).then((response) => response.json()).catch((error) => ({ error: String(error) }));
-  if (!result.ok) {
-    setText("audioRouteStatus", t("Route apply failed: {error}", { error: result.error || t("unknown error") }));
+        body: JSON.stringify({
+          settings: collectSettings(),
+          providerId,
+          [kind === "input" ? "inputId" : "outputId"]: deviceId,
+        }),
+      }).then((r) => r.json());
+      if (!result.ok) throw new Error(result.error || t("unknown error"));
+    }
+
+    state.settings[nodeKey] = providerId;
+    state.settings[deviceKey] = deviceId;
+    nodeSelect.value = providerId;
+    if (maybe(deviceKey)) {
+      clear($(deviceKey));
+      routeOption($(deviceKey), deviceId, deviceId);
+    }
+    updateSessionRoleBadges();
+    await Promise.all([loadAudioRouteDevices(side), refreshReverseBridge()]);
+    try {
+      await persistSettings();
+    } catch (error) {
+      setText("audioRouteStatus", t("Settings save failed: {error}", { error: error.message }));
     return;
   }
-  const count = Array.isArray(result.selected) ? result.selected.length : 0;
-  setText("audioRouteStatus", t(count === 1 ? "Route applied to {count} selected device." : "Route applied to {count} selected devices.", { count }));
+    setText("audioRouteStatus", t("Saved"));
   addTimeline("audio", t("audio route applied"));
+  } catch (error) {
+    setText("audioRouteStatus", t("Route apply failed: {error}", { error: error.message }));
+  } finally {
+    state.audio.applyingRoute = false;
+    $("micNodeId").disabled = !state.audio.route.micProviders?.length;
+    $("speakerNodeId").disabled = !state.audio.route.speakerProviders?.length;
+  }
 }
 
 async function startAudioServer() {
@@ -5728,8 +6170,7 @@ async function startAudioServer() {
   }).then((r) => r.json());
   renderAudioServer(result);
   await checkAudioServer();
-  startAudioServerStreams();
-  loadAudioDevices();
+  await refreshAudioRoute();
 }
 
 async function checkAudioServer() {
@@ -5741,94 +6182,7 @@ async function checkAudioServer() {
     .then((r) => r.json())
     .catch((error) => ({ error: String(error) }));
   renderAudioServer({ ...status, ...result, wsUrl: status.wsUrl, uiUrl: status.uiUrl, logPath: status.logPath });
-  if (result.reachable || result.ok) {
-    startAudioServerStreams();
-    loadAudioDevices();
-  }
-}
-
-function audioServerOnce(path, body = null) {
-  return new Promise((resolve) => {
-    const url = audioServerWsUrl(path);
-    if (!url) {
-      resolve({ ok: false, error: t("client audio device server is not discovered; start or check it first") });
-      return;
-    }
-    const socket = new WebSocket(url);
-    let settled = false;
-    const done = (payload) => {
-      if (settled) return;
-      settled = true;
-      try {
-        socket.close();
-      } catch (_) {
-        // no-op
-      }
-      resolve(payload);
-    };
-    socket.onopen = () => {
-      if (body !== null) socket.send(JSON.stringify(body));
-    };
-    socket.onmessage = (event) => {
-      try {
-        done(JSON.parse(event.data));
-      } catch (_) {
-        done({ ok: false, error: String(event.data || t("invalid bridge response")) });
-      }
-    };
-    socket.onerror = () => done({ ok: false, error: t("cannot connect {url}", { url }) });
-    socket.onclose = () => done({ ok: false, error: t("closed {url}", { url }) });
-  });
-}
-
-async function loadAudioDevices() {
-  const result = await audioServerOnce("/devices");
-  if (!result || result.ok === false) {
-    appendAudioLog(t("device refresh failed: {error}", { error: result?.error || t("unknown error") }));
-    return;
-  }
-  state.audio.devices = Array.isArray(result.devices) ? result.devices : [];
-  state.audio.inputCurrent = result.input_current ?? result.input_default ?? null;
-  state.audio.outputCurrent = result.output_current ?? result.output_default ?? null;
-  renderAudioDevices(result);
-  appendAudioLog(t("loaded {count} audio devices", { count: state.audio.devices.length }));
-}
-
-function renderAudioDevices(result = {}) {
-  const input = maybe("audioInputDevice");
-  const output = maybe("audioOutputDevice");
-  if (!input || !output) return;
-  clear(input);
-  clear(output);
-  const inputCurrent = result.input_current ?? result.input_default ?? state.audio.inputCurrent;
-  const outputCurrent = result.output_current ?? result.output_default ?? state.audio.outputCurrent;
-  const makeOption = (device, kind) => {
-    const opt = document.createElement("option");
-    opt.value = String(device.id);
-    const channels = kind === "input" ? device.max_input_channels : device.max_output_channels;
-    opt.textContent = `#${device.id} ${device.name} (${t("{channels} ch", { channels })})`;
-    return opt;
-  };
-  state.audio.devices
-    .filter((device) => Number(device.max_input_channels || 0) > 0)
-    .forEach((device) => input.appendChild(makeOption(device, "input")));
-  state.audio.devices
-    .filter((device) => Number(device.max_output_channels || 0) > 0)
-    .forEach((device) => output.appendChild(makeOption(device, "output")));
-  input.value = inputCurrent !== null && inputCurrent !== undefined ? String(inputCurrent) : "";
-  output.value = outputCurrent !== null && outputCurrent !== undefined ? String(outputCurrent) : "";
-}
-
-async function applyAudioDevices() {
-  const input = maybe("audioInputDevice")?.value;
-  const output = maybe("audioOutputDevice")?.value;
-  const body = {};
-  if (input !== undefined && input !== "") body.input = Number(input);
-  if (output !== undefined && output !== "") body.output = Number(output);
-  appendAudioLog(t("applying devices {payload}", { payload: JSON.stringify(body) }));
-  const result = await audioServerOnce("/set_device", body);
-  appendAudioLog(result.ok ? t("device selection applied") : t("device selection failed: {error}", { error: result.error || t("unknown error") }));
-  await loadAudioDevices();
+  if (result.reachable || result.ok) startAudioServerStreams();
 }
 
 function startAudioServerStreams() {
@@ -5884,7 +6238,23 @@ function startAudioLogStream() {
   };
 }
 
+let audioLevelRaf = 0;
+let latestAudioLevel = 0;
+let latestOutputLevel = 0;
+
 function renderAudioLevel(level, outputLevel = 0) {
+  latestAudioLevel = level;
+  latestOutputLevel = outputLevel;
+  if (!audioLevelRaf) {
+    audioLevelRaf = requestAnimationFrame(flushAudioLevelFrame);
+  }
+}
+
+function flushAudioLevelFrame() {
+  audioLevelRaf = 0;
+  const level = latestAudioLevel;
+  const outputLevel = latestOutputLevel;
+
   const raw = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
   const display = Math.max(0, Math.min(1, Math.sqrt(raw) * 2.8));
   const outputRaw = Math.max(0, Math.min(1, Number.isFinite(outputLevel) ? outputLevel : 0));
@@ -5893,13 +6263,15 @@ function renderAudioLevel(level, outputLevel = 0) {
     document.body.classList.add("tts-speaking");
     startTtsAuraAnimation();
   }
-  state.audio.levelHistory.push(display);
-  state.audio.levelHistory = state.audio.levelHistory.slice(-28);
-  if (maybe("audioLevelBar")) $("audioLevelBar").style.width = `${Math.round(display * 100)}%`;
-  const label = `${Math.round(display * 100)}%`;
-  setText("audioLevelText", label);
-  if (maybe("audioLevelText")) $("audioLevelText").title = t("raw RMS {value}", { value: raw.toFixed(4) });
-  renderAudioBars();
+  const pct = Math.round(display * 100);
+  const bar = maybe("audioLevelBar");
+  if (bar) bar.style.width = `${pct}%`;
+  const label = `${pct}%`;
+  const textEl = maybe("audioLevelText");
+  if (textEl && textEl.textContent !== label) {
+    textEl.textContent = label;
+  }
+  if (textEl) textEl.title = t("raw RMS {value}", { value: raw.toFixed(4) });
 }
 
 function startTtsAuraAnimation() {
@@ -5939,17 +6311,7 @@ function setTtsAura(active) {
   syncVoiceControls();
 }
 
-function renderAudioBars() {
-  if (state.activePage !== "audio") return;
-  const root = maybe("audioBars");
-  if (!root) return;
-  clear(root);
-  state.audio.levelHistory.forEach((level) => {
-    const bar = document.createElement("span");
-    bar.style.height = `${Math.max(8, Math.round(level * 100))}%`;
-    root.appendChild(bar);
-  });
-}
+let audioLogRaf = 0;
 
 function appendAudioLog(line) {
   const root = maybe("audioLog");
@@ -5966,8 +6328,11 @@ function appendAudioLog(line) {
     lines.push({ stamp, text, count: 1 });
   }
   state.audio.logLines = lines.slice(-AUDIO_LOG_MAX_LINES);
-  if (state.activePage === "audio") {
+  if (state.activePage === "audio" && !audioLogRaf) {
+    audioLogRaf = requestAnimationFrame(() => {
+      audioLogRaf = 0;
     renderAudioLog();
+    });
   }
 }
 
@@ -6026,6 +6391,18 @@ async function enrollVoice() {
   refreshVoiceprintUsers();
 }
 
+function testDeviceSuffix(device) {
+  return device ? ` · ${t("device: {name}", { name: device.name })}` : "";
+}
+
+function setTestStatus(text, level) {
+  const status = $("audioTestStatus");
+  status.textContent = text;
+  status.classList.toggle("is-error", level === "error");
+  status.classList.toggle("is-warning", level === "warning");
+  status.classList.toggle("is-success", level === "success");
+}
+
 async function testSpeaker() {
   $("testSpeaker").classList.add("busy");
   addTimeline("audio", t("speaker test requested"));
@@ -6039,20 +6416,14 @@ async function testSpeaker() {
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   $("testSpeaker").classList.remove("busy");
   const text = result.ok
-    ? t("speaker ok: played {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint }) +
-      (result.streamed ? ` · ${t("streamed audio")}` : "")
+    ? t("speaker request completed: sent {bytes} bytes via {endpoint}", { bytes: result.bytes, endpoint: result.speakerEndpoint }) +
+    (result.streamed ? ` · ${t("streamed audio")}` : "") +
+    testDeviceSuffix(result.device) +
+    ` · ${t("Did you hear it? If not, the speaker driver may have failed silently: check the device in use and that nothing else holds it.")}`
     : t("speaker failed: {error}", { error: result.error });
-  const status = $("audioTestStatus");
-  status.textContent = text;
-  status.classList.toggle("is-error", !result.ok);
-  status.classList.toggle("is-success", Boolean(result.ok));
+  setTestStatus(text, result.ok ? "success" : "error");
   addMessage(result.ok ? "status" : "error", text);
   addTimeline(result.ok ? "audio" : "error", text);
-  renderAudioServer({
-    ok: result.ok,
-    error: result.error || "",
-    url: result.ok ? t("tts {tts} / speaker {speaker}", { tts: result.ttsEndpoint, speaker: result.speakerEndpoint }) : "",
-  });
 }
 
 async function testMicrophone() {
@@ -6065,16 +6436,21 @@ async function testMicrophone() {
     body: JSON.stringify({ settings: collectSettings(), seconds: 1.0 }),
   }).then((r) => r.json()).catch((error) => ({ ok: false, error: String(error) }));
   button.classList.remove("busy");
+  if (result.busy) {
+    promptBridgeTakeover(result.providerId, testMicrophone);
+    return;
+  }
+  const nearSilent = result.ok && result.warning === "near_silence";
+  const peak = result.peakDbfs == null ? "-∞" : result.peakDbfs;
   const text = result.ok
-    ? t("microphone ok: {bytes} bytes in {ms} ms, RMS {rms}", { bytes: result.bytes, ms: result.captureMs, rms: result.rms })
+    ? t("microphone ok: {bytes} bytes in {ms} ms, RMS {rms}, peak {peak} dBFS", {
+      bytes: result.bytes, ms: result.captureMs, rms: result.rms, peak,
+    }) + testDeviceSuffix(result.device) +
+    (nearSilent ? ` · ${t("Near silence: the device may be unplugged, muted or the wrong input.")}` : "")
     : t("microphone failed: {error}", { error: result.error });
-  const status = $("audioTestStatus");
-  status.textContent = text;
-  status.classList.toggle("is-error", !result.ok);
-  status.classList.toggle("is-success", Boolean(result.ok));
+  setTestStatus(text, !result.ok ? "error" : nearSilent ? "warning" : "success");
   addMessage(result.ok ? "status" : "error", text);
   addTimeline(result.ok ? "audio" : "error", text);
-  setText("audioRouteStatus", text);
 }
 
 function renderEnroll(result) {
@@ -8113,6 +8489,32 @@ function handleI18nChange() {
   redrawPerceptionCanvases();
   renderStudioTabs();
   syncStudioFrameLang();
+  rerenderAudioRouteForLanguage();
+}
+
+/** The route selects bake translated option text ("OS default", "2 ch"); rebuild it from cached data. */
+function rerenderAudioRouteForLanguage() {
+  const route = state.audio.route;
+  if (route.micProviders.length || route.speakerProviders.length) {
+    const keep = { mic: maybe("micNodeId")?.value, speaker: maybe("speakerNodeId")?.value };
+    renderAudioRouteProviders(route);
+    if (maybe("micNodeId") && keep.mic !== undefined) $("micNodeId").value = keep.mic;
+    if (maybe("speakerNodeId") && keep.speaker !== undefined) $("speakerNodeId").value = keep.speaker;
+  }
+  ["mic", "speaker"].forEach((side) => {
+    const select = maybe(side === "mic" ? "micDeviceId" : "speakerDeviceId");
+    const devices = side === "mic" ? route.micDevices : route.speakerDevices;
+    if (!select || !devices.length) return;
+    const keep = select.value;
+    renderAudioRouteDevices(side, {
+      devices,
+      currentInputId: route.micCurrent || "",
+      currentOutputId: route.speakerCurrent || "",
+    });
+    select.value = keep;
+    renderDeviceHint(side);
+  });
+  updateSessionRoleBadges();
 }
 
 window.addEventListener("robonix:i18n", handleI18nChange);

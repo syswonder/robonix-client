@@ -16,6 +16,28 @@ import websockets
 
 log = logging.getLogger(__name__)
 
+# The robot closes the previous client with this code and reason when another
+# client connects. Reconnecting after it would just take the slot back and start
+# a ping-pong with the other client.
+REPLACED_CLOSE_CODE = 1012
+REPLACED_CLOSE_REASON = "replaced by newer client"
+
+
+class ReverseAudioBusy(RuntimeError):
+    """The robot's single reverse-audio slot is held by another client."""
+
+    def __init__(self, provider_id: str) -> None:
+        super().__init__(f"audio bridge {provider_id} is in use by another client")
+        self.provider_id = provider_id
+
+
+def _was_replaced(exc: websockets.ConnectionClosed) -> bool:
+    return (
+        exc.rcvd is not None
+        and exc.rcvd.code == REPLACED_CLOSE_CODE
+        and REPLACED_CLOSE_REASON in exc.rcvd.reason
+    )
+
 
 class AudioReverseBridge:
     def __init__(self, endpoint: str, local_port: int = 60000) -> None:
@@ -23,28 +45,31 @@ class AudioReverseBridge:
         self.local_port = local_port
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._robot = None
-        self._connected = threading.Event()
+        self._task: asyncio.Task | None = None
+        self._connected_endpoint: str | None = None
         self._lock = threading.Lock()
         self._last_error = ""
+        self._taken_over = False
+        self._generation = 0
 
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="robonix-client-audio", daemon=True)
-        self._thread.start()
+    def _disconnect_locked(self) -> threading.Thread | None:
+        self._generation += 1
+        thread, self._thread = self._thread, None
+        task, self._task = self._task, None
+        self._connected_endpoint = None
+        if task is not None:
+            task.get_loop().call_soon_threadsafe(task.cancel)
+        return thread
+
+    def disconnect(self) -> threading.Thread | None:
+        with self._lock:
+            self._stop.set()
+            return self._disconnect_locked()
 
     def stop(self) -> None:
-        self._stop.set()
-        loop = self._loop
-        robot = self._robot
-        if loop is not None and robot is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(robot.close(code=1001, reason="client shutting down"), loop)
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3.0)
-        self._thread = None
+        thread = self.disconnect()
+        if thread is not None:
+            thread.join(timeout=3.0)
 
     @staticmethod
     def _normalize_endpoint(endpoint: str) -> str:
@@ -55,50 +80,80 @@ class AudioReverseBridge:
             raise ValueError("reverse audio endpoint must end with /client")
         return target
 
-    def set_target(self, endpoint: str) -> None:
+    def connect(self, endpoint: str) -> None:
         target = self._normalize_endpoint(endpoint)
         with self._lock:
-            changed = target != self.endpoint
+            if target == self.endpoint and self._thread and self._thread.is_alive() and not self._taken_over:
+                return
+            self._disconnect_locked()
             self.endpoint = target
-            robot = self._robot
-            loop = self._loop
-        if changed and robot is not None and loop is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(robot.close(code=1012, reason="robot target changed"), loop)
+            self._last_error = ""
+            self._taken_over = False
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._run, args=(self._generation,), name="robonix-client-audio", daemon=True
+            )
+            self._thread.start()
+
+    def holds(self, endpoint: str) -> bool:
+        with self._lock:
+            return not self._taken_over and self._connected_endpoint == self._normalize_endpoint(endpoint)
 
     def status(self) -> dict[str, object]:
         with self._lock:
+            return {
+                "connected": self._connected_endpoint == self.endpoint and not self._taken_over,
+                "target": self.endpoint,
+                "lastError": self._last_error,
+                "takenOver": self._taken_over,
+            }
+
+    def _run(self, generation: int) -> None:
+        with suppress(asyncio.CancelledError):
+            asyncio.run(self._run_async(generation))
+
+    async def _run_async(self, generation: int | None = None) -> None:
+        task = asyncio.current_task()
+        with self._lock:
+            if generation is None:
+                generation = self._generation
+            if generation != self._generation:
+                return
+            self._task = task
             target = self.endpoint
-            error = self._last_error
-        return {"connected": self._connected.is_set(), "target": target, "lastError": error}
 
-    def _run(self) -> None:
-        asyncio.run(self._run_async())
-
-    async def _run_async(self) -> None:
-        self._loop = asyncio.get_running_loop()
-        while not self._stop.is_set():
-            with self._lock:
-                target = self.endpoint
-            try:
-                async with websockets.connect(target, max_size=None, proxy=None, open_timeout=3.0) as robot:
+        try:
+            while not self._stop.is_set() and generation == self._generation:
+                try:
+                    async with websockets.connect(target, max_size=None, proxy=None, open_timeout=3.0) as robot:
+                        await robot.send(json.dumps({"type": "hello", "role": "robonix-client"}))
+                        with self._lock:
+                            if generation != self._generation:
+                                return
+                            self._connected_endpoint = target
+                            self._last_error = ""
+                        log.info("audio relay connected to %s", target)
+                        await self._relay(robot)
+                except Exception as exc:  # noqa: BLE001
+                    replaced = isinstance(exc, websockets.ConnectionClosed) and _was_replaced(exc)
                     with self._lock:
-                        self._robot = robot
-                        self._last_error = ""
-                    self._connected.set()
-                    log.info("audio relay connected to %s", target)
-                    await robot.send(json.dumps({"type": "hello", "role": "robonix-client"}))
-                    await self._relay(robot)
-            except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    self._last_error = str(exc)
-                log.debug("audio relay reconnect to %s: %s", target, exc)
-            finally:
-                with self._lock:
-                    self._robot = None
-                self._connected.clear()
-            if not self._stop.is_set():
-                await asyncio.sleep(1.0)
-        self._loop = None
+                        if generation == self._generation:
+                            self._taken_over = replaced
+                            self._last_error = "taken over by another client" if replaced else str(exc)
+                    if replaced:
+                        log.info("audio relay on %s was taken over by another client", target)
+                        return
+                    log.debug("audio relay reconnect to %s: %s", target, exc)
+                finally:
+                    with self._lock:
+                        if generation == self._generation:
+                            self._connected_endpoint = None
+                if not self._stop.is_set() and generation == self._generation:
+                    await asyncio.sleep(1.0)
+        finally:
+            with self._lock:
+                if self._task is task:
+                    self._task = None
 
     async def _relay(self, robot) -> None:
         send_lock = asyncio.Lock()

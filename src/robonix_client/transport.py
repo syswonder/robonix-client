@@ -1242,6 +1242,21 @@ def pcm16_stats(pcm: bytes) -> dict[str, float | int]:
     }
 
 
+NEAR_SILENCE_PEAK = 33  # about -60 dBFS: a live mic in a quiet room still exceeds this
+
+
+def capture_warning(stats: dict[str, float | int]) -> str:
+    """Name a capture that is not exactly silent but carries no usable signal."""
+    if stats["samples"] and stats["peak"] < NEAR_SILENCE_PEAK:
+        return "near_silence"
+    return ""
+
+
+def peak_dbfs(peak: int) -> float | None:
+    """Peak level of a 16-bit capture in dBFS, or None for exact silence."""
+    return round(20.0 * math.log10(peak / 32768.0), 1) if peak > 0 else None
+
+
 async def _stream_tts_to_speaker(
     tts_endpoint: str,
     speaker_endpoint: str,

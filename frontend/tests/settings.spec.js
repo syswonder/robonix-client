@@ -42,7 +42,7 @@ test("CLI host overrides saved hosts without writing it back during other saves"
   let saved = serverSettings;
   await mockSettings(page, defaults, () => saved, (settings) => { saved = settings; });
   await openSettings(page, launchDefaults.robotHost, serverSettings.atlasPort);
-  await expect(page.locator("#audioRouteStatus")).toContainText("Route loaded");
+  await expect(page.locator("#primitiveCardsContainer")).toContainText("No audio primitives discovered");
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("robonix.settings")).robotHost))
     .toBe(browserSettings.robotHost);
 
@@ -60,7 +60,7 @@ test("CLI port takes priority independently, with browser settings as fallback",
   const defaults = { ...launchDefaults, launchOverrides: ["ROBONIX_ATLAS_PORT"] };
   await mockSettings(page, defaults, () => ({}));
   await openSettings(page, browserSettings.robotHost, launchDefaults.atlasPort);
-  await expect(page.locator("#audioRouteStatus")).toContainText("Route loaded");
+  await expect(page.locator("#primitiveCardsContainer")).toContainText("No audio primitives discovered");
 
   defaults.launchOverrides = [];
   await openSettings(page, browserSettings.robotHost, browserSettings.atlasPort, true);
