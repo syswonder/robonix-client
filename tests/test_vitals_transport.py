@@ -806,6 +806,31 @@ class VitalsStreamOrderingTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(queue.empty())
         self.assertEqual(state["value"], replacement)
 
+    async def test_asset_failure_keeps_geometry_and_publishes_new_topology(self):
+        previous = normalize_robot_description(
+            SOMA_YAML, '<robot name="previous"/>', urdf_asset_base_url="/meshes/"
+        )
+        updated_components = previous["components"][:-1]
+        degraded = {
+            **previous, "components": updated_components,
+            "urdfXml": "", "urdfAssetBaseUrl": "", "urdfWarning": "assets_missing",
+        }
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        state = {"value": previous}
+
+        with (
+            patch("robonix_client.vitals_transport.load_robot_description", AsyncMock(return_value=degraded)),
+            patch("robonix_client.vitals_transport.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError)),
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await _description_loop(ClientSettings(), queue, state, {"value": None})
+
+        self.assertNotEqual(updated_components, previous["components"])
+        self.assertEqual(queue.get_nowait(), {
+            "type": "description", "data": {**previous, "components": updated_components}
+        })
+        self.assertEqual(queue.get_nowait()["state"], "error")
+
     async def test_description_reprojects_hardware_that_arrived_first(self):
         """A slow Soma description must replace provisional health topology."""
         description = normalize_robot_description(SOMA_YAML)

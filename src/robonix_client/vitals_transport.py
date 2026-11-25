@@ -196,6 +196,7 @@ def normalize_robot_description(
         },
         "urdfXml": urdf_xml,
         "urdfAssetBaseUrl": urdf_asset_base_url,
+        "urdfWarning": "",
         "summary": str(_mapping(document.get("description")).get("summary") or ""),
     }
 
@@ -673,12 +674,19 @@ async def _description_loop(
             description = await load_robot_description(settings, refresh_model=refresh)
             previous = description_state["value"]
             warning = description.get("urdfWarning")
-            # A failed refresh is not a change to this robot's model.
-            keep_previous = (
+            if (
                 warning and description["id"] == previous["id"]
                 and previous["urdfXml"] and not previous.get("urdfWarning")
-            )
-            if not keep_previous and description != previous:
+            ):
+                # The new Soma topology still applies when only its geometry failed.
+                description = {
+                    **description,
+                    "render": previous["render"],
+                    "urdfXml": previous["urdfXml"],
+                    "urdfAssetBaseUrl": previous["urdfAssetBaseUrl"],
+                    "urdfWarning": previous["urdfWarning"],
+                }
+            if description != previous:
                 description_state["value"] = description
                 await queue.put({"type": "description", "data": description})
                 snapshot = hardware_state["value"]
