@@ -29,13 +29,16 @@ from .transport import (
     ClientSettings,
     ExecutorQueryError,
     abort_turn,
+    delete_voiceprint_user,
     discover_audio_bridge,
+    end_session,
     enroll_voiceprint,
     finish_voice_capture,
     get_handsfree_status,
     list_active_plans,
     list_audio_devices,
     list_audio_providers,
+    list_voiceprints,
     play_tts_test,
     pcm16_stats,
     record_pcm,
@@ -106,6 +109,11 @@ class EnrollRequest(BaseModel):
     userId: str
     userName: str = ""
     seconds: float = 6.0
+
+
+class VoiceprintDeleteRequest(BaseModel):
+    settings: dict[str, Any] = {}
+    userId: str
 
 
 class AudioPlayTestRequest(BaseModel):
@@ -279,6 +287,18 @@ async def system(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
         }
 
 
+@app.post("/api/session/end")
+async def session_end(req: ClientSettingsRequest) -> dict[str, Any]:
+    """Tell Pilot the conversation is over so it can compact memory."""
+    try:
+        settings = ClientSettings.from_payload(req.settings)
+        if not settings.session_id:
+            return {"ok": False, "error": "session id is required"}
+        return await end_session(settings)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/api/executor/active-plans")
 async def executor_active_plans(req: ClientSettingsRequest) -> dict[str, Any]:
     try:
@@ -351,7 +371,6 @@ CANDIDATE_STUDIO_PORTS = [
     50107,  # Scene Perception Service
     8091,   # RTAB-Map SLAM Mapping
     4880,   # Robonix Console
-    60001,  # Audio Device Service
     8080,   # Standard Robotics WebUI
     8085,   # Arm / Hand / Manipulator Control WebUI
     8765,   # Foxglove Studio Bridge / Web
@@ -395,7 +414,7 @@ def _infer_service_metadata(port: int, raw_title: str) -> dict[str, str]:
         return {"name": "SLAM Mapping", "icon": "🗺️"}
     if port == 4880 or _title_has_word(tl, "console"):
         return {"name": "Robonix Console", "icon": "🌐"}
-    if port == 60001 or _title_has_word(tl, "audio"):
+    if _title_has_word(tl, "audio"):
         return {"name": "Audio Server", "icon": "🔊"}
     if port == 8085 or _title_has_word(tl, "arm", "hand"):
         return {"name": "Manipulator Control", "icon": "🦾"}
@@ -492,7 +511,7 @@ async def discover_studio_services(
         })
 
     def _sort_key(s: dict[str, Any]) -> int:
-        order = {50107: 1, 8091: 2, 4880: 3, 60001: 4}
+        order = {50107: 1, 8091: 2, 4880: 3}
         return order.get(s["port"], 100 + s["port"])
 
     discovered.sort(key=_sort_key)
@@ -680,6 +699,24 @@ async def voiceprint_enroll(req: EnrollRequest) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+@app.post("/api/voiceprint/users")
+async def voiceprint_users(req: ClientSettingsRequest) -> dict[str, Any]:
+    try:
+        settings = ClientSettings.from_payload(req.settings)
+        return await list_voiceprints(settings)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/voiceprint/delete")
+async def voiceprint_delete(req: VoiceprintDeleteRequest) -> dict[str, Any]:
+    try:
+        settings = ClientSettings.from_payload(req.settings)
+        return await delete_voiceprint_user(settings, req.userId)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.post("/api/audio/play-test")
 async def audio_play_test(req: AudioPlayTestRequest) -> dict[str, Any]:
     try:
@@ -760,9 +797,8 @@ async def abort_ws(ws: WebSocket) -> None:
     try:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
-        expected_turn_id = _payload_expected_turn_id(payload)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
-        async for item in abort_turn(settings, expected_turn_id):
+        async for item in abort_turn(settings):
             await ws.send_json(item)
         await ws.send_json({"type": "done"})
     except WebSocketDisconnect:

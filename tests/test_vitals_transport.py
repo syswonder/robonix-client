@@ -1,7 +1,10 @@
 import asyncio
+import time
 import unittest
 from contextlib import suppress
 from unittest.mock import AsyncMock, patch
+
+import grpc
 
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
@@ -13,6 +16,9 @@ from robonix_client.proto import (
 from robonix_client.transport import ClientSettings
 from robonix_client.vitals_transport import (
     _description_loop,
+    _hardware_loop,
+    _hardware_poll_loop,
+    _store_hardware_snapshot,
     aggregate_component_health,
     fallback_robot_description,
     load_robot_description,
@@ -332,6 +338,229 @@ class RobotDescriptionLoadTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(description["urdfAssetBaseUrl"], "")
         self.assertEqual(description["render"]["mode"], "urdf")
 
+    async def test_get_urdf_retries_text_only_when_assets_missing(self):
+        """A missing mesh must degrade to text URDF *and* say so."""
+        responses = [
+            soma_client_pb2.GetYaml_Response(
+                robot_id="test_robot",
+                yaml_text=SOMA_YAML,
+            ),
+            grpc.aio.AioRpcError(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                None,
+                None,
+                details="mesh file missing",
+            ),
+            soma_client_pb2.GetUrdf_Response(
+                robot_id="test_robot",
+                urdf_xml=(
+                    "<robot><link name=\"base\"><visual><geometry>"
+                    "<box size=\"1 1 1\"/>"
+                    "</geometry></visual></link></robot>"
+                ),
+            ),
+        ]
+        with (
+            patch(
+                "robonix_client.vitals_transport.discover_endpoint",
+                AsyncMock(side_effect=["127.0.0.1:50092", "127.0.0.1:50092"]),
+            ),
+            patch(
+                "robonix_client.vitals_transport._unary_unary",
+                AsyncMock(side_effect=responses),
+            ) as unary,
+        ):
+            description = await load_robot_description(ClientSettings())
+
+        self.assertEqual(description["urdfWarning"], "assets_missing")
+        self.assertEqual(description["urdfAssetBaseUrl"], "")
+        self.assertEqual(description["render"]["mode"], "urdf")
+        self.assertFalse(unary.await_args_list[2].args[2].include_assets)
+
+
+class VitalsPollingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_hardware_poll_loop_emits_on_demand_snapshots(self):
+        """StreamVitals is change-driven; the poll loop is the steady cadence."""
+        response = vitals_client_pb2.GetVitals_Response(
+            snapshot=vitals_client_pb2.VitalsSnapshot()
+        )
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state: dict = {"value": None}
+
+        with (
+            patch(
+                "robonix_client.vitals_transport.discover_endpoint",
+                AsyncMock(return_value="127.0.0.1:50092"),
+            ),
+            patch(
+                "robonix_client.vitals_transport._shared_unary_unary",
+                AsyncMock(return_value=response),
+            ),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(
+                    ClientSettings(), queue, description_state, hardware_state
+                )
+            )
+            event = await asyncio.wait_for(queue.get(), timeout=1.0)
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(event["type"], "hardware")
+        self.assertIn("summary", event["data"])
+        self.assertIs(hardware_state["value"], response.snapshot)
+
+    async def test_late_poll_cannot_replace_stream_frame(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        old = vitals_client_pb2.VitalsSnapshot(ts_ns=100)
+        fresh = vitals_client_pb2.VitalsSnapshot(ts_ns=200)
+        hardware_state: dict = {"value": old, "received_at_ms": 1000}
+        request_started = asyncio.Event()
+        third_request_started = asyncio.Event()
+        return_old = asyncio.Event()
+        requests = 0
+
+        async def get_vitals(*_args):
+            nonlocal requests
+            requests += 1
+            request_id = requests
+            request_started.set()
+            if request_id == 3:
+                third_request_started.set()
+            await return_old.wait()
+            snapshot = old if request_id == 1 else fresh
+            return vitals_client_pb2.GetVitals_Response(snapshot=snapshot)
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", get_vitals),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                await asyncio.wait_for(request_started.wait(), 1.0)
+                _store_hardware_snapshot(fresh, hardware_state)
+                return_old.set()
+                await asyncio.wait_for(third_request_started.wait(), 1.0)
+                self.assertEqual(hardware_state["value"].ts_ns, fresh.ts_ns)
+                event = await asyncio.wait_for(queue.get(), 1.0)
+                self.assertEqual(event["data"]["updatedAtMs"], 2000)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+    async def test_poll_accepts_smaller_timestamp_after_vitals_restart(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        previous = vitals_client_pb2.VitalsSnapshot(ts_ns=5000)
+        restarted = vitals_client_pb2.VitalsSnapshot(ts_ns=10)
+        hardware_state: dict = {"value": previous, "received_at_ms": 1000}
+
+        request_count = 0
+
+        async def get_restarted_snapshot(*_args):
+            nonlocal request_count
+            request_count += 1
+            return vitals_client_pb2.GetVitals_Response(snapshot=restarted)
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", get_restarted_snapshot),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertEqual(hardware_state["value"].ts_ns, restarted.ts_ns)
+        self.assertEqual(hardware_state["received_at_ms"], 2000)
+        self.assertEqual(event["data"]["updatedAtMs"], 2000)
+
+    async def test_same_snapshot_keeps_original_receive_time(self):
+        snapshot = vitals_client_pb2.VitalsSnapshot(ts_ns=100)
+        response = vitals_client_pb2.GetVitals_Response(snapshot=snapshot)
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state: dict = {"value": None, "received_at_ms": 0}
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport._shared_unary_unary", AsyncMock(return_value=response)),
+            patch("robonix_client.vitals_transport.HARDWARE_POLL_SECONDS", 0.01),
+            patch("robonix_client.vitals_transport._now_ms", side_effect=[1000, 2000]) as clock,
+        ):
+            task = asyncio.create_task(
+                _hardware_poll_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                first = await asyncio.wait_for(queue.get(), 1.0)
+                second = await asyncio.wait_for(queue.get(), 1.0)
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertEqual(first["data"]["updatedAtMs"], 1000)
+        self.assertEqual(second["data"]["updatedAtMs"], 1000)
+        clock.assert_called_once()
+
+    async def test_stream_reset_accepts_smaller_timestamp(self):
+        queue: asyncio.Queue = asyncio.Queue()
+        description_state = {"value": fallback_robot_description()}
+        hardware_state: dict = {
+            "value": vitals_client_pb2.VitalsSnapshot(ts_ns=5000),
+            "received_at_ms": 1000,
+        }
+        restarted = vitals_client_pb2.VitalsSnapshot(ts_ns=10)
+
+        class Channel:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            def unary_stream(self, *_args, **_kwargs):
+                async def stream(_request):
+                    yield restarted
+                return stream
+
+        with (
+            patch("robonix_client.vitals_transport.discover_endpoint", AsyncMock(return_value="vitals")),
+            patch("robonix_client.vitals_transport.stream_channel", return_value=Channel()),
+            patch("robonix_client.vitals_transport._now_ms", return_value=2000),
+        ):
+            task = asyncio.create_task(
+                _hardware_loop(ClientSettings(), queue, description_state, hardware_state)
+            )
+            try:
+                while True:
+                    event = await asyncio.wait_for(queue.get(), 1.0)
+                    if event["type"] == "hardware":
+                        break
+            finally:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        self.assertIs(hardware_state["value"], restarted)
+        self.assertEqual(event["data"]["updatedAtMs"], 2000)
+
 
 class ComponentHealthTest(unittest.TestCase):
     def setUp(self):
@@ -452,11 +681,13 @@ class ComponentHealthTest(unittest.TestCase):
         self.assertEqual(camera["health"], "warn")
         self.assertEqual(camera["detail"], "camera degraded")
 
-    def test_marks_disabled_actuator_idle_without_changing_health(self):
+    def test_marks_disabled_actuator_idle_while_keeping_warn_health(self):
+        # Vitals raises WARN when torque is off; the UI still shows idle so the
+        # operator state is not mistaken for a fault.
         signals = [
             {
                 "key": "body/base/left_wheel/torque_enabled",
-                "health": "ok",
+                "health": "warn",
                 "detail": "left wheel torque is disabled (idle)",
                 "observedValue": 0.0,
                 "referenceValue": 0.0,
@@ -471,8 +702,8 @@ class ComponentHealthTest(unittest.TestCase):
         health = {row["componentId"]: row for row in rows}
 
         wheel = health["body/base/left_wheel"]
-        self.assertEqual(wheel["health"], "ok")
-        self.assertEqual(wheel["directHealth"], "ok")
+        self.assertEqual(wheel["health"], "warn")
+        self.assertEqual(wheel["directHealth"], "warn")
         self.assertEqual(wheel["directVisualState"], "idle")
         self.assertEqual(wheel["visualState"], "idle")
         self.assertEqual(health["body/base"]["visualState"], "idle")
@@ -502,7 +733,11 @@ class ComponentHealthTest(unittest.TestCase):
         self.assertEqual(result["power"]["socPercent"], 82.5)
         self.assertEqual(result["signals"][0]["health"], "ok")
         self.assertEqual(result["summary"]["overall"], "ok")
-        self.assertEqual(result["updatedAtMs"], 1_700_000_000_000)
+        # `ts_ns` is a monotonic clock: it is kept for ordering, while the
+        # browser-facing freshness uses the client's receipt time.
+        self.assertEqual(result["timestampNs"], 1_700_000_000_000_000_000)
+        self.assertGreaterEqual(result["updatedAtMs"], int(time.time() * 1000) - 1000)
+        self.assertLessEqual(result["updatedAtMs"], int(time.time() * 1000) + 1000)
 
     def test_omits_negative_missing_power_sentinels(self):
         snapshot = vitals_client_pb2.VitalsSnapshot(
@@ -522,7 +757,7 @@ class ComponentHealthTest(unittest.TestCase):
             components=[
                 vitals_client_pb2.ComponentHealth(
                     name="body/base/left_wheel/torque_enabled",
-                    health=0,
+                    health=1,
                     detail="left wheel torque is disabled (idle)",
                     value=0.0,
                 )
@@ -532,9 +767,9 @@ class ComponentHealthTest(unittest.TestCase):
 
         result = vitals_snapshot_to_dict(snapshot, self.description)
 
-        self.assertEqual(result["signals"][0]["health"], "ok")
+        self.assertEqual(result["signals"][0]["health"], "warn")
         self.assertEqual(result["signals"][0]["visualState"], "idle")
-        self.assertEqual(result["summary"]["overall"], "ok")
+        self.assertEqual(result["summary"]["overall"], "warn")
 
     def test_marks_enabled_torque_signal_ready_in_browser_shape(self):
         snapshot = vitals_client_pb2.VitalsSnapshot(
@@ -645,15 +880,30 @@ class SoftwareHealthTest(unittest.TestCase):
                     detail="limited model access",
                     ttl_ms=3000,
                 ),
+                module_health_client_pb2.ModuleHealth(
+                    module_key="scene/scene",
+                    module_id="scene",
+                    provider_id="scene",
+                    health=0,
+                    state="expired",
+                    reason_code="TTL_EXPIRED",
+                    detail="report expired but the module is not faulted",
+                    ttl_ms=3000,
+                ),
             ],
         )
 
         result = module_snapshot_to_dict(snapshot)
         modules = {module["moduleId"]: module for module in result["modules"]}
 
-        self.assertEqual(modules["executor"]["health"], "stale")
+        # The health code wins: a required module's ERROR must not be
+        # downgraded to the weaker grey `stale` just because its state string
+        # mentions "unavailable".
+        self.assertEqual(modules["executor"]["health"], "error")
         self.assertEqual(modules["pilot"]["health"], "warn")
-        self.assertEqual(result["summary"]["overall"], "warn")
+        # `stale` only applies when the health code itself reports no fault.
+        self.assertEqual(modules["scene"]["health"], "stale")
+        self.assertEqual(result["summary"]["overall"], "error")
 
     def test_maps_atlas_lifecycle_to_health(self):
         result = provider_snapshot_to_dict(

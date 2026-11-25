@@ -45,10 +45,11 @@ CONTRACT_SCENE_REGIONS = "robonix/system/scene/list_regions"
 # The occupancy-grid base map is *not* reachable through Atlas: the grid itself
 # is published on ROS 2 and only surfaced as a rendered PNG by the robot-local
 # "map & rooms" HTTP service (the same one behind the :50107/user UI). We read
-# that service directly, deriving its host from the Atlas endpoint and treating
-# its port as a deployment default in the same spirit as DEFAULT_ATLAS /
-# DEFAULT_LIAISON_PORT -- overridable without touching the robot side.
+# that service directly. The base can be pinned with an env var; otherwise the
+# host comes from the Scene provider's Atlas advertisement, falling back to the
+# Atlas host and a deployment-default port.
 MAP_UI_PORT = int(os.environ.get("ROBONIX_CLIENT_MAP_UI_PORT", "50107"))
+MAP_UI_BASE_ENV = "ROBONIX_CLIENT_MAP_UI_BASE"
 
 @dataclass(frozen=True)
 class _PerceptionResource:
@@ -304,9 +305,34 @@ def _atlas_host(atlas_endpoint: str) -> str:
     return parsed.hostname or "127.0.0.1"
 
 
-def _map_ui_base(atlas_endpoint: str) -> str:
-    """HTTP base of the robot's map/rooms service, host derived from Atlas."""
-    return f"http://{_atlas_host(atlas_endpoint)}:{MAP_UI_PORT}"
+# Resolved once per Atlas endpoint: resolving costs an Atlas query plus a
+# ConnectCapability round-trip, while the map tile polls at ~1 Hz.
+_map_ui_bases: dict[str, str] = {}
+
+
+async def _map_ui_base(atlas_endpoint: str) -> str:
+    """HTTP base of the robot's map/rooms service."""
+    override = os.environ.get(MAP_UI_BASE_ENV, "").strip().rstrip("/")
+    if override:
+        return override
+    cached = _map_ui_bases.get(atlas_endpoint)
+    if cached:
+        return cached
+    host = _atlas_host(atlas_endpoint)
+    try:
+        # The Scene provider advertises the address it is actually reachable
+        # at; prefer it over the Atlas host, which may be a tunnel or a name.
+        endpoint, _ = await _discover_mcp_endpoint(atlas_endpoint, CONTRACT_SCENE_ROBOT)
+    except Exception:
+        # Scene may not have registered yet: use the Atlas host for now but
+        # do not cache it, so a later poll can still pick up the advertisement.
+        return f"http://{host}:{MAP_UI_PORT}"
+    advertised = urlparse(endpoint).hostname
+    if advertised and advertised not in _LOOPBACK_HOSTS:
+        host = advertised
+    base = f"http://{host}:{MAP_UI_PORT}"
+    _map_ui_bases[atlas_endpoint] = base
+    return base
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})
@@ -345,7 +371,7 @@ def _fetch_json(url: str, timeout: float = 5.0) -> dict[str, Any]:
 async def _camera_fallback(atlas_endpoint: str, kind: str) -> dict[str, Any] | None:
     """Fallback to scene HTTP service (/api/camera) when MCP snapshot fails or is absent."""
     try:
-        url = f"{_map_ui_base(atlas_endpoint)}/api/camera"
+        url = f"{await _map_ui_base(atlas_endpoint)}/api/camera"
         payload = await asyncio.to_thread(_fetch_json, url, 2.5)
         item = payload.get(kind)
         if item and item.get("png_b64"):
@@ -369,7 +395,7 @@ async def map_occupancy(atlas_endpoint: str) -> dict[str, Any]:
     returned dict carries ``origin_x``/``origin_y``/``resolution`` so the UI
     can align it with the scene overlays in the shared ``map`` frame.
     """
-    state = await asyncio.to_thread(_fetch_json, f"{_map_ui_base(atlas_endpoint)}/api/state")
+    state = await asyncio.to_thread(_fetch_json, f"{await _map_ui_base(atlas_endpoint)}/api/state")
     occupancy = state.get("occupancy") or {}
     if not occupancy.get("png_b64"):
         raise RuntimeError("map service reports no occupancy grid yet")
@@ -406,7 +432,7 @@ async def perception_availability(atlas_endpoint: str) -> dict[str, Any]:
     # Check camera HTTP fallback if MCP snapshot tools are absent
     if not tiles.get("camera") or not tiles.get("depth"):
         try:
-            url = f"{_map_ui_base(atlas_endpoint)}/api/camera"
+            url = f"{await _map_ui_base(atlas_endpoint)}/api/camera"
             cam_json = await asyncio.to_thread(_fetch_json, url, 2.0)
             if cam_json.get("rgb") and cam_json["rgb"].get("png_b64"):
                 tiles["camera"] = True

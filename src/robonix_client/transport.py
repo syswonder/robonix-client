@@ -7,7 +7,7 @@ import struct
 import sys
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -61,8 +61,14 @@ CONTRACT_AUDIO_SELECT_DEVICE = "robonix/primitive/audio/select_device"
 CONTRACT_AUDIO_BRIDGE_INFO = "robonix/primitive/audio/bridge_info"
 CONTRACT_ASR = "robonix/service/speech/asr"
 CONTRACT_TTS = "robonix/service/speech/tts"
+CONTRACT_TTS_STREAM = "robonix/service/speech/tts_stream"
+TTS_STREAM_PATH = "/robonix.contracts.RobonixServiceSpeechTtsStream/SynthesizeStream"
 CONTRACT_VOICEPRINT = "robonix/service/voiceprint/identify"
 CONTRACT_VOICEPRINT_ENROLL = "robonix/service/voiceprint/enroll"
+CONTRACT_VOICEPRINT_LIST = "robonix/service/voiceprint/list"
+CONTRACT_VOICEPRINT_DELETE = "robonix/service/voiceprint/delete"
+VOICEPRINT_LIST_PATH = "/robonix.contracts.RobonixServiceVoiceprintList/ListEnrolled"
+VOICEPRINT_DELETE_PATH = "/robonix.contracts.RobonixServiceVoiceprintDelete/DeleteEnrolled"
 CONTRACT_HANDSFREE_SET_ENABLED = "robonix/system/liaison/handsfree/set_enabled"
 CONTRACT_HANDSFREE_STATUS = "robonix/system/liaison/handsfree/status"
 CONTRACT_HANDSFREE_EVENTS = "robonix/system/liaison/handsfree/events"
@@ -95,6 +101,9 @@ NODE_KIND_NAMES = {
     0: "sequence",
     1: "parallel",
     2: "do",
+    3: "if",
+    4: "repeat",
+    5: "while",
 }
 
 RTDL_NODE_STATE_NAMES = {
@@ -493,6 +502,17 @@ async def query_atlas(
     return list(resp.providers)
 
 
+async def list_contracts(atlas_endpoint: str) -> dict[str, Any]:
+    """Atlas contract descriptors keyed by contract id."""
+    resp = await _unary_unary(
+        atlas_endpoint,
+        "/robonix.atlas.Atlas/ListContracts",
+        atlas_pb2.ListContractsRequest(namespace_prefix=""),
+        atlas_pb2.ListContractsResponse,
+    )
+    return {contract.id: contract for contract in resp.contracts}
+
+
 async def connect_capability(
     atlas_endpoint: str,
     provider_id: str,
@@ -800,13 +820,16 @@ def build_text_task(
     expected_turn_id: str = "",
 ) -> Any:
     session_id = settings.session_id or str(uuid.uuid4())
-    user_id = settings.user_id or "local:robonix-client"
     context: dict[str, Any] = {
-        "user_id": user_id,
         "modality": "image" if attachments else "text",
         "client": "robonix-client-gui",
         "interaction_mode": "steer" if steer else "task",
     }
+    # Leave `user_id` out unless the operator configured one: Liaison then
+    # fills `local:<system user>`, which is what its access whitelist expects.
+    # A hard-coded client id would be rejected once the gate is enabled.
+    if settings.user_id:
+        context["user_id"] = settings.user_id
     if steer:
         context["steer"] = True
         if expected_turn_id:
@@ -824,17 +847,34 @@ def build_text_task(
     )
 
 
-def build_abort_task(settings: ClientSettings, expected_turn_id: str = "") -> Any:
+def build_abort_task(settings: ClientSettings) -> Any:
     session_id = settings.session_id or str(uuid.uuid4())
-    user_id = settings.user_id or "local:robonix-client"
     context: dict[str, Any] = {
         "abort_turn": True,
         "interaction_mode": "abort",
         "client": "robonix-client-gui",
-        "user_id": user_id,
     }
-    if expected_turn_id:
-        context["expected_turn_id"] = expected_turn_id
+    if settings.user_id:
+        context["user_id"] = settings.user_id
+    return pilot_pb2.Task(
+        task_id=str(uuid.uuid4()),
+        session_id=session_id,
+        source=0,
+        text="",
+        audio_data=b"",
+        context_json=json.dumps(context, ensure_ascii=False),
+        timestamp_ms=_now_ms(),
+    )
+
+
+def build_session_end_task(settings: ClientSettings) -> Any:
+    session_id = settings.session_id or str(uuid.uuid4())
+    context: dict[str, Any] = {
+        "session_end": True,
+        "client": "robonix-client-gui",
+    }
+    if settings.user_id:
+        context["user_id"] = settings.user_id
     return pilot_pb2.Task(
         task_id=str(uuid.uuid4()),
         session_id=session_id,
@@ -893,14 +933,11 @@ async def _submit_text_once(
             yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
 
 
-async def abort_turn(
-    settings: ClientSettings,
-    expected_turn_id: str = "",
-) -> AsyncIterator[dict[str, Any]]:
+async def abort_turn(settings: ClientSettings) -> AsyncIterator[dict[str, Any]]:
     # The turn changes which plans are running; do not serve a stale snapshot.
     _active_plans_cache.clear()
     endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
-    task = build_abort_task(settings, expected_turn_id)
+    task = build_abort_task(settings)
     async with stream_channel(endpoint) as channel:
         call = channel.unary_stream(
             "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
@@ -909,6 +946,30 @@ async def abort_turn(
         )
         async for raw in call(task):
             yield {"type": "pilot_event", "event": pilot_event_to_dict(decode_submit_event(raw))}
+
+
+async def end_session(
+    settings: ClientSettings,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Close a conversation: Pilot compacts memory and skips a VLM turn.
+
+    Pilot only compacts on this explicit signal; a new session id alone leaves
+    the previous conversation's memory uncompacted.
+    """
+    endpoint = await resolve_liaison(settings, CONTRACT_LIAISON_SUBMIT)
+    task = build_session_end_task(settings)
+    events = 0
+    async with stream_channel(endpoint) as channel:
+        call = channel.unary_stream(
+            "/robonix.contracts.RobonixSystemLiaisonSubmit/SubmitTask",
+            request_serializer=pilot_pb2.Task.SerializeToString,
+            response_deserializer=lambda raw: raw,
+        )
+        stream = call(task, timeout=timeout)
+        async for _raw in stream:
+            events += 1
+    return {"ok": True, "sessionId": task.session_id, "events": events}
 
 
 async def start_voice_session(
@@ -1068,6 +1129,65 @@ async def enroll_voiceprint(
     }
 
 
+async def list_voiceprints(settings: ClientSettings) -> dict[str, Any]:
+    """Read the enrolled-speaker catalog.
+
+    On load the service keeps only records whose `model` is "campplus_zh" and
+    drops the rest, including records with no `model` written by an earlier
+    voiceprint model. An empty catalog while the contract is online therefore
+    means those users must be re-enrolled, which is what the settings page
+    surfaces.
+    """
+    endpoint = await discover_endpoint(
+        settings.atlas_endpoint,
+        CONTRACT_VOICEPRINT_LIST,
+        settings.voiceprint_node_id,
+    )
+    async with stream_channel(endpoint) as channel:
+        call = channel.unary_unary(
+            VOICEPRINT_LIST_PATH,
+            request_serializer=voiceprint_pb2.ListEnrolled_Request.SerializeToString,
+            response_deserializer=voiceprint_pb2.ListEnrolled_Response.FromString,
+        )
+        resp = await call(voiceprint_pb2.ListEnrolled_Request(), timeout=5.0)
+    users: list[dict[str, Any]] = []
+    try:
+        users = json.loads(resp.users_json or "[]")
+    except json.JSONDecodeError:
+        users = []
+    return {
+        "ok": not resp.error,
+        "count": int(resp.count),
+        "users": users,
+        "error": resp.error,
+    }
+
+
+async def delete_voiceprint_user(settings: ClientSettings, user_id: str) -> dict[str, Any]:
+    """Remove one enrolled speaker. Idempotent: absent ids still succeed."""
+    clean_user_id = normalize_voiceprint_user_id(user_id)
+    if not clean_user_id:
+        raise RobonixApiError("voiceprint user id is required")
+    endpoint = await discover_endpoint(
+        settings.atlas_endpoint,
+        CONTRACT_VOICEPRINT_DELETE,
+        settings.voiceprint_node_id,
+    )
+    async with stream_channel(endpoint) as channel:
+        call = channel.unary_unary(
+            VOICEPRINT_DELETE_PATH,
+            request_serializer=voiceprint_pb2.DeleteEnrolled_Request.SerializeToString,
+            response_deserializer=voiceprint_pb2.DeleteEnrolled_Response.FromString,
+        )
+        resp = await call(
+            voiceprint_pb2.DeleteEnrolled_Request(user_id=clean_user_id),
+            timeout=5.0,
+        )
+    if not resp.success:
+        raise RobonixApiError(resp.error or "voiceprint delete failed")
+    return {"ok": True, "userId": clean_user_id}
+
+
 async def record_pcm(settings: ClientSettings, seconds: float) -> bytes:
     endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_MIC, settings.mic_node_id)
     deadline = time.monotonic() + seconds
@@ -1122,10 +1242,125 @@ def pcm16_stats(pcm: bytes) -> dict[str, float | int]:
     }
 
 
+async def _stream_tts_to_speaker(
+    tts_endpoint: str,
+    speaker_endpoint: str,
+    request: Any,
+    stats: dict[str, Any],
+) -> None:
+    """Pipe server-streamed TTS chunks straight into the speaker stream.
+
+    Playback starts on the first chunk instead of after the whole utterance is
+    synthesized; the queue keeps at most 32 chunks in flight so a slow speaker
+    throttles the TTS stream rather than growing memory. `stats` is filled as
+    chunks arrive, so a caller that catches an error can still tell whether
+    any audio reached the speaker.
+    """
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+    stats.update({"bytes": 0, "encoding": "", "sampleRateHz": 0})
+
+    async def produce() -> None:
+        cancelled = False
+        try:
+            async with stream_channel(tts_endpoint) as channel:
+                call = channel.unary_stream(
+                    TTS_STREAM_PATH,
+                    request_serializer=tts_pb2.SynthesizeStream_Request.SerializeToString,
+                    response_deserializer=tts_pb2.SynthesizeAudioChunk.FromString,
+                )
+                async for chunk in call(request, timeout=30.0):
+                    # `chunk` is an audio.AudioChunk message; the PCM is in `.data`.
+                    data = bytes(chunk.chunk.data)
+                    if not data:
+                        continue
+                    stats["encoding"] = stats["encoding"] or chunk.encoding
+                    stats["sampleRateHz"] = stats["sampleRateHz"] or int(chunk.sample_rate_hz)
+                    stats["bytes"] += len(data)
+                    await queue.put(data)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            # Cancellation means the speaker side is gone: a blocking put on a
+            # full queue would then never return.
+            if not cancelled:
+                await queue.put(None)
+
+    async def chunks() -> AsyncIterator[Any]:
+        seq = 0
+        while True:
+            data = await queue.get()
+            if data is None:
+                return
+            sample_rate = stats["sampleRateHz"] or 16000
+            yield audio_pb2.AudioChunk(
+                timestamp_ns=time.time_ns(),
+                data=data,
+                sequence=seq,
+                duration_s=len(data) / float(sample_rate * 2),
+            )
+            seq += 1
+
+    producer = asyncio.create_task(produce())
+    try:
+        async with stream_channel(speaker_endpoint) as channel:
+            call = channel.stream_unary(
+                "/robonix.contracts.RobonixPrimitiveAudioSpeaker/Speaker",
+                request_serializer=audio_pb2.AudioChunk.SerializeToString,
+                response_deserializer=Empty.FromString,
+            )
+            await call(chunks(), timeout=30.0)
+    finally:
+        if producer.done():
+            error = producer.exception()
+            if error is not None:
+                raise error
+        else:
+            producer.cancel()
+            with suppress(asyncio.CancelledError):
+                await producer
+
+
 async def play_tts_test(settings: ClientSettings, text: str = "Robonix speaker test") -> dict[str, Any]:
     phrase = (text or "Robonix speaker test").strip()
     tts_endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_TTS, settings.tts_node_id)
     speaker_endpoint = await discover_endpoint(settings.atlas_endpoint, CONTRACT_SPEAKER, settings.speaker_node_id)
+
+    # tts_stream is optional: older deployments only advertise the unary
+    # contract, so probe for it. A stream that fails or yields nothing before
+    # any audio played falls back to unary; once audio played, a failure is
+    # real and retrying would replay the phrase.
+    try:
+        stream_endpoint = await discover_endpoint(
+            settings.atlas_endpoint, CONTRACT_TTS_STREAM, settings.tts_node_id
+        )
+    except Exception:
+        stream_endpoint = ""
+    if stream_endpoint:
+        stream_req = tts_pb2.SynthesizeStream_Request(
+            text=phrase,
+            language=settings.language,
+            voice="",
+            speed=1.0,
+        )
+        stats: dict[str, Any] = {}
+        try:
+            await _stream_tts_to_speaker(stream_endpoint, speaker_endpoint, stream_req, stats)
+        except grpc.aio.AioRpcError:
+            if stats.get("bytes"):
+                raise
+        if stats.get("bytes"):
+            return {
+                "ok": True,
+                "text": phrase,
+                "bytes": stats["bytes"],
+                "encoding": stats["encoding"],
+                "sampleRateHz": stats["sampleRateHz"],
+                "ttsEndpoint": stream_endpoint,
+                "speakerEndpoint": speaker_endpoint,
+                "streamed": True,
+            }
+
     synth = tts_pb2.Synthesize_Request(
         text=phrase,
         language=settings.language,
@@ -1228,7 +1463,13 @@ def decode_handsfree_event(raw: bytes) -> Any:
 async def system_snapshot(atlas_endpoint: str) -> dict[str, Any]:
     atlas = normalize_grpc_target(atlas_endpoint or DEFAULT_ATLAS)
     providers = await query_atlas(atlas)
-    provider_rows = [provider_to_dict(provider) for provider in providers]
+    try:
+        contracts = await list_contracts(atlas)
+    except grpc.aio.AioRpcError:
+        # Contract flags only annotate the provider list; an Atlas without
+        # ListContracts still yields a usable snapshot.
+        contracts = {}
+    provider_rows = [provider_to_dict(provider, contracts) for provider in providers]
     contract_presence = required_contracts(provider_rows)
     active = sum(1 for row in provider_rows if row["state"] == "ACTIVE")
     errors = [row for row in provider_rows if row["state"] == "ERROR"]
@@ -1282,7 +1523,36 @@ def required_contracts(provider_rows: list[dict[str, Any]]) -> list[dict[str, An
     return out
 
 
-def provider_to_dict(provider: Any) -> dict[str, Any]:
+def _capability_params(cap: Any) -> dict[str, str]:
+    params = getattr(cap, "params", None)
+    kind = params.WhichOneof("kind") if params is not None else None
+    if kind == "grpc":
+        return {
+            "protoFile": params.grpc.proto_file,
+            "serviceName": params.grpc.service_name,
+            "method": params.grpc.method,
+        }
+    if kind == "ros2":
+        return {"qosProfile": params.ros2.qos_profile}
+    if kind == "mcp":
+        return {"inputSchema": params.mcp.input_schema_json}
+    return {}
+
+
+def _contract_flags(contract: Any) -> dict[str, bool]:
+    """Per-contract flags Atlas keeps on the ContractDescriptor, not the Capability."""
+    if contract is None:
+        # Unknown contract: report Atlas' defaults.
+        return {"crossNamespace": False, "llmCallable": True}
+    return {
+        "crossNamespace": bool(contract.cross_namespace),
+        # Absent means true, for Atlas builds that predate the field.
+        "llmCallable": contract.llm_callable if contract.HasField("llm_callable") else True,
+    }
+
+
+def provider_to_dict(provider: Any, contracts: dict[str, Any] | None = None) -> dict[str, Any]:
+    contracts = contracts or {}
     return {
         "id": provider.id,
         "kind": KIND_NAMES.get(provider.kind, str(provider.kind)),
@@ -1290,11 +1560,16 @@ def provider_to_dict(provider: Any) -> dict[str, Any]:
         "state": STATE_NAMES.get(provider.state, str(provider.state)),
         "stateDetail": provider.state_detail,
         "lastHeartbeatMs": int(provider.last_heartbeat_ms),
+        "capabilityMd": getattr(provider, "capability_md", ""),
+        "registrationId": getattr(provider, "registration_id", ""),
         "capabilities": [
             {
                 "contractId": cap.contract_id,
                 "transport": TRANSPORT_NAMES.get(cap.transport, str(cap.transport)),
                 "description": cap.description,
+                "params": _capability_params(cap),
+                "namespaceMismatch": bool(getattr(cap, "namespace_mismatch", False)),
+                **_contract_flags(contracts.get(cap.contract_id)),
             }
             for cap in provider.capabilities
         ],
@@ -1407,6 +1682,22 @@ def node_to_dict(index: int, node: Any) -> dict[str, Any]:
     }
     if node.HasField("call"):
         out["call"] = call_to_dict(node.call)
+    condition = getattr(node, "condition_json", "")
+    if condition:
+        out["conditionJson"] = condition
+        # _safe_json returns the raw string on bad JSON, never None.
+        parsed = _safe_json(condition)
+        if not isinstance(parsed, str):
+            out["condition"] = parsed
+    bind = getattr(node, "bind", "")
+    if bind:
+        out["bind"] = bind
+    repeat_count = int(getattr(node, "repeat_count", 0))
+    if repeat_count:
+        out["repeatCount"] = repeat_count
+    max_iterations = int(getattr(node, "max_iterations", 0))
+    if max_iterations:
+        out["maxIterations"] = max_iterations
     return out
 
 

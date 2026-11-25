@@ -347,6 +347,9 @@ async function openVitals(page, description = DESCRIPTION, hardware = HARDWARE, 
   await installVitalsSocket(page, description, hardware);
   await page.goto("/");
   await expect(page.locator("#vitalsCredit")).toBeHidden();
+  // Narrow screens keep the page nav in a slide-out drawer.
+  const menu = page.locator("#mobileNavToggle");
+  if (await menu.isVisible()) await menu.click();
   await page.locator("[data-page='vitals']").click();
   await expect(page.locator("#vitalsRobotName")).toHaveText(description.displayName);
   await expect(page.locator("#vitalsCredit")).toBeVisible();
