@@ -175,6 +175,27 @@ class AudioReverseBridgeReplaceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts), 2)
         self.assertFalse(bridge.status()["takenOver"])
 
+    async def test_connection_loss_after_connecting_stops_retrying(self) -> None:
+        bridge = AudioReverseBridge("ws://robot:60002/client")
+        opened: list = []
+        attempts: list = []
+
+        def connect(*_args, **_kwargs):
+            attempts.append(True)
+            return _OpenThenClosedRobot(1001, "server shutting down", opened)
+
+        with mock.patch("robonix_client.audio_reverse_bridge.websockets.connect", connect):
+            await bridge._run_async()
+
+        # The slot was ours; reconnecting could silently kick off a client that
+        # took it since, so it waits for an explicit connect instead.
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(opened, [True])
+        status = bridge.status()
+        self.assertFalse(status["connected"])
+        self.assertFalse(status["takenOver"])
+        self.assertTrue(status["lastError"])
+
 
 class ConnectReverseAudioTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -204,6 +225,34 @@ class ConnectReverseAudioTest(unittest.IsolatedAsyncioTestCase):
                     mock.Mock(), "provider-a", take_over=False
                 )
         self.assertEqual(ctx.exception.provider_id, "provider-a")
+
+    async def test_busy_without_take_over_stops_a_retrying_relay(self) -> None:
+        from robonix_client import app as app_module
+
+        bridge_info = {"endpoint": "ws://robot:60002/client", "connected": True}
+
+        async def fake_discover(_settings, _provider_id):
+            return dict(bridge_info)
+
+        fake_bridge = mock.Mock()
+        fake_bridge.holds.return_value = False
+        fake_bridge.status.return_value = {
+            "connected": False,
+            "target": "ws://robot:60002/client",
+            "lastError": "connection lost",
+            "takenOver": False,
+        }
+        app_module._reverse_audio = fake_bridge
+        app_module._reverse_provider = "provider-a"
+
+        with mock.patch.object(app_module, "discover_audio_bridge", fake_discover):
+            with self.assertRaises(ReverseAudioBusy):
+                await app_module._connect_reverse_audio(
+                    mock.Mock(), "provider-a", take_over=False
+                )
+
+        # Otherwise the background retry would take the slot without asking.
+        fake_bridge.disconnect.assert_called_once_with()
 
     async def test_busy_with_take_over_connects(self) -> None:
         from robonix_client import app as app_module

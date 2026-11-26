@@ -98,3 +98,40 @@ test("changing the input provider only applies its device and saves after succes
   expect(saved[0]).toMatchObject({ micNodeId: "audio_b", micDeviceId: "audio_b_1" });
   expect(applied.map(({ providerId }) => providerId)).toEqual(["audio_b", "audio_b"]);
 });
+
+test("loads primitive device lists only when the audio page opens", async ({ page }) => {
+  const providers = ["audio_a", "audio_b", "audio_c"];
+  const deviceRequests = [];
+  await page.route("**/api/**", (route) => {
+    const request = route.request();
+    switch (new URL(request.url()).pathname) {
+      case "/api/defaults":
+        return route.fulfill({ json: { robotHost: "192.0.2.10", atlasPort: 50051, launchOverrides: [] } });
+      case "/api/settings":
+        return route.fulfill({ json: { ok: true, settings: {} } });
+      case "/api/audio-route/providers":
+        return route.fulfill({ json: {
+          micProviders: providers.map((id) => ({ id })),
+          speakerProviders: providers.map((id) => ({ id })),
+        } });
+      case "/api/audio-route/devices":
+        deviceRequests.push(request.postDataJSON().providerId);
+        return route.fulfill({ json: {
+          devices: [{ id: "1", name: "Device", kind: "input" }],
+          currentInputId: "1",
+        } });
+      default:
+        return route.fulfill({ json: {} });
+    }
+  });
+
+  await page.goto("/");
+  // Wait for the route metadata, then check the per-provider lists are deferred.
+  await expect(page.locator("#micNodeId option")).toHaveCount(providers.length + 1);
+  await expect(page.locator("#primitiveCardsContainer .primitive-card")).toHaveCount(0);
+  expect(deviceRequests).toEqual([]);
+
+  await page.evaluate(() => { window.location.hash = "#audio"; });
+  await expect(page.locator("#primitiveCardsContainer .primitive-card")).toHaveCount(providers.length);
+  await expect.poll(() => [...deviceRequests].sort()).toEqual([...providers].sort());
+});

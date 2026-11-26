@@ -122,6 +122,7 @@ class AudioReverseBridge:
             self._task = task
             target = self.endpoint
 
+        ever_connected = False
         try:
             while not self._stop.is_set() and generation == self._generation:
                 try:
@@ -132,6 +133,7 @@ class AudioReverseBridge:
                                 return
                             self._connected_endpoint = target
                             self._last_error = ""
+                            ever_connected = True
                         log.info("audio relay connected to %s", target)
                         await self._relay(robot)
                 except Exception as exc:  # noqa: BLE001
@@ -142,6 +144,17 @@ class AudioReverseBridge:
                             self._last_error = "taken over by another client" if replaced else str(exc)
                     if replaced:
                         log.info("audio relay on %s was taken over by another client", target)
+                        return
+                    if ever_connected:
+                        # The slot was ours and the connection dropped without a
+                        # replacement notice. The robot cannot tell us whether
+                        # another client has taken it since, and reconnecting
+                        # would silently kick that client off. Wait for an
+                        # explicit connect, which asks first when it is busy.
+                        log.info(
+                            "audio relay on %s closed; not reconnecting automatically",
+                            target,
+                        )
                         return
                     log.debug("audio relay reconnect to %s: %s", target, exc)
                 finally:

@@ -28,6 +28,7 @@ from .transport import (
     reset_connection_caches,
     DEFAULT_ATLAS,
     ClientSettings,
+    _TtlCache,
     ExecutorQueryError,
     abort_turn,
     delete_voiceprint_user,
@@ -85,6 +86,10 @@ _reverse_audio: AudioReverseBridge | None = None
 # Provider id behind `_reverse_audio`, so the UI can offer to take it back.
 _reverse_provider = ""
 _reverse_audio_lock = asyncio.Lock()
+# One websockets.connect can spend 3 s in open_timeout and the relay waits 1 s
+# before retrying, so the UI waits for more than one retry cycle.
+REVERSE_AUDIO_CONNECT_WAIT_SECONDS = 10.0
+REVERSE_AUDIO_POLL_SECONDS = 0.1
 SETTINGS_PATH = Path(
     os.environ.get(
         "ROBONIX_CLIENT_SETTINGS",
@@ -586,13 +591,21 @@ async def audio_route_providers(req: ClientSettingsRequest) -> dict[str, Any]:
         return {"micProviders": [], "speakerProviders": [], "error": str(exc)}
 
 
+# The audio page asks for each provider's devices in a burst; the provider
+# list behind that answer only changes when a provider registers.
+_bridge_ids_cache = _TtlCache(2.0)
+
+
 async def _bridge_provider_ids(settings: ClientSettings) -> set[str]:
-    providers = await list_audio_providers(settings)
-    return {
-        str(provider.get("id") or "")
-        for provider in providers.get("bridgeProviders", [])
-        if isinstance(provider, dict)
-    }
+    async def fetch() -> set[str]:
+        providers = await list_audio_providers(settings)
+        return {
+            str(provider.get("id") or "")
+            for provider in providers.get("bridgeProviders", [])
+            if isinstance(provider, dict)
+        }
+
+    return await _bridge_ids_cache.get_or_fetch(settings.atlas_endpoint, fetch)
 
 
 async def _provider_devices(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
@@ -754,6 +767,10 @@ async def _connect_reverse_audio(
             if status["connected"]:
                 return {**bridge, **status, "fresh": False}
         if bridge["connected"] and not take_over:
+            if relay is not None and relay.status()["target"] == endpoint:
+                # A relay that is still retrying in the background would take
+                # the slot without asking; stop it until the user decides.
+                relay.disconnect()
             raise ReverseAudioBusy(provider_id)
         if relay is None:
             relay = AudioReverseBridge(endpoint, audio_server_control.local_port())
@@ -764,7 +781,9 @@ async def _connect_reverse_audio(
         _reverse_provider = provider_id
 
         try:
-            for _ in range(40):
+            for _ in range(
+                int(REVERSE_AUDIO_CONNECT_WAIT_SECONDS / REVERSE_AUDIO_POLL_SECONDS)
+            ):
                 status = relay.status()
                 if status["takenOver"]:
                     raise ReverseAudioBusy(provider_id)
@@ -776,7 +795,7 @@ async def _connect_reverse_audio(
                     if status["takenOver"]:
                         raise ReverseAudioBusy(provider_id)
                     break
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(REVERSE_AUDIO_POLL_SECONDS)
         except asyncio.CancelledError:
             relay.disconnect()
             raise

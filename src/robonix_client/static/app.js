@@ -214,6 +214,7 @@ const state = {
     port: 60000,
     wsUrl: "",
     applyingRoute: false,
+    cardsDirty: true,
     vuSocket: null,
     vuState: "idle",
     logSocket: null,
@@ -1650,6 +1651,10 @@ function activatePage(name) {
   if (name === "audio") {
     checkAudioServer();
     renderAudioLog();
+    const route = state.audio.route;
+    if (state.audio.cardsDirty && (route.micProviders?.length || route.speakerProviders?.length || route.bridgeProviders?.length)) {
+      renderAllPrimitiveCards(route);
+    }
   }
   if (name === "dashboard") {
     refreshActivePlans();
@@ -5916,6 +5921,7 @@ async function loadPrimitiveCardDevices(provider, card) {
 async function renderAllPrimitiveCards(route) {
   const container = maybe("primitiveCardsContainer");
   if (!container) return;
+  state.audio.cardsDirty = false;
 
   const allProviders = [];
   const seen = new Set();
@@ -6049,11 +6055,11 @@ async function refreshAudioRoute() {
     setText("audioRouteStatus", "");
   state.audio.route = { ...state.audio.route, ...route };
   renderAudioRouteProviders(route);
-    await Promise.all([
-      loadAudioRouteDevices("mic"),
-      loadAudioRouteDevices("speaker"),
-      renderAllPrimitiveCards(route),
-    ]);
+    // Cards fetch devices per provider; defer them until the audio page is open.
+    const tasks = [loadAudioRouteDevices("mic"), loadAudioRouteDevices("speaker")];
+    if (state.activePage === "audio") tasks.push(renderAllPrimitiveCards(route));
+    else state.audio.cardsDirty = true;
+    await Promise.all(tasks);
   state.settings = collectSettings();
   saveSettings();
     await refreshReverseBridge();
