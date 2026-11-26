@@ -51,6 +51,13 @@ CONTRACT_SCENE_REGIONS = "robonix/system/scene/list_regions"
 MAP_UI_PORT = int(os.environ.get("ROBONIX_CLIENT_MAP_UI_PORT", "50107"))
 MAP_UI_BASE_ENV = "ROBONIX_CLIENT_MAP_UI_BASE"
 
+# The rover GNSS/RTK/IMU snapshot is likewise a robot-local HTTP service (the
+# in-stack ``rover_status`` service), loopback-only on the robot. The standard
+# deployment runs the client on that same host, so the default is the service's
+# own loopback port. For a remote client the host follows Atlas and the port can
+# be remapped like MAP_UI_PORT.
+ROVER_STATUS_PORT = int(os.environ.get("ROBONIX_CLIENT_ROVER_STATUS_PORT", "50109"))
+
 @dataclass(frozen=True)
 class _PerceptionResource:
     """One sensor/scene resource the UI can show: a contract + allowed transports."""
@@ -86,6 +93,10 @@ PERCEPTION_TILES: tuple[_PerceptionTile, ...] = (
             _PerceptionResource("regions", CONTRACT_SCENE_REGIONS),
         ),
     ),
+    # Robot telemetry (GNSS/RTK, IMU, NTRIP link) comes from the rover_status
+    # service over plain HTTP rather than Atlas, so its reachability is probed
+    # separately in perception_availability, the same way as the map grid.
+    _PerceptionTile("rover", "sensors", ()),
 )
 
 
@@ -335,6 +346,11 @@ async def _map_ui_base(atlas_endpoint: str) -> str:
     return base
 
 
+def _rover_status_base(atlas_endpoint: str) -> str:
+    """HTTP base of the robot's rover_status service, host derived from Atlas."""
+    return f"http://{_atlas_host(atlas_endpoint)}:{ROVER_STATUS_PORT}"
+
+
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "0.0.0.0"})
 
 
@@ -410,6 +426,24 @@ async def map_reachable(atlas_endpoint: str) -> bool:
         return False
 
 
+async def rover_snapshot(atlas_endpoint: str) -> dict[str, Any]:
+    """The rover_status service snapshot (GNSS/RTK, IMU, NTRIP links)."""
+    # 4 s rather than a tight timeout: over a remote link (WiFi, or an SSH
+    # tunnel for a client that is not on the robot) a single request can stall
+    # for seconds. The standard co-located loopback deployment never gets close.
+    return await asyncio.to_thread(
+        _fetch_json, f"{_rover_status_base(atlas_endpoint)}/status", 4.0)
+
+
+async def rover_reachable(atlas_endpoint: str) -> bool:
+    """True when the robot-local rover_status service answers with a snapshot."""
+    try:
+        snapshot = await rover_snapshot(atlas_endpoint)
+    except Exception:
+        return False
+    return snapshot.get("mode") == "ros" and "position" in snapshot
+
+
 async def perception_availability(atlas_endpoint: str) -> dict[str, Any]:
     """Per-resource reachability for every perception tile.
 
@@ -428,6 +462,11 @@ async def perception_availability(atlas_endpoint: str) -> dict[str, Any]:
         resources[tile.id] = per_resource
         tiles[tile.id] = any(per_resource.values())
         groups.setdefault(tile.group, []).append(tile.id)
+
+    # Rover telemetry is also robot-local HTTP rather than an Atlas contract;
+    # probe it separately so the tile shows up whenever the service answers.
+    resources.setdefault("rover", {})["status"] = await rover_reachable(atlas_endpoint)
+    tiles["rover"] = bool(resources["rover"]["status"])
 
     # Check camera HTTP fallback if MCP snapshot tools are absent
     if not tiles.get("camera") or not tiles.get("depth"):

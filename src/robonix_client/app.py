@@ -201,7 +201,10 @@ async def stop_client_audio() -> None:
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    # The shell must never be served from a stale cache: asset URLs inside it
+    # carry a version query, so a fresh index is what pulls in fresh JS/CSS.
+    return FileResponse(
+        STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/defaults")
@@ -360,6 +363,14 @@ async def perception_scene(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
 async def perception_map(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
     try:
         return {"ok": True, "occupancy": await perception.map_occupancy(atlas)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/perception/rover")
+async def perception_rover(atlas: str = Query(DEFAULT_ATLAS)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "rover": await perception.rover_snapshot(atlas)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
