@@ -6281,7 +6281,8 @@ const perception = {
   depthColormap: true,
   lastDepthData: null,
   timers: new Set(),
-  tiles: { camera: false, depth: false, scene: false },
+  tiles: { camera: false, depth: false, rover: false, scene: false },
+  roverHasData: false,
   resources: {},
   sceneLayers: { map: true, regions: true, objects: true, lidar: true, robot: true },
   lastMap: null,
@@ -6303,7 +6304,7 @@ const perception = {
 // Tile ids the Perception page lays out, mirroring PERCEPTION_TILES in
 // perception.py. Kept in one place so the layout loops and the telemetry
 // badge denominator never drift apart.
-const PERCEPTION_TILE_IDS = ["camera", "depth", "scene"];
+const PERCEPTION_TILE_IDS = ["camera", "depth", "rover", "scene"];
 
 // Precomputed 256-entry Turbo/Spectral palette for pseudo-color depth heatmap
 const DEPTH_COLORMAP = (() => {
@@ -6470,7 +6471,7 @@ function applyPerceptionLayout() {
 
   // Default: layout-split (Large scene on left, stacked sensors on right)
   grid.classList.add("layout-split");
-  const sensors = ["camera", "depth"].filter((id) => perception.tiles[id]);
+  const sensors = ["camera", "depth", "rover"].filter((id) => perception.tiles[id]);
   if (perception.tiles.scene) {
     grid.style.gridTemplateColumns = "minmax(0, 3.2fr) minmax(0, 2fr)";
     grid.style.gridTemplateRows = `repeat(${Math.max(1, sensors.length)}, minmax(0, 1fr))`;
@@ -6551,6 +6552,104 @@ async function perceptionPollImage(id, endpoint) {
       placeholder.classList.remove("has-feed");
       placeholder.hidden = false;
     }
+  }
+}
+
+// ── Rover telemetry tile ─────────────────────────────────────────────────────
+// The snapshot comes from the robot-local rover_status service (HTTP /status)
+// through the client backend; numbers are formatted here so the page keeps the
+// last good reading if a single poll fails.
+
+function roverFixed(value, digits) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(digits) : null;
+}
+
+function setRoverValue(name, text, tone) {
+  const node = document.querySelector(`[data-rover="${name}"]`);
+  if (!node) return;
+  node.textContent = text;
+  node.classList.remove("ok", "warn", "bad");
+  if (tone) node.classList.add(tone);
+}
+
+function renderRoverStatus(r) {
+  const pos = (r && r.position) || {};
+  const motion = (r && r.motion) || {};
+  const ntrip = (r && r.ntrip) || {};
+  const imu = (r && r.imu) || {};
+
+  const heading = roverFixed(r && r.heading_deg, 1);
+  setRoverValue("heading", heading == null ? "--" : `${heading}°`, heading == null ? "bad" : "ok");
+
+  const fixTone = pos.valid ? (Number(pos.fix_quality) >= 4 ? "ok" : "warn") : "bad";
+  setRoverValue("fix", pos.fix_name || "--", fixTone);
+  const fixDetail = [];
+  if (pos.sats != null) fixDetail.push(`${pos.sats} sat`);
+  const hdop = roverFixed(pos.hdop, 2);
+  if (hdop != null) fixDetail.push(`HDOP ${hdop}`);
+  const fixAge = roverFixed(pos.age_s, 1);
+  if (fixAge != null) fixDetail.push(`${fixAge} s`);
+  setRoverValue("fix-detail", fixDetail.join(" · "));
+
+  const east = roverFixed(pos.east_m, 1);
+  const north = roverFixed(pos.north_m, 1);
+  setRoverValue("enu", east != null && north != null ? `E ${east} · N ${north} m` : "--");
+  const lat = roverFixed(pos.lat, 6);
+  const lon = roverFixed(pos.lon, 6);
+  setRoverValue("latlon", lat != null && lon != null ? `${lat}, ${lon}` : "");
+
+  const speed = roverFixed(motion.speed_mps, 2);
+  setRoverValue("speed", speed == null ? "--" : `${speed} m/s`);
+  const course = roverFixed(motion.course_deg, 1);
+  setRoverValue("course", course == null ? "" : `${course}°`);
+
+  const ntripState = ntrip.state || "unknown";
+  setRoverValue("ntrip", ntripState, ntripState === "up" ? "ok" : "bad");
+  const rtcm = Number(ntrip.rtcm_bytes) || 0;
+  setRoverValue(
+    "ntrip-detail",
+    ntripState === "up" ? `${(rtcm / 1024).toFixed(1)} KiB RTCM` : (ntrip.last_error || ""),
+  );
+
+  const imuState = imu.status || "unknown";
+  const imuTone = imuState === "open" ? "ok" : (imuState.startsWith("open") ? "warn" : "bad");
+  setRoverValue("imu", imuState, imuTone);
+  const imuDetail = [];
+  const yaw = roverFixed(imu.yaw_enu_deg, 1);
+  if (yaw != null) imuDetail.push(`yaw ${yaw}°`);
+  if (imu.frames != null) imuDetail.push(`${imu.frames}`);
+  setRoverValue("imu-detail", imuDetail.join(" · "));
+}
+
+function roverWaiting(placeholder, waiting) {
+  if (!placeholder) return;
+  // Same placeholder mechanics as the camera/depth tiles: an explicit
+  // "awaiting data" panel while no snapshot has ever arrived, swapped for the
+  // live figures on the first good poll.  Once data exists a failed poll only
+  // marks the badge Offline and leaves the last reading on screen.
+  placeholder.hidden = !waiting;
+  placeholder.classList.toggle("has-feed", !waiting);
+}
+
+async function perceptionPollRover() {
+  const placeholder = document.querySelector('[data-tile-placeholder="rover"]');
+  try {
+    const data = await perceptionFetch("rover");
+    if (!data.ok || !data.rover) {
+      perceptionMeta("rover", data.error || t("Offline"));
+      if (!perception.roverHasData) roverWaiting(placeholder, true);
+      return;
+    }
+    renderRoverStatus(data.rover);
+    perception.roverHasData = true;
+    roverWaiting(placeholder, false);
+    perceptionMeta("rover", "1 Hz");
+  } catch (_) {
+    // Keep the last good reading; the badge tells the operator it went stale.
+    perceptionMeta("rover", t("Offline"));
+    if (!perception.roverHasData) roverWaiting(placeholder, true);
   }
 }
 
@@ -7173,6 +7272,7 @@ function perceptionRound() {
   const round = [];
   if (perception.tiles.camera) round.push(perceptionPollImage("camera", "camera"));
   if (perception.tiles.depth) round.push(perceptionPollImage("depth", "depth"));
+  if (perception.tiles.rover) round.push(perceptionPollRover());
   if (perception.tiles.scene) round.push(perceptionPollScene());
   return Promise.allSettled(round);
 }
@@ -7206,6 +7306,7 @@ function perceptionArm(delay) {
 const PERCEPTION_LABELS = {
   camera: () => t("Camera"),
   depth: () => t("Depth Camera"),
+  rover: () => t("Rover Status"),
   scene: () => t("Scene Map"),
 };
 
@@ -7273,6 +7374,14 @@ async function perceptionRefresh() {
       perceptionSetAvailable(id, !!available);
       any = any || !!available;
     }
+    // Probes only decide each tile's online/offline chips, not whether the
+    // tile exists.  On a weak link (WiFi, or a tunnel for a remote client) a
+    // single failed probe used to remove a card for the rest of the page's
+    // life -- and with no tile left but one, the split layout collapsed into a
+    // single big card until a manual reload.  Keep every tile in the layout
+    // and let each poll paint its own Offline/stale state instead.
+    for (const id of PERCEPTION_TILE_IDS) perceptionSetAvailable(id, true);
+    any = true; // the status endpoint answered, so the page owns its layout
     // The occupancy base map is only offered when the robot-local map service
     // is actually reachable; otherwise hide its toggle rather than show a
     // layer that can never draw anything.

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Robonix Client</title>
     <link rel="icon" type="image/svg+xml" href="/static/robonix-mark.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261115-mobilefix" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261125a" />
   </head>
   <body>
     <div class="app-shell">
@@ -400,6 +400,65 @@
                   <img class="perception-camera-img" data-depth-img alt="Depth camera" data-i18n-alt="Depth Camera" draggable="false" style="display:none;" />
                 </div>
               </section>
+              <section class="perception-tile" data-tile="rover">
+                <header class="perception-tile-header">
+                  <div class="tile-title-group">
+                    <span class="tile-live-indicator"></span>
+                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2a10 10 0 0 1 10 10M12 6a6 6 0 0 1 6 6"/><path d="M2 12a10 10 0 0 0 10 10"/></svg>
+                    <h3 data-i18n="Rover Status">Rover Status</h3>
+                  </div>
+                  <div class="perception-tile-tools">
+                    <span class="perception-tile-meta" data-tile-meta></span>
+                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
+                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                    </button>
+                  </div>
+                </header>
+                <div class="perception-tile-body rover-body">
+                  <div class="perception-tile-placeholder" data-tile-placeholder="rover">
+                    <div class="perception-placeholder-content">
+                      <div class="perception-placeholder-crosshair"></div>
+                      <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="2"/><path d="M12 2a10 10 0 0 1 10 10M12 6a6 6 0 0 1 6 6"/><path d="M2 12a10 10 0 0 0 10 10"/>
+                      </svg>
+                      <span class="perception-placeholder-badge" data-i18n="NO SIGNAL">NO SIGNAL</span>
+                      <span class="perception-placeholder-hint" data-i18n="Awaiting rover telemetry...">Awaiting rover telemetry...</span>
+                    </div>
+                  </div>
+                  <div class="rover-grid">
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="Heading">Heading</span>
+                      <strong class="rover-value" data-rover="heading">--</strong>
+                    </div>
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="GNSS fix">GNSS fix</span>
+                      <strong class="rover-value" data-rover="fix">--</strong>
+                      <em class="rover-detail" data-rover="fix-detail"></em>
+                    </div>
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="Local position">Local position</span>
+                      <strong class="rover-value" data-rover="enu">--</strong>
+                      <em class="rover-detail" data-rover="latlon"></em>
+                    </div>
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="Speed / course">Speed / course</span>
+                      <strong class="rover-value" data-rover="speed">--</strong>
+                      <em class="rover-detail" data-rover="course"></em>
+                    </div>
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="NTRIP">NTRIP</span>
+                      <strong class="rover-value" data-rover="ntrip">--</strong>
+                      <em class="rover-detail" data-rover="ntrip-detail"></em>
+                    </div>
+                    <div class="rover-stat">
+                      <span class="rover-label" data-i18n="IMU link">IMU link</span>
+                      <strong class="rover-value" data-rover="imu">--</strong>
+                      <em class="rover-detail" data-rover="imu-detail"></em>
+                    </div>
+                  </div>
+                </div>
+              </section>
               <section class="perception-tile perception-tile-wide" data-tile="scene">
                 <header class="perception-tile-header">
                   <div class="tile-title-group">
@@ -486,6 +545,15 @@
                       <code class="channel-contract">camera/depth_snapshot</code>
                     </div>
 
+                    <div class="perception-channel-card" data-channel="rover">
+                      <div class="channel-head">
+                        <span class="channel-dot offline"></span>
+                        <strong data-i18n="Rover Status">Rover Status</strong>
+                        <span class="channel-status" data-i18n="Offline">Offline</span>
+                      </div>
+                      <span class="channel-desc" data-i18n="GNSS/RTK, IMU and NTRIP link telemetry">GNSS/RTK, IMU and NTRIP link telemetry</span>
+                      <code class="channel-contract">rover_status/status</code>
+                    </div>
                     <div class="perception-channel-card" data-channel="scene">
                       <div class="channel-head">
                         <span class="channel-dot offline"></span>
@@ -1033,8 +1101,8 @@
       </section>
     </div>
 
-    <script src="/static/i18n.js?v=20261108a"></script>
-    <script src="/static/app.js?v=20261108a"></script>
+    <script src="/static/i18n.js?v=20261125a"></script>
+    <script src="/static/app.js?v=20261125a"></script>
     <script src="/static/vitals.bundle.js?v=20261108a"></script>
   </body>
 </html>

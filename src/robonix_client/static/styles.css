@@ -7272,6 +7272,58 @@ body.session-dialog-open {
   background: linear-gradient(90deg, #30123b, #28bbec, #a2fc3c, #fb8022, #7a0403);
 }
 
+/* ── Rover telemetry tile ───────────────────────────────────────────────── */
+
+.rover-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.rover-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  align-content: start;
+}
+
+.rover-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rover-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.rover-value {
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rover-value.ok { color: #35e0a0; }
+.rover-value.warn { color: #f0c35c; }
+.rover-value.bad { color: #f07a6a; }
+
+.rover-detail {
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── HUD Corner Brackets ─────────────────────────────────────────────────── */
 
 .hud-bracket {
