@@ -1,12 +1,14 @@
 <!doctype html>
 <html lang="en">
+
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Robonix Client</title>
     <link rel="icon" type="image/svg+xml" href="/static/robonix-mark.svg" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261115-mobilefix" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261123g" />
   </head>
+
   <body>
     <div class="app-shell">
       <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
@@ -15,60 +17,96 @@
           <div class="brand">
             <div class="brand-logo-wrap" aria-hidden="true">
               <svg class="brand-logo" viewBox="0 0 170 151" fill="currentColor">
-                <path d="M159.11,27.03c-2.31-1.41,.08,19.02-20.72,25.72,1.64-8.68-.75-15.71-2.06-16.83-1.34-1.15-1.47,7.18-12.11,8.85-1.1-1.92-2.7-3.94-4.62-5.96,.96-4.77-.35-8.65-1.06-9.27-.08-.07-1.87,2.21-5.01,3.64-.83-.68-1.66-1.36-2.52-2.01-2.34-1.81-4.69-3.25-6.94-4.41,.24-.54,1.68-4.26,.03-8.06-1.73-4-6.24-5.63-10.68-3.97-4.34,1.62-6.11,5.61-6.44,6.48-.02,.05-.04,.11-.06,.16-5.31-1-9.51-1-12.92-.51-1.83-3.12-5.28-5.44-8.82-5.45-2.91,0-6.22,1.33-8.02,4.01-3.01,4.48-1.49,11.63,3.44,14.31,.4,.22,.81,.39,1.23,.54-.43,.08-.9,.09-1.4,.02-3.31-.51-5.72-4.19-7.55-7.01-.02-.02-.05,.03-.08,.04-9.06,5.84-15.87,17.7-17.02,25.21-.93,.65-1.87,1.31-2.82,2-15.53,11.22-28.72,38.2-20.76,79.27,.17,1.19,1.02,2.53,2.35,2.53l14.45,.06c1.37,0,2.54-1,2.74-2.36l.82-5.6c.65-4.39,3.99-8.03,8.38-8.67,5.52-.8,10.47,3.02,11.26,8.35l.88,5.96c.2,1.34,1.35,2.33,2.7,2.33h14.79c1.35,0,2.5-.99,2.7-2.33l.79-5.3c.56-5.15,4.62-9.16,9.82-9.16s9.39,4.06,9.97,9.16l.82,5.62c.17,1.15,1.15,2,2.32,2h14.41c1.24,0,2.19-.73,2.65-2.05,2.76-8.08,2.26-14.58,1.88-17.92-.07-.6-.21-1.02-.3-1.43-13.95-.27-28.02-4.32-38.25-9.72,11.23,3.65,21.72,5.62,27.34,5.82,73.38,2.6,59.58-80.89,54.38-84.06ZM81.48,63.03c-1.47,3.41-5.43,4.99-8.84,3.52-3.41-1.47-4.99-5.43-3.52-8.84,1.47-3.41,5.43-4.99,8.84-3.52s4.99,5.43,3.52,8.84Z"/>
+              <path
+                d="M159.11,27.03c-2.31-1.41,.08,19.02-20.72,25.72,1.64-8.68-.75-15.71-2.06-16.83-1.34-1.15-1.47,7.18-12.11,8.85-1.1-1.92-2.7-3.94-4.62-5.96,.96-4.77-.35-8.65-1.06-9.27-.08-.07-1.87,2.21-5.01,3.64-.83-.68-1.66-1.36-2.52-2.01-2.34-1.81-4.69-3.25-6.94-4.41,.24-.54,1.68-4.26,.03-8.06-1.73-4-6.24-5.63-10.68-3.97-4.34,1.62-6.11,5.61-6.44,6.48-.02,.05-.04,.11-.06,.16-5.31-1-9.51-1-12.92-.51-1.83-3.12-5.28-5.44-8.82-5.45-2.91,0-6.22,1.33-8.02,4.01-3.01,4.48-1.49,11.63,3.44,14.31,.4,.22,.81,.39,1.23,.54-.43,.08-.9,.09-1.4,.02-3.31-.51-5.72-4.19-7.55-7.01-.02-.02-.05,.03-.08,.04-9.06,5.84-15.87,17.7-17.02,25.21-.93,.65-1.87,1.31-2.82,2-15.53,11.22-28.72,38.2-20.76,79.27,.17,1.19,1.02,2.53,2.35,2.53l14.45,.06c1.37,0,2.54-1,2.74-2.36l.82-5.6c.65-4.39,3.99-8.03,8.38-8.67,5.52-.8,10.47,3.02,11.26,8.35l.88,5.96c.2,1.34,1.35,2.33,2.7,2.33h14.79c1.35,0,2.5-.99,2.7-2.33l.79-5.3c.56-5.15,4.62-9.16,9.82-9.16s9.39,4.06,9.97,9.16l.82,5.62c.17,1.15,1.15,2,2.32,2h14.41c1.24,0,2.19-.73,2.65-2.05,2.76-8.08,2.26-14.58,1.88-17.92-.07-.6-.21-1.02-.3-1.43-13.95-.27-28.02-4.32-38.25-9.72,11.23,3.65,21.72,5.62,27.34,5.82,73.38,2.6,59.58-80.89,54.38-84.06ZM81.48,63.03c-1.47,3.41-5.43,4.99-8.84,3.52-3.41-1.47-4.99-5.43-3.52-8.84,1.47-3.41,5.43-4.99,8.84-3.52s4.99,5.43,3.52,8.84Z" />
               </svg>
             </div>
             <div class="brand-text">
               <div class="brand-title">Robonix</div>
               <div class="brand-sub" data-i18n="Client">Client</div>
             </div>
-            <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" data-i18n-aria-label="Collapse sidebar" data-i18n-title="Collapse sidebar">
-              <svg class="collapse-icon-left" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect width="18" height="18" x="3" y="3" rx="2"/>
-                <path d="M9 3v18"/>
-                <path d="m16 15-3-3 3-3"/>
+          <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" type="button" aria-label="Collapse sidebar"
+            title="Collapse sidebar" data-i18n-aria-label="Collapse sidebar" data-i18n-title="Collapse sidebar">
+            <svg class="collapse-icon-left" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              <path d="m16 15-3-3 3-3" />
               </svg>
-              <svg class="collapse-icon-right" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;">
-                <rect width="18" height="18" x="3" y="3" rx="2"/>
-                <path d="M9 3v18"/>
-                <path d="m14 9 3 3-3 3"/>
+            <svg class="collapse-icon-right" width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+              style="display:none;">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              <path d="m14 9 3 3-3 3" />
               </svg>
             </button>
-            <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" aria-label="Close menu" title="Close menu" data-i18n-aria-label="Close menu" data-i18n-title="Close menu">✕</button>
+          <button class="sidebar-close-btn" id="sidebarCloseBtn" type="button" aria-label="Close menu"
+            title="Close menu" data-i18n-aria-label="Close menu" data-i18n-title="Close menu">✕</button>
           </div>
 
           <!-- All navigation placed ABOVE recent chats, consistent with n8n -->
           <nav class="nav-list sidebar-primary-nav" aria-label="Workspace" data-i18n-aria-label="Workspace">
-            <button class="nav-item active" type="button" data-page="dashboard" id="navChatBtn" title="Chat" data-i18n-title="Chat">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <button class="nav-item active" type="button" data-page="dashboard" id="navChatBtn" title="Chat"
+            data-i18n-title="Chat">
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
               <span data-i18n="Chat">Chat</span>
             </button>
             <button class="nav-item" type="button" data-page="perception" title="Perception" data-i18n-title="Perception">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
               <span data-i18n="Perception">Perception</span>
             </button>
             <button class="nav-item" type="button" data-page="vitals" title="Vitals" data-i18n-title="Vitals">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
               <span data-i18n="Vitals">Vitals</span>
             </button>
             <button class="nav-item" type="button" data-page="studio" title="Studio" data-i18n-title="Studio">
-              <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            <svg class="nav-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+            </svg>
               <span data-i18n="Studio">Studio</span>
             </button>
           </nav>
 
           <section class="sidebar-section sidebar-history-section" id="sessionListSection">
             <div class="session-list-header">
-              <button class="sidebar-section-header session-list-toggle" id="sessionListToggle" type="button" aria-expanded="true" aria-controls="historyList" aria-label="Collapse session list">
+            <button class="sidebar-section-header session-list-toggle" id="sessionListToggle" type="button"
+              aria-expanded="true" aria-controls="historyList" aria-label="Collapse session list">
                 <span data-i18n="Session list">Session list</span>
-                <svg class="session-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              <svg class="session-list-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
               </button>
               <details class="session-list-actions" id="sessionListActions">
-                <summary id="sessionListActionsTrigger" aria-label="Session list actions" data-i18n-aria-label="Session list actions" title="Session list actions" data-i18n-title="Session list actions">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+              <summary id="sessionListActionsTrigger" aria-label="Session list actions"
+                data-i18n-aria-label="Session list actions" title="Session list actions"
+                data-i18n-title="Session list actions">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  aria-hidden="true">
+                  <circle cx="5" cy="12" r="1" />
+                  <circle cx="12" cy="12" r="1" />
+                  <circle cx="19" cy="12" r="1" />
+                </svg>
                 </summary>
                 <div class="session-list-popover">
-                  <button class="settings-menu-item" id="clearHistory" type="button" data-i18n="Clear all sessions">Clear all sessions</button>
+                <button class="settings-menu-item" id="clearHistory" type="button" data-i18n="Clear all sessions">Clear
+                  all sessions</button>
                 </div>
               </details>
             </div>
@@ -86,27 +124,48 @@
               <div class="settings-popover-items">
                 <button type="button" class="settings-menu-item" data-page="audio" id="settingsMenuAudio">
                   <div class="settings-item-main">
-                    <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                  <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
                     <span data-i18n="Audio">Audio</span>
                   </div>
-                  <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
                 </button>
                 <button type="button" class="settings-menu-item" data-page="settings" id="settingsMenuSettings">
                   <div class="settings-item-main">
-                    <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
                     <span data-i18n="Connection">Connection</span>
                   </div>
-                  <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                <svg class="settings-item-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
                 </button>
               </div>
 
               <div class="settings-popover-footer">
                 <div class="settings-lang-row">
                   <div class="settings-item-main">
-                    <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
+                  <svg class="menu-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z" />
+                  </svg>
                     <span data-i18n="Language">Language</span>
                   </div>
-                  <div class="lang-switch compact" id="langSwitch" role="group" data-i18n-title="Switch language" data-i18n-aria-label="Switch language">
+                <div class="lang-switch compact" id="langSwitch" role="group" data-i18n-title="Switch language"
+                  data-i18n-aria-label="Switch language">
                     <span class="lang-switch-thumb" aria-hidden="true"></span>
                     <button type="button" class="lang-option" data-lang="en" aria-pressed="true">EN</button>
                     <button type="button" class="lang-option" data-lang="zh" aria-pressed="false">中文</button>
@@ -115,12 +174,21 @@
               </div>
             </div>
 
-            <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" aria-expanded="false" aria-controls="settingsMenuPopover" title="Settings" data-i18n-title="Settings">
+          <button type="button" class="settings-trigger-btn" id="settingsTriggerBtn" aria-expanded="false"
+            aria-controls="settingsMenuPopover" title="Settings" data-i18n-title="Settings">
               <div class="settings-trigger-main">
-                <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0 1.51 1z"/></svg>
+              <svg class="settings-trigger-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3" />
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0 1.51 1z" />
+              </svg>
                 <span class="settings-trigger-label" data-i18n="Settings">Settings</span>
               </div>
-              <svg class="settings-trigger-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            <svg class="settings-trigger-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
             </button>
           </div>
         </div>
@@ -128,40 +196,74 @@
 
       <main class="workspace">
         <header class="command-bar">
-          <button class="mobile-nav-toggle" id="mobileNavToggle" type="button" aria-label="Open menu" title="Menu" data-i18n-aria-label="Open menu" data-i18n-title="Menu">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <button class="mobile-nav-toggle" id="mobileNavToggle" type="button" aria-label="Open menu" title="Menu"
+          data-i18n-aria-label="Open menu" data-i18n-title="Menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
           </button>
 
           <input id="robotHost" type="hidden" />
           <input id="atlasPort" type="hidden" />
           <input id="userId" type="hidden" />
 
-          <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings" title="Robot Atlas Endpoint. Click to edit in Settings." data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
+        <button class="endpoint-badge" id="endpointBadge" type="button" data-page-link="settings"
+          title="Robot Atlas Endpoint. Click to edit in Settings."
+          data-i18n-title="Robot Atlas Endpoint. Click to edit in Settings.">
             <span class="endpoint-status-dot" aria-hidden="true"></span>
-            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+            <line x1="6" y1="6" x2="6.01" y2="6" />
+            <line x1="6" y1="18" x2="6.01" y2="18" />
+          </svg>
             <span class="endpoint-label" data-i18n="Atlas:">Atlas:</span>
             <span class="endpoint-val" id="atlasEndpointDisplay">127.0.0.1:50051</span>
           </button>
 
-          <button class="endpoint-badge user-badge" id="userBadge" type="button" data-page-link="settings" title="Current Operator. Click to edit in Settings." data-i18n-title="Current Operator. Click to edit in Settings.">
-            <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <button class="endpoint-badge user-badge" id="userBadge" type="button" data-page-link="settings"
+          title="Current Operator. Click to edit in Settings."
+          data-i18n-title="Current Operator. Click to edit in Settings.">
+          <svg class="endpoint-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
             <span class="endpoint-val" id="userDisplay">voice:client</span>
           </button>
 
-          <button class="status-chip system-status-pill" id="refreshSystem" type="button" title="System readiness. Click to refresh." data-i18n-title="System readiness. Click to refresh.">
+        <button class="status-chip system-status-pill" id="refreshSystem" type="button"
+          title="System readiness. Click to refresh." data-i18n-title="System readiness. Click to refresh.">
             <span class="status-dot-wrap" aria-hidden="true">
               <span class="dot-ping"></span>
               <span class="dot"></span>
             </span>
             <span id="connectionState" data-i18n="offline">offline</span>
           </button>
-          <button class="status-chip handsfree-chip offline" id="handsfreeToggle" type="button" aria-labelledby="handsfreeState" title="Robot-local wake phrase configured by Speech" data-i18n-title="Robot-local wake phrase configured by Speech">
-            <svg class="handsfree-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
-            <svg class="handsfree-icon handsfree-recording-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>
-            <span id="handsfreeState" data-i18n="Hands-free off">Hands-free off</span>
+        <button class="status-chip handsfree-chip offline unavailable" id="handsfreeToggle" type="button"
+          aria-labelledby="handsfreeState" title="Hands-free unavailable">
+          <svg class="handsfree-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" y1="19" x2="12" y2="22" />
+          </svg>
+          <svg class="handsfree-icon handsfree-recording-icon" width="13" height="13" viewBox="0 0 24 24"
+            fill="currentColor" aria-hidden="true">
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+          <span id="handsfreeState">Hands-free unavailable</span>
           </button>
-          <button class="button connect-button" id="connectNow" type="button" title="Check Atlas connection" data-i18n-title="Check Atlas connection">
-            <svg class="connect-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <button class="button connect-button" id="connectNow" type="button" title="Check Atlas connection"
+          data-i18n-title="Check Atlas connection">
+          <svg class="connect-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
             <span class="connect-label" data-i18n="Connect">Connect</span>
           </button>
         </header>
@@ -171,24 +273,41 @@
             <section class="panel conversation-panel">
               <header class="conversation-header">
                 <div class="session-title-wrap">
-                  <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <svg class="chat-title-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
                   <h1 class="session-title-display" id="sessionTitleDisplay">What should Robonix do?</h1>
                 </div>
 
                 <div class="conversation-header-actions">
-                  <button class="ghost-button header-icon-btn" id="renameSession" type="button" aria-label="Rename session" data-i18n-aria-label="Rename session" data-tooltip="Rename session" data-i18n-tooltip="Rename session">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                <button class="ghost-button header-icon-btn" id="renameSession" type="button"
+                  aria-label="Rename session" data-i18n-aria-label="Rename session" data-tooltip="Rename session"
+                  data-i18n-tooltip="Rename session">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
                   </button>
-                  <button class="ghost-button header-icon-btn" id="newSessionAction" type="button" aria-label="New chat" data-i18n-aria-label="New chat" data-tooltip="New chat" data-i18n-tooltip="New chat">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                      <line x1="12" y1="8" x2="12" y2="14"/>
-                      <line x1="9" y1="11" x2="15" y2="11"/>
+                <button class="ghost-button header-icon-btn" id="newSessionAction" type="button" aria-label="New chat"
+                  data-i18n-aria-label="New chat" data-tooltip="New chat" data-i18n-tooltip="New chat">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <line x1="12" y1="8" x2="12" y2="14" />
+                    <line x1="9" y1="11" x2="15" y2="11" />
                     </svg>
                   </button>
 
-                  <button class="ghost-button header-icon-btn inspector-toggle-btn" id="toggleInspector" type="button" aria-label="Display Panel" data-i18n-aria-label="Display Panel" data-tooltip="Display Panel" data-i18n-tooltip="Display Panel">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>
+                <button class="ghost-button header-icon-btn inspector-toggle-btn" id="toggleInspector" type="button"
+                  aria-label="Display Panel" data-i18n-aria-label="Display Panel" data-tooltip="Display Panel"
+                  data-i18n-tooltip="Display Panel">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M15 3v18" />
+                  </svg>
                   </button>
                 </div>
               </header>
@@ -201,25 +320,57 @@
               <div class="composer-dock">
                 <form class="composer" id="composer">
                   <div id="attachmentStrip" class="attachment-strip"></div>
-                  <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..." data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
+                <textarea id="taskInput" rows="1" placeholder="Type a message or press F2 to speak..."
+                  data-i18n-placeholder="Type a message or press F2 to speak..."></textarea>
                   <div class="composer-row">
-                    <button class="tool-button voice-inline" type="button" data-page-action="voice-start" title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)" aria-label="Start recording" data-i18n-aria-label="Start recording">
-                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                  <button class="tool-button voice-inline" type="button" data-page-action="voice-start"
+                    title="Start voice recording (F2)" data-i18n-title="Start voice recording (F2)"
+                    aria-label="Start recording" data-i18n-aria-label="Start recording">
+                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                      <line x1="12" y1="19" x2="12" y2="22" />
+                    </svg>
                       <span class="btn-label" data-i18n="Start recording">Start recording</span>
                       <kbd class="btn-key">F2</kbd>
                     </button>
-                    <button class="tool-button finish-button" type="button" id="finishVoiceButton" title="Stop recording and send what you have said so far (F2). Does not cancel the task." data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task." hidden>
-                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  <button class="tool-button finish-button" type="button" id="finishVoiceButton"
+                    title="Stop recording and send what you have said so far (F2). Does not cancel the task."
+                    data-i18n-title="Stop recording and send what you have said so far (F2). Does not cancel the task."
+                    hidden>
+                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"
+                      aria-hidden="true">
+                      <rect x="4" y="4" width="16" height="16" rx="2" />
+                    </svg>
                       <span class="btn-label" data-i18n="Stop recording">Stop recording</span>
                       <kbd class="btn-key">F2</kbd>
                     </button>
-                    <button class="danger-button stop-button" type="button" id="stopButton" title="Request a stop for this session only." data-i18n-title="Request a stop for this session only." hidden>
-                      <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <button class="danger-button stop-button" type="button" id="stopButton"
+                    title="Request a stop for this session only."
+                    data-i18n-title="Request a stop for this session only." hidden>
+                    <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
                       <span class="btn-label" data-i18n="Stop task">Stop task</span>
                     </button>
-                    <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)" data-i18n-title="Send task (Enter)">
-                      <svg class="btn-icon send-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                      <svg class="btn-icon steer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none;"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+                  <button class="send-button" type="submit" id="sendButton" title="Send task (Enter)"
+                    data-i18n-title="Send task (Enter)">
+                    <svg class="btn-icon send-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                      aria-hidden="true">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    <svg class="btn-icon steer-icon" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                      aria-hidden="true" style="display:none;">
+                      <circle cx="12" cy="12" r="10" />
+                      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+                    </svg>
                       <span class="btn-label" data-i18n="Send">Send</span>
                       <kbd class="btn-key">Enter</kbd>
                     </button>
@@ -232,29 +383,47 @@
               <div class="dashboard-sidebar-inner">
                 <div class="drawer-header">
                   <div class="drawer-title-group">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M15 3v18" />
+                  </svg>
                     <span class="drawer-title" data-i18n="Display Panel">Display Panel</span>
                   </div>
-                  <button type="button" class="drawer-close-btn" id="closeInspectorBtn" title="Close display panel" aria-label="Close display panel" data-i18n-title="Close display panel" data-i18n-aria-label="Close display panel">✕</button>
+                <button type="button" class="drawer-close-btn" id="closeInspectorBtn" title="Close display panel"
+                  aria-label="Close display panel" data-i18n-title="Close display panel"
+                  data-i18n-aria-label="Close display panel">✕</button>
                 </div>
 
                 <nav class="sidebar-menu" id="sidebarMenu">
-                  <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl" data-i18n="RTDL Forest">RTDL Forest</button>
-                  <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="executor" data-i18n="Executor">Executor</button>
-                  <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events" data-i18n="Event Log">Event Log</button>
+                <button class="sidebar-menu-item active" type="button" aria-pressed="true" data-sidebar-view="rtdl"
+                  data-i18n="RTDL Forest">RTDL Forest</button>
+                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="executor"
+                  data-i18n="Executor">Executor</button>
+                <button class="sidebar-menu-item" type="button" aria-pressed="false" data-sidebar-view="events"
+                  data-i18n="Event Log">Event Log</button>
                   <span class="sidebar-icon-group">
-                    <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="Plan overview" data-i18n-title="Plan overview">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                  <button class="sidebar-icon-btn" id="openActiveRtdl" type="button" title="Plan overview"
+                    data-i18n-title="Plan overview">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                      <polyline points="2 17 12 22 22 17" />
+                      <polyline points="2 12 12 17 22 12" />
+                    </svg>
                       <span id="activeRtdlCount">0</span>
                     </button>
-                    <button class="sidebar-icon-btn" id="openRtdlHistory" type="button" title="Other plans for this task" data-i18n-title="Other plans for this task">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>
+                  <button class="sidebar-icon-btn" id="openRtdlHistory" type="button" title="Other plans for this task"
+                    data-i18n-title="Other plans for this task">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 14 14" />
+                    </svg>
                       <span id="rtdlHistoryCount">0</span>
                     </button>
                   </span>
                 </nav>
 
-                <section class="panel current-goal-panel" aria-label="Task execution" data-i18n-aria-label="Task execution">
+              <section class="panel current-goal-panel" aria-label="Task execution"
+                data-i18n-aria-label="Task execution">
                   <div class="panel-header compact">
                     <h2 data-i18n="Task execution">Task execution</h2>
                     <div class="task-scope-controls" id="taskScopeControls"></div>
@@ -276,7 +445,8 @@
                   </div>
                 </section>
 
-                <section class="panel executor-panel" data-sidebar-panel="executor" aria-labelledby="executorHeading" hidden>
+              <section class="panel executor-panel" data-sidebar-panel="executor" aria-labelledby="executorHeading"
+                hidden>
                   <div class="panel-header compact">
                     <h2 class="executor-label" id="executorHeading" data-i18n="Executor">Executor</h2>
                   </div>
@@ -310,12 +480,21 @@
                 </div>
               </div>
               <div class="perception-toolbar">
-                <button type="button" class="perception-control-btn" id="perceptionPauseBtn" title="Pause / Resume stream" data-i18n-title="Pause / Resume stream">
-                  <svg class="pause-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                  <svg class="play-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <button type="button" class="perception-control-btn" id="perceptionPauseBtn" title="Pause / Resume stream"
+                data-i18n-title="Pause / Resume stream">
+                <svg class="pause-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <rect x="6" y="4" width="4" height="16" />
+                  <rect x="14" y="4" width="4" height="16" />
+                </svg>
+                <svg class="play-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" style="display:none;">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
                   <span data-i18n="Live">Live</span>
                 </button>
-                <div class="perception-source-strip" id="perceptionSourceStrip" data-i18n-aria-label="Data source status" aria-label="Data source status"></div>
+              <div class="perception-source-strip" id="perceptionSourceStrip" data-i18n-aria-label="Data source status"
+                aria-label="Data source status"></div>
               </div>
             </header>
             <div class="perception-grid" id="perceptionGrid">
@@ -323,17 +502,39 @@
                 <header class="perception-tile-header">
                   <div class="tile-title-group">
                     <span class="tile-live-indicator"></span>
-                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>
                     <h3 data-i18n="Camera">Camera</h3>
                   </div>
                   <div class="perception-tile-tools">
                     <span class="perception-tile-meta" data-tile-meta></span>
-                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot"
+                    data-i18n-title="Save Snapshot">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     </button>
-                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
-                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile"
+                    data-i18n-title="Maximize Tile">
+                    <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2">
+                      <polyline points="15 3 21 3 21 9" />
+                      <polyline points="9 21 3 21 3 15" />
+                      <line x1="21" y1="3" x2="14" y2="10" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                    <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" style="display:none;">
+                      <polyline points="4 14 10 14 10 20" />
+                      <polyline points="20 10 14 10 14 4" />
+                      <line x1="14" y1="10" x2="21" y2="3" />
+                      <line x1="10" y1="14" x2="3" y2="21" />
+                    </svg>
                     </button>
                   </div>
                 </header>
@@ -345,36 +546,63 @@
                   <div class="perception-tile-placeholder" data-tile-placeholder="camera">
                     <div class="perception-placeholder-content">
                       <div class="perception-placeholder-crosshair"></div>
-                      <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                        <circle cx="12" cy="13" r="4"/>
+                    <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.5">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
                       </svg>
                       <span class="perception-placeholder-badge" data-i18n="NO SIGNAL">NO SIGNAL</span>
-                      <span class="perception-placeholder-hint" data-i18n="Awaiting video feed...">Awaiting video feed...</span>
+                    <span class="perception-placeholder-hint" data-i18n="Awaiting video feed...">Awaiting video
+                      feed...</span>
                     </div>
                   </div>
-                  <img class="perception-camera-img" data-camera-img alt="RGB camera" data-i18n-alt="Camera" draggable="false" />
+                <img class="perception-camera-img" data-camera-img alt="RGB camera" data-i18n-alt="Camera"
+                  draggable="false" />
                 </div>
               </section>
               <section class="perception-tile" data-tile="depth">
                 <header class="perception-tile-header">
                   <div class="tile-title-group">
                     <span class="tile-live-indicator"></span>
-                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5" stroke-dasharray="3 3"/></svg>
+                  <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <path d="M12 2v20M2 12h20" />
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="5" stroke-dasharray="3 3" />
+                  </svg>
                     <h3 data-i18n="Depth Camera">Depth Camera</h3>
                   </div>
                   <div class="perception-tile-tools">
-                    <button type="button" class="colormap-toggle-btn active" id="depthColormapBtn" title="Toggle Turbo Colormap" data-i18n-title="Toggle Turbo Colormap">
+                  <button type="button" class="colormap-toggle-btn active" id="depthColormapBtn"
+                    title="Toggle Turbo Colormap" data-i18n-title="Toggle Turbo Colormap">
                       <span class="colormap-preview"></span>
                       <span data-i18n="Heatmap">Heatmap</span>
                     </button>
                     <span class="perception-tile-meta" data-tile-meta></span>
-                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot"
+                    data-i18n-title="Save Snapshot">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     </button>
-                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
-                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile"
+                    data-i18n-title="Maximize Tile">
+                    <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2">
+                      <polyline points="15 3 21 3 21 9" />
+                      <polyline points="9 21 3 21 3 15" />
+                      <line x1="21" y1="3" x2="14" y2="10" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                    <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" style="display:none;">
+                      <polyline points="4 14 10 14 10 20" />
+                      <polyline points="20 10 14 10 14 4" />
+                      <line x1="14" y1="10" x2="21" y2="3" />
+                      <line x1="10" y1="14" x2="3" y2="21" />
+                    </svg>
                     </button>
                   </div>
                 </header>
@@ -387,45 +615,79 @@
                   <div class="perception-tile-placeholder" data-tile-placeholder="depth">
                     <div class="perception-placeholder-content">
                       <div class="perception-placeholder-crosshair"></div>
-                      <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 2v20M2 12h20"/>
-                        <circle cx="12" cy="12" r="9"/>
-                        <circle cx="12" cy="12" r="5" stroke-dasharray="3 3"/>
+                    <svg class="perception-placeholder-icon" width="32" height="32" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.5">
+                      <path d="M12 2v20M2 12h20" />
+                      <circle cx="12" cy="12" r="9" />
+                      <circle cx="12" cy="12" r="5" stroke-dasharray="3 3" />
                       </svg>
                       <span class="perception-placeholder-badge" data-i18n="STANDBY">STANDBY</span>
-                      <span class="perception-placeholder-hint" data-i18n="Awaiting depth feed...">Awaiting depth feed...</span>
+                    <span class="perception-placeholder-hint" data-i18n="Awaiting depth feed...">Awaiting depth
+                      feed...</span>
                     </div>
                   </div>
                   <canvas class="perception-depth-canvas" data-depth-canvas></canvas>
-                  <img class="perception-camera-img" data-depth-img alt="Depth camera" data-i18n-alt="Depth Camera" draggable="false" style="display:none;" />
+                <img class="perception-camera-img" data-depth-img alt="Depth camera" data-i18n-alt="Depth Camera"
+                  draggable="false" style="display:none;" />
                 </div>
               </section>
               <section class="perception-tile perception-tile-wide" data-tile="scene">
                 <header class="perception-tile-header">
                   <div class="tile-title-group">
                     <span class="tile-live-indicator"></span>
-                    <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+                  <svg class="tile-type-icon" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2">
+                    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
+                    <line x1="8" y1="2" x2="8" y2="18" />
+                    <line x1="16" y1="6" x2="16" y2="22" />
+                  </svg>
                     <h3 data-i18n="Scene Map">Scene Map</h3>
                   </div>
                   <div class="perception-tile-actions">
                     <div class="perception-layers" role="group" data-i18n-aria-label="Map view" aria-label="Map view">
-                      <button class="perception-view-btn" type="button" data-scene-view="fit" data-i18n="fit" title="Fit to Viewport" data-i18n-title="Fit to Viewport">fit</button>
-                      <label class="perception-layer-pill" title="Track Robot Center" data-i18n-title="Track Robot Center"><input type="checkbox" data-scene-view="follow" /><span data-i18n="follow">follow</span></label>
+                    <button class="perception-view-btn" type="button" data-scene-view="fit" data-i18n="fit"
+                      title="Fit to Viewport" data-i18n-title="Fit to Viewport">fit</button>
+                    <label class="perception-layer-pill" title="Track Robot Center"
+                      data-i18n-title="Track Robot Center"><input type="checkbox" data-scene-view="follow" /><span
+                        data-i18n="follow">follow</span></label>
                     </div>
                     <div class="perception-layers" role="group" data-i18n-aria-label="Map layers" aria-label="Map layers">
-                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="map" checked /><span data-i18n="map">map</span></label>
-                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="regions" checked /><span data-i18n="regions">regions</span></label>
-                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="objects" checked /><span data-i18n="objects">objects</span></label>
-                      <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="robot" checked /><span data-i18n="robot">robot</span></label>
-                      <label class="perception-layer-pill laser-layer-pill"><input type="checkbox" data-scene-layer="lidar" checked /><span data-i18n="laser">laser</span></label>
+                    <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="map" checked /><span
+                        data-i18n="map">map</span></label>
+                    <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="regions"
+                        checked /><span data-i18n="regions">regions</span></label>
+                    <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="objects"
+                        checked /><span data-i18n="objects">objects</span></label>
+                    <label class="perception-layer-pill"><input type="checkbox" data-scene-layer="robot" checked /><span
+                        data-i18n="robot">robot</span></label>
+                    <label class="perception-layer-pill laser-layer-pill"><input type="checkbox"
+                        data-scene-layer="lidar" checked /><span data-i18n="laser">laser</span></label>
                     </div>
                     <span class="perception-tile-meta" data-tile-meta></span>
-                    <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot" data-i18n-title="Save Snapshot">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="snapshot" title="Save Snapshot"
+                    data-i18n-title="Save Snapshot">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     </button>
-                    <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile" data-i18n-title="Maximize Tile">
-                      <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-                      <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+                  <button type="button" class="tile-tool-btn" data-action="focus" title="Maximize Tile"
+                    data-i18n-title="Maximize Tile">
+                    <svg class="focus-expand-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2">
+                      <polyline points="15 3 21 3 21 9" />
+                      <polyline points="9 21 3 21 3 15" />
+                      <line x1="21" y1="3" x2="14" y2="10" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                    <svg class="focus-collapse-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" style="display:none;">
+                      <polyline points="4 14 10 14 10 20" />
+                      <polyline points="20 10 14 10 14 4" />
+                      <line x1="14" y1="10" x2="21" y2="3" />
+                      <line x1="10" y1="14" x2="3" y2="21" />
+                    </svg>
                     </button>
                   </div>
                 </header>
@@ -449,16 +711,19 @@
                   <div class="radar-circle radar-c2"></div>
                   <div class="radar-circle radar-c3"></div>
                   <div class="radar-sweep"></div>
-                  <svg class="radar-center-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M12 2a10 10 0 0 1 10 10M12 6a6 6 0 0 1 6 6M12 22a10 10 0 0 1-10-10M12 18a6 6 0 0 1-6-6"/>
+                <svg class="radar-center-icon" width="22" height="22" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.6">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 2a10 10 0 0 1 10 10M12 6a6 6 0 0 1 6 6M12 22a10 10 0 0 1-10-10M12 18a6 6 0 0 1-6-6" />
                   </svg>
                 </div>
 
                 <div class="perception-empty-text">
                   <span class="perception-empty-pill" data-i18n="Sensor Array Inactive">Sensor Array Inactive</span>
                   <h3 data-i18n="No Active Sensor Streams">No Active Sensor Streams</h3>
-                  <p data-i18n="The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.">The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.</p>
+                <p
+                  data-i18n="The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.">
+                  The connected deployment currently exposes no active perception contracts or ROS 2 sensor bridges.</p>
                 </div>
 
                 <div class="perception-empty-diagnostics">
@@ -482,7 +747,8 @@
                         <strong data-i18n="Depth Camera">Depth Camera</strong>
                         <span class="channel-status" data-i18n="Offline">Offline</span>
                       </div>
-                      <span class="channel-desc" data-i18n="Depth Camera point & depth map">Depth Camera point & depth map</span>
+                    <span class="channel-desc" data-i18n="Depth Camera point & depth map">Depth Camera point & depth
+                      map</span>
                       <code class="channel-contract">camera/depth_snapshot</code>
                     </div>
 
@@ -492,7 +758,8 @@
                         <strong data-i18n="Scene Map">Scene Map</strong>
                         <span class="channel-status" data-i18n="Offline">Offline</span>
                       </div>
-                      <span class="channel-desc" data-i18n="Semantic scene objects & regions">Semantic scene objects & regions</span>
+                    <span class="channel-desc" data-i18n="Semantic scene objects & regions">Semantic scene objects &
+                      regions</span>
                       <code class="channel-contract">scene/get_robot_context</code>
                     </div>
                   </div>
@@ -500,9 +767,10 @@
 
                 <div class="perception-empty-actions">
                   <button class="perception-retry-btn" type="button" id="perceptionRetryBtn">
-                    <svg class="retry-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M23 4v6h-6M1 20v-6h6"/>
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  <svg class="retry-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2">
+                    <path d="M23 4v6h-6M1 20v-6h6" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
                     </svg>
                     <span data-i18n="Retry Probe">Retry Probe</span>
                   </button>
@@ -523,7 +791,8 @@
                 </div>
                 <span id="vitalsRobotMeta" data-i18n="Waiting for Soma">Waiting for Soma</span>
               </div>
-              <div class="vitals-overview-metrics" aria-label="Robot health summary" data-i18n-aria-label="Robot health summary">
+            <div class="vitals-overview-metrics" aria-label="Robot health summary"
+              data-i18n-aria-label="Robot health summary">
                 <div class="vitals-overview-metric">
                   <span data-i18n="Hardware">Hardware</span>
                   <strong id="vitalsHardwareSummary" data-i18n="0 components">0 components</strong>
@@ -542,13 +811,17 @@
                 </div>
               </div>
               <div class="vitals-overview-actions">
-                <div class="vitals-source-strip" id="vitalsSourceStrip" aria-label="Data source status" data-i18n-aria-label="Data source status"></div>
-                <button class="vitals-alert-button" id="vitalsAlertsOpen" type="button" aria-haspopup="dialog" aria-controls="vitalsAlertPanel">
+              <div class="vitals-source-strip" id="vitalsSourceStrip" aria-label="Data source status"
+                data-i18n-aria-label="Data source status"></div>
+              <button class="vitals-alert-button" id="vitalsAlertsOpen" type="button" aria-haspopup="dialog"
+                aria-controls="vitalsAlertPanel">
                   <span id="vitalsAlertsIcon" aria-hidden="true"></span>
                   <span data-i18n="Alerts">Alerts</span>
                   <strong id="vitalsAlertCount">0</strong>
                 </button>
-                <button class="icon-button vitals-refresh" id="vitalsReconnect" type="button" title="Reconnect health streams" data-i18n-title="Reconnect health streams" aria-label="Reconnect health streams" data-i18n-aria-label="Reconnect health streams">
+              <button class="icon-button vitals-refresh" id="vitalsReconnect" type="button"
+                title="Reconnect health streams" data-i18n-title="Reconnect health streams"
+                aria-label="Reconnect health streams" data-i18n-aria-label="Reconnect health streams">
                   <span id="vitalsReconnectIcon" aria-hidden="true"></span>
                 </button>
               </div>
@@ -581,7 +854,8 @@
                 </div>
               </section>
 
-              <aside class="vitals-inspector" aria-label="Selected component details" data-i18n-aria-label="Selected component details">
+            <aside class="vitals-inspector" aria-label="Selected component details"
+              data-i18n-aria-label="Selected component details">
                 <header class="vitals-pane-header">
                   <div>
                     <h3 id="vitalsInspectorTitle" data-i18n="Robot">Robot</h3>
@@ -595,9 +869,12 @@
 
             <section class="vitals-software" aria-label="Software health" data-i18n-aria-label="Software health">
               <header class="vitals-software-header">
-                <div class="segmented-control" role="tablist" aria-label="Software health view" data-i18n-aria-label="Software health view">
-                  <button class="active" id="vitalsModulesTab" type="button" role="tab" aria-selected="true" data-i18n="Modules">Modules</button>
-                  <button id="vitalsProvidersTab" type="button" role="tab" aria-selected="false" data-i18n="Providers">Providers</button>
+              <div class="segmented-control" role="tablist" aria-label="Software health view"
+                data-i18n-aria-label="Software health view">
+                <button class="active" id="vitalsModulesTab" type="button" role="tab" aria-selected="true"
+                  data-i18n="Modules">Modules</button>
+                <button id="vitalsProvidersTab" type="button" role="tab" aria-selected="false"
+                  data-i18n="Providers">Providers</button>
                 </div>
                 <span id="vitalsSoftwareDetail" data-i18n="Waiting for Vitals">Waiting for Vitals</span>
               </header>
@@ -608,25 +885,32 @@
             </footer>
 
             <div class="vitals-alert-layer" id="vitalsAlertPanelLayer" hidden>
-              <button class="vitals-alert-scrim" id="vitalsAlertPanelScrim" type="button" aria-label="Close alert panel" data-i18n-aria-label="Close alert panel"></button>
-              <aside class="vitals-alert-panel" id="vitalsAlertPanel" role="dialog" aria-modal="true" aria-labelledby="vitalsAlertPanelTitle">
+            <button class="vitals-alert-scrim" id="vitalsAlertPanelScrim" type="button" aria-label="Close alert panel"
+              data-i18n-aria-label="Close alert panel"></button>
+            <aside class="vitals-alert-panel" id="vitalsAlertPanel" role="dialog" aria-modal="true"
+              aria-labelledby="vitalsAlertPanelTitle">
                 <header class="vitals-alert-panel-header">
                   <div>
                     <span data-i18n="Persistent incidents">Persistent incidents</span>
                     <h3 id="vitalsAlertPanelTitle" data-i18n="Alert center">Alert center</h3>
                   </div>
-                  <button class="icon-button" id="vitalsAlertsClose" type="button" title="Close alert panel" data-i18n-title="Close alert panel" aria-label="Close alert panel" data-i18n-aria-label="Close alert panel">
+                <button class="icon-button" id="vitalsAlertsClose" type="button" title="Close alert panel"
+                  data-i18n-title="Close alert panel" aria-label="Close alert panel"
+                  data-i18n-aria-label="Close alert panel">
                     <span id="vitalsAlertsCloseIcon" aria-hidden="true"></span>
                   </button>
                 </header>
                 <div class="vitals-alert-toolbar">
                   <div class="segmented-control" role="tablist" aria-label="Alert view" data-i18n-aria-label="Alert view">
-                    <button class="active" id="vitalsOpenAlertsTab" type="button" role="tab" aria-selected="true" data-i18n="Open">Open</button>
-                    <button id="vitalsAlertHistoryTab" type="button" role="tab" aria-selected="false" data-i18n="History">History</button>
+                  <button class="active" id="vitalsOpenAlertsTab" type="button" role="tab" aria-selected="true"
+                    data-i18n="Open">Open</button>
+                  <button id="vitalsAlertHistoryTab" type="button" role="tab" aria-selected="false"
+                    data-i18n="History">History</button>
                   </div>
                   <div class="vitals-alert-toolbar-actions">
                     <span id="vitalsAlertSummary" data-i18n="No open alerts">No open alerts</span>
-                    <button class="secondary-button vitals-alert-clear-history" id="vitalsClearAlertHistory" type="button" hidden>
+                  <button class="secondary-button vitals-alert-clear-history" id="vitalsClearAlertHistory" type="button"
+                    hidden>
                       <span data-i18n="Clear history">Clear history</span>
                     </button>
                   </div>
@@ -636,7 +920,8 @@
             </div>
 
             <div class="vitals-warning-layer" id="vitalsWarningLayer" hidden>
-              <section class="vitals-warning-dialog" role="alertdialog" aria-modal="true" aria-labelledby="vitalsWarningTitle" aria-describedby="vitalsWarningDetail">
+            <section class="vitals-warning-dialog" role="alertdialog" aria-modal="true"
+              aria-labelledby="vitalsWarningTitle" aria-describedby="vitalsWarningDetail">
                 <header>
                   <span class="vitals-warning-icon" id="vitalsWarningIcon" aria-hidden="true"></span>
                   <div>
@@ -644,15 +929,19 @@
                     <h3 id="vitalsWarningTitle" data-i18n="Robot alert">Robot alert</h3>
                   </div>
                 </header>
-                <p id="vitalsWarningDetail" data-i18n="A health anomaly requires attention.">A health anomaly requires attention.</p>
+              <p id="vitalsWarningDetail" data-i18n="A health anomaly requires attention.">A health anomaly requires
+                attention.</p>
                 <div class="vitals-warning-meta">
                   <span id="vitalsWarningSource">component</span>
                   <span id="vitalsWarningTime" data-i18n="now">now</span>
                 </div>
                 <footer>
-                  <button class="secondary-button" id="vitalsWarningDismiss" type="button" data-i18n="Dismiss">Dismiss</button>
-                  <button class="secondary-button" id="vitalsWarningDismissAll" type="button" data-i18n="Dismiss all">Dismiss all</button>
-                  <button class="primary-button" id="vitalsWarningInspect" type="button" data-i18n="Inspect">Inspect</button>
+                <button class="secondary-button" id="vitalsWarningDismiss" type="button"
+                  data-i18n="Dismiss">Dismiss</button>
+                <button class="secondary-button" id="vitalsWarningDismissAll" type="button"
+                  data-i18n="Dismiss all">Dismiss all</button>
+                <button class="primary-button" id="vitalsWarningInspect" type="button"
+                  data-i18n="Inspect">Inspect</button>
                 </footer>
               </section>
             </div>
@@ -660,108 +949,130 @@
         </section>
 
         <section class="page work-page audio-page" data-page-panel="audio" aria-labelledby="audioTitle">
-          <header class="page-heading"><h1 id="audioTitle" data-i18n="Audio">Audio</h1></header>
-          <section class="audio-layout">
-            <section class="audio-column audio-config-column">
-            <section class="panel audio-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Audio Device Server">Audio Device Server</h2>
-                  <span id="audioServerSummary" data-i18n="Client-machine audio device server is not checked yet.">Client-machine audio device server is not checked yet.</span>
+        <header class="page-heading">
+          <div class="page-title-group">
+            <h1 id="audioTitle" data-i18n="Audio">Audio</h1>
                 </div>
-                <span id="audioServerState" data-i18n="offline">offline</span>
+        </header>
+
+        <div class="audio-container">
+          <!-- Session Route Card (Provider switching & Testing) -->
+          <section class="panel session-route-card">
+            <div class="session-route-header">
+              <div class="pipeline-title-wrap">
+                <div class="pipeline-icon-badge route" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                  </svg>
               </div>
-              <div class="audio-actions">
-                <button class="button work-primary-action" id="startAudioServer" type="button" data-i18n="Start Audio">Start Audio</button>
-                <button class="button" id="checkAudioServer" type="button" data-i18n="Check">Check</button>
-                <button class="button" id="refreshAudioDevices" type="button" data-i18n="Refresh Devices">Refresh Devices</button>
+                <h2 data-i18n="Session Route">会话路由</h2>
               </div>
-              <div class="audio-status-grid" id="audioServerStatus"></div>
+              <div class="session-route-actions">
+                <button class="button icon-btn" id="refreshAudioRoute" type="button" data-i18n="Refresh">刷新</button>
+              </div>
+            </div>
+
+            <div class="session-route-body">
+              <div class="session-route-grid">
+                <!-- Microphone / Input Column -->
+                <div class="session-route-col">
+                  <label class="audio-field-label" for="micNodeId" data-i18n="Input Provider">Input Provider</label>
+                  <select id="micNodeId" class="audio-select" disabled>
+                    <option value="" data-i18n="Select input primitive">Select input primitive</option>
+                  </select>
+
+                  <button class="button test-action-btn" id="testMicrophone" type="button">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      aria-hidden="true">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    <span data-i18n="Test Microphone">测试麦克风</span>
+                  </button>
+                </div>
+
+                <!-- Speaker / Output Column -->
+                <div class="session-route-col">
+                  <label class="audio-field-label" for="speakerNodeId" data-i18n="Output Provider">Output Provider</label>
+                  <select id="speakerNodeId" class="audio-select" disabled>
+                    <option value="" data-i18n="Select output primitive">Select output primitive</option>
+                  </select>
+
+                  <button class="button test-action-btn" id="testSpeaker" type="button">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      aria-hidden="true">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    </svg>
+                    <span data-i18n="Test Speaker">测试扬声器</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Footer with Route Status & Bridge info -->
+              <div class="session-route-footer">
+                <div class="audio-bridge-row" id="audioBridgeRow" hidden>
+                  <span class="audio-bridge-state" id="audioBridgeState"></span>
+                  <button class="button compact-button" id="audioBridgeAction" type="button" hidden
+                    data-i18n="Connect">连接</button>
+                </div>
+                <span class="audio-route-status" id="audioRouteStatus" role="status"></span>
+              </div>
+
+              <!-- Diagnostics Test Feedback Banner -->
+              <span class="audio-test-status" id="audioTestStatus" role="status"></span>
+            </div>
             </section>
 
-            <section class="panel audio-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Robonix Audio Route">Robonix Audio Route</h2>
-                  <span data-i18n="Select the primitive and device used by F2 and hands-free interaction.">Select the primitive and device used by F2 and hands-free interaction.</span>
+          <!-- Per-primitive Device Settings Section -->
+          <section aria-labelledby="audioDevicesTitle">
+            <div class="audio-section-header">
+              <h2 class="audio-section-title" id="audioDevicesTitle" data-i18n="Primitive Devices">Primitive Devices</h2>
                 </div>
-              </div>
-              <div class="audio-device-grid">
-                <label class="field">
-                  <span data-i18n="Input Primitive">Input Primitive</span>
-                  <select id="micNodeId"></select>
-                </label>
-                <label class="field">
-                  <span data-i18n="Input Device">Input Device</span>
-                  <select id="micDeviceId"></select>
-                </label>
-                <label class="field">
-                  <span data-i18n="Output Primitive">Output Primitive</span>
-                  <select id="speakerNodeId"></select>
-                </label>
-                <label class="field">
-                  <span data-i18n="Output Device">Output Device</span>
-                  <select id="speakerDeviceId"></select>
-                </label>
-              </div>
-              <div class="audio-device-actions">
-                <button class="button" id="refreshAudioRoute" type="button" data-i18n="Refresh Route">Refresh Route</button>
-                <button class="button work-primary-action" id="applyAudioRoute" type="button" data-i18n="Apply Route">Apply Route</button>
-              </div>
-              <span class="audio-route-status" id="audioRouteStatus" data-i18n="No Robonix audio route loaded.">No Robonix audio route loaded.</span>
+            <div class="panel primitive-panel" id="primitiveCardsContainer"></div>
             </section>
 
-            <section class="panel audio-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Client Bridge Diagnostics">Client Bridge Diagnostics</h2>
-                  <span data-i18n="Current local devices used when Audio Route selects the client bridge.">Current local devices used when Audio Route selects the client bridge.</span>
+          <!-- Hidden utility elements for backward compatibility -->
+          <div hidden aria-hidden="true">
+            <select id="micDeviceId"></select>
+            <select id="speakerDeviceId"></select>
+            <small id="micDeviceHint"></small>
+            <small id="speakerDeviceHint"></small>
+            <span id="bridgeInputDevice"></span>
+            <span id="bridgeOutputDevice"></span>
+            <span id="micActiveDeviceName"></span>
+            <span id="speakerActiveDeviceName"></span>
+            <span id="micConfigTargetNode"></span>
+            <span id="speakerConfigTargetNode"></span>
                 </div>
-              </div>
-              <div class="audio-device-grid audio-device-readout">
-                <div class="field">
-                  <span data-i18n="Microphone">Microphone</span>
-                  <strong id="bridgeInputDevice" data-i18n="Not selected">Not selected</strong>
-                </div>
-                <div class="field">
-                  <span data-i18n="Speaker">Speaker</span>
-                  <strong id="bridgeOutputDevice" data-i18n="Not selected">Not selected</strong>
-                </div>
-              </div>
-              <div class="audio-device-actions">
-                <button class="button" id="testMicrophone" type="button" data-i18n="Test Microphone">Test Microphone</button>
-                <button class="button" id="testSpeaker" type="button" data-i18n="Test Speaker">Test Speaker</button>
-              </div>
-              <span class="audio-test-status" id="audioTestStatus" role="status" data-i18n="Run a microphone or speaker test to verify the selected route.">
-                Run a microphone or speaker test to verify the selected route.
-              </span>
-            </section>
 
-            <section class="panel audio-panel audio-meter-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Input Level">Input Level</h2>
-                  <span id="audioLevelText">0%</span>
+          <!-- Expandable Tools (Voiceprint & Diagnostics) -->
+          <section class="audio-expandable-stack" aria-labelledby="audioDiagnosticsTitle">
+            <h2 class="audio-section-title" id="audioDiagnosticsTitle" data-i18n="Audio Tools">Audio Tools</h2>
+            <!-- Voiceprint Enrollment Accordion -->
+            <details class="panel audio-expandable-card">
+              <summary class="expandable-card-summary">
+                <div class="pipeline-title-wrap">
+                  <svg class="enroll-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span class="expandable-title" data-i18n="Voiceprint">Voiceprint</span>
+              </div>
+                <div class="expandable-summary-right">
+                  <span class="status-chip enroll-chip" id="enrollState" data-i18n="ready">ready</span>
+                  <svg class="expandable-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
                 </div>
-                <span id="audioLevelState" data-i18n="idle">idle</span>
-              </div>
-              <div class="audio-meter">
-                <span id="audioLevelBar"></span>
-              </div>
-              <div class="audio-bars" id="audioBars" aria-hidden="true"></div>
-            </section>
-
-            <section class="panel enroll-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Voiceprint">Voiceprint</h2>
-                  <span id="enrollState" data-i18n="ready">ready</span>
-                </div>
-              </div>
+              </summary>
+              <div class="enroll-card-body">
               <div class="form-grid compact">
                 <label class="field">
                   <span data-i18n="User ID">User ID</span>
-                  <input id="enrollUserId" placeholder="wheatfox" />
+                    <input id="enrollUserId" placeholder="user_id" data-i18n-placeholder="User ID" />
                 </label>
                 <label class="field">
                   <span data-i18n="User Name">User Name</span>
@@ -771,64 +1082,214 @@
                   <span data-i18n="Record Seconds">Record Seconds</span>
                   <input id="recordSeconds" type="number" min="2" max="30" step="1" />
                 </label>
-                <button class="button form-button" id="enrollVoice" type="button" data-i18n="Enroll Voice">Enroll Voice</button>
+                  <button class="button form-button" id="enrollVoice" type="button" data-i18n="Enroll Voice">Enroll
+                    Voice</button>
               </div>
-              <div class="small" id="voiceprintUsers"></div>
-            </section>
-            </section>
+                <div class="voiceprint-users-box" id="voiceprintUsers"></div>
+              </div>
+            </details>
 
-            <section class="audio-column audio-log-column">
-            <section class="panel audio-log-panel">
-              <div class="panel-header">
-                <div>
-                  <h2 data-i18n="Audio Log">Audio Log</h2>
-                  <span id="audioLogSummary" data-i18n="Audio device log.">Audio device log.</span>
+            <!-- Device Server & Audio Log Accordion -->
+            <details class="panel audio-expandable-card">
+              <summary class="expandable-card-summary">
+                <div class="pipeline-title-wrap">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    aria-hidden="true">
+                    <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+                    <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+                    <line x1="6" x2="6.01" y1="6" y2="6" />
+                    <line x1="6" x2="6.01" y1="18" y2="18" />
+                  </svg>
+                  <span class="expandable-title" data-i18n="Audio Device Server">Audio Device Server</span>
+                </div>
+                <div class="expandable-summary-right">
+                  <span class="status-chip" id="audioServerState" data-i18n="offline">offline</span>
+                  <svg class="expandable-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </div>
+              </summary>
+              <div class="server-card-body">
+                <div class="audio-local-meter">
+                  <span id="audioLevelLabel" class="audio-field-label" data-i18n="Local input level">Local input level</span>
+                  <span id="audioLevelState" data-i18n="idle">idle</span>
+                  <div class="audio-meter" aria-hidden="true"><span id="audioLevelBar"></span></div>
+                  <strong id="audioLevelText" aria-labelledby="audioLevelLabel">0%</strong>
+                </div>
+                <span class="server-summary-text" id="audioServerSummary"
+                  data-i18n="Client-machine audio device server is not checked yet.">Client-machine audio device server
+                  is not checked yet.</span>
+                <div class="audio-actions">
+                  <button class="button work-primary-action" id="startAudioServer" type="button"
+                    data-i18n="Start Audio">Start Audio</button>
+                  <button class="button icon-btn" id="checkAudioServer" type="button" data-i18n="Check">Check</button>
+                  <button class="button icon-btn" id="refreshAudioDevices" type="button"
+                    data-i18n="Refresh Devices">Refresh Devices</button>
+                </div>
+                <div class="audio-status-grid" id="audioServerStatus"></div>
+                <div class="audio-log-body-inline">
+                  <span class="log-summary-text" id="audioLogSummary" data-i18n="Audio device log.">Audio device
+                    log.</span>
+                  <pre class="audio-log" id="audioLog"></pre>
                 </div>
               </div>
-              <pre class="audio-log" id="audioLog"></pre>
+            </details>
             </section>
-            </section>
-          </section>
+        </div>
         </section>
 
         <section class="page work-page settings-page" data-page-panel="settings" aria-labelledby="connectionTitle">
-          <header class="page-heading"><h1 id="connectionTitle" data-i18n="Connection">Connection</h1></header>
-          <section class="settings-page-grid">
-            <section class="panel">
-              <div class="panel-header">
+        <header class="page-heading">
+          <div class="page-title-group">
+            <h1 id="connectionTitle" data-i18n="Connection">Connection</h1>
+            <span class="page-subtitle" data-i18n="Saved only in this client browser.">Saved only in this client
+              browser.</span>
+          </div>
+          <div class="settings-header-actions">
+            <button class="button work-primary-action" id="saveClientSettings" type="button" title="Save Settings"
+              data-i18n-title="Save Settings">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              <span data-i18n="Save Settings">Save Settings</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="settings-container">
+          <!-- Status Banner -->
+          <div class="settings-status-banner">
+            <div class="status-banner-left">
+              <span class="settings-status-dot" aria-hidden="true"></span>
+              <span class="settings-status-text" id="settingsStatus" data-i18n="Changes are saved locally.">Changes are
+                saved locally.</span>
+            </div>
+            <span class="settings-browser-tag" data-i18n="Local Browser Storage">Local Browser Storage</span>
+          </div>
+
+          <!-- Card 1: Robot Connection -->
+          <section class="panel settings-card">
+            <div class="settings-card-header">
+              <div class="pipeline-title-wrap">
+                <div class="pipeline-icon-badge network" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+                    <line x1="6" y1="6" x2="6.01" y2="6" />
+                    <line x1="6" y1="18" x2="6.01" y2="18" />
+                  </svg>
+                </div>
                 <div>
                   <h2 data-i18n="Connection settings">Connection settings</h2>
-                  <span data-i18n="Saved only in this client browser.">Saved only in this client browser.</span>
+                  <span class="pipeline-sub" data-i18n="Atlas gRPC & Liaison endpoints">Atlas gRPC & Liaison
+                    endpoints</span>
                 </div>
               </div>
-              <div class="form-grid">
-                <label class="field">
-                  <span data-i18n="Robot Host">Robot Host</span>
+            </div>
+            <div class="settings-card-body">
+              <div class="settings-fields-row">
+                <div class="field">
+                  <span class="field-label" data-i18n="Robot Host">Robot Host</span>
+                  <div class="settings-input-wrap">
+                    <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path
+                        d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                    </svg>
                   <input id="robotHostSettings" autocomplete="off" placeholder="100.x.y.z" />
-                </label>
-                <label class="field">
-                  <span data-i18n="Atlas Port">Atlas Port</span>
+                  </div>
+                  <small class="field-help" data-i18n="Tailscale or LAN IP of the robot.">Tailscale or LAN IP of the
+                    robot.</small>
+                </div>
+                <div class="field">
+                  <span class="field-label" data-i18n="Atlas Port">Atlas Port</span>
+                  <div class="settings-input-wrap">
+                    <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" aria-hidden="true">
+                      <rect x="4" y="4" width="16" height="16" rx="2" />
+                      <line x1="9" y1="9" x2="9" y2="9" />
+                      <line x1="15" y1="9" x2="15" y2="9" />
+                      <line x1="9" y1="15" x2="9" y2="15" />
+                      <line x1="15" y1="15" x2="15" y2="15" />
+                    </svg>
                   <input id="atlasPortSettings" autocomplete="off" inputmode="numeric" placeholder="50051" />
-                </label>
-                <label class="field">
-                  <span data-i18n="Liaison Endpoint">Liaison Endpoint</span>
-                  <input id="liaisonEndpoint" autocomplete="off" placeholder="Auto-discover from Atlas" data-i18n-placeholder="Auto-discover from Atlas" />
-                </label>
-                <label class="field">
-                  <span data-i18n="User ID">User ID</span>
-                  <input id="settingsUserId" autocomplete="off" placeholder="voice:client" />
-                </label>
-                <label class="field">
-                  <span data-i18n="Voice Record Limit (s)">Voice Record Limit (s)</span>
-                  <input id="settingsRecordSeconds" type="number" min="2" max="60" step="1" />
-                </label>
+                  </div>
+                  <small class="field-help" data-i18n="Default 50051.">Default 50051.</small>
+                </div>
               </div>
-              <div class="audio-device-actions">
-                <button class="button work-primary-action" id="saveClientSettings" type="button" data-i18n="Save Settings">Save Settings</button>
+
+              <div class="field">
+                <span class="field-label" data-i18n="Liaison Endpoint">Liaison Endpoint</span>
+                <div class="settings-input-wrap">
+                  <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  <input id="liaisonEndpoint" autocomplete="off" placeholder="Auto-discover from Atlas"
+                    data-i18n-placeholder="Auto-discover from Atlas" />
+                </div>
+                <small class="field-help" data-i18n="Auto-discover from Atlas when left empty.">Auto-discover from Atlas
+                  when left empty.</small>
               </div>
-              <span class="audio-route-status" id="settingsStatus" data-i18n="Changes are saved locally.">Changes are saved locally.</span>
-            </section>
+            </div>
           </section>
+
+          <!-- Card 2: Client Preferences -->
+          <section class="panel settings-card">
+            <div class="settings-card-header">
+              <div class="pipeline-title-wrap">
+                <div class="pipeline-icon-badge user" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 data-i18n="Client Preferences">Client Preferences</h2>
+                  <span class="pipeline-sub" data-i18n="User identity & voice interaction defaults">User identity &
+                    voice interaction defaults</span>
+                </div>
+              </div>
+            </div>
+            <div class="settings-card-body">
+              <div class="settings-fields-row">
+                <div class="field">
+                  <span class="field-label" data-i18n="User ID">User ID</span>
+                  <div class="settings-input-wrap">
+                    <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" aria-hidden="true">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  <input id="settingsUserId" autocomplete="off" placeholder="voice:client" />
+                  </div>
+                  <small class="field-help" data-i18n="Default caller ID used in voice and task calls.">Default caller
+                    ID used in voice and task calls.</small>
+                </div>
+                <div class="field">
+                  <span class="field-label" data-i18n="Voice Record Limit (s)">Voice Record Limit (s)</span>
+                  <div class="settings-input-wrap">
+                    <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                  <input id="settingsRecordSeconds" type="number" min="2" max="60" step="1" />
+              </div>
+                  <small class="field-help" data-i18n="Default 30 seconds.">Default 30 seconds.</small>
+              </div>
+              </div>
+            </div>
+            </section>
+        </div>
         </section>
 
         <section class="page studio-page" data-page-panel="studio" aria-labelledby="studioTitle">
@@ -842,24 +1303,53 @@
 
               <!-- Tabs are built from the discovery scan (renderStudioTabs);
                    an empty result shows the empty state, not a fixed list. -->
-              <div class="studio-services-nav" id="studioServicesNav" role="tablist" aria-label="Studio Services" data-i18n-aria-label="Studio Services"></div>
+            <div class="studio-services-nav" id="studioServicesNav" role="tablist" aria-label="Studio Services"
+              data-i18n-aria-label="Studio Services"></div>
 
               <div class="studio-actions">
-                <button type="button" class="studio-action-btn" id="studioRescanBtn" title="Rescan Services" data-i18n-title="Rescan Services">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+              <button type="button" class="studio-action-btn" id="studioRescanBtn" title="Rescan Services"
+                data-i18n-title="Rescan Services">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+                  <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+                  <circle cx="12" cy="12" r="2" />
+                  <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+                  <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+                </svg>
                   <span data-i18n="Rescan">Rescan</span>
                 </button>
-                <button type="button" class="studio-action-btn" id="studioReloadBtn" title="Reload Service" data-i18n-title="Reload">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              <button type="button" class="studio-action-btn" id="studioReloadBtn" title="Reload Service"
+                data-i18n-title="Reload">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                </svg>
                   <span data-i18n="Reload">Reload</span>
                 </button>
-                <button type="button" class="studio-action-btn" id="studioExternalBtn" title="Open in External Tab" data-i18n-title="Open External">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              <button type="button" class="studio-action-btn" id="studioExternalBtn" title="Open in External Tab"
+                data-i18n-title="Open External">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
                   <span data-i18n="External">External</span>
                 </button>
-                <button type="button" class="studio-action-btn" id="studioFullscreenBtn" title="Toggle Fullscreen" data-i18n-title="Toggle Fullscreen">
-                  <svg class="fs-enter-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
-                  <svg class="fs-exit-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></svg>
+              <button type="button" class="studio-action-btn" id="studioFullscreenBtn" title="Toggle Fullscreen"
+                data-i18n-title="Toggle Fullscreen">
+                <svg class="fs-enter-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <polyline points="15 3 21 3 21 9" />
+                  <polyline points="9 21 3 21 3 15" />
+                  <line x1="21" y1="3" x2="14" y2="10" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+                <svg class="fs-exit-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" style="display:none;">
+                  <polyline points="4 14 10 14 10 20" />
+                  <polyline points="20 10 14 10 14 4" />
+                  <line x1="14" y1="10" x2="21" y2="3" />
+                  <line x1="10" y1="14" x2="3" y2="21" />
+                </svg>
                 </button>
               </div>
             </header>
@@ -876,23 +1366,29 @@
       </main>
     </div>
 
-    <div class="modal-backdrop" id="computeNodeModal" role="dialog" aria-modal="true" aria-labelledby="computeNodeTitle" hidden>
+  <div class="modal-backdrop" id="computeNodeModal" role="dialog" aria-modal="true" aria-labelledby="computeNodeTitle"
+    hidden>
       <section class="compute-node compute-node-modal" id="computeNodeRoot" aria-labelledby="computeNodeTitle">
         <header class="compute-node-header">
           <div class="compute-node-title-line">
             <span class="compute-node-icon" id="computeNodeHeaderIcon" aria-hidden="true"></span>
             <div>
               <strong id="computeNodeTitle" data-i18n="Compute Node">Compute Node</strong>
-              <span class="compute-node-subtitle" data-i18n="Compute node telemetry from Vitals">Compute node telemetry from Vitals</span>
+            <span class="compute-node-subtitle" data-i18n="Compute node telemetry from Vitals">Compute node telemetry
+              from Vitals</span>
             </div>
           </div>
           <div class="compute-node-actions">
-            <span class="compute-node-status"><span class="vitals-status-dot stale" id="computeNodeStatusDot" data-compute-dot></span><span id="computeNodeUpdated">--</span></span>
+          <span class="compute-node-status"><span class="vitals-status-dot stale" id="computeNodeStatusDot"
+              data-compute-dot></span><span id="computeNodeUpdated">--</span></span>
             <span class="health-label stale" id="computeNodeSource" data-compute-source></span>
-            <button class="icon-button vitals-refresh" id="computeNodeReconnect" type="button" title="Reconnect compute-node stream" data-i18n-title="Reconnect compute-node stream" aria-label="Reconnect compute-node stream" data-i18n-aria-label="Reconnect compute-node stream">
+          <button class="icon-button vitals-refresh" id="computeNodeReconnect" type="button"
+            title="Reconnect compute-node stream" data-i18n-title="Reconnect compute-node stream"
+            aria-label="Reconnect compute-node stream" data-i18n-aria-label="Reconnect compute-node stream">
               <span class="compute-node-reconnect-icon">⟳</span>
             </button>
-            <button class="icon-button modal-close" id="computeNodeModalClose" type="button" aria-label="Close compute-node telemetry" data-i18n-aria-label="Close compute-node telemetry">×</button>
+          <button class="icon-button modal-close" id="computeNodeModalClose" type="button"
+            aria-label="Close compute-node telemetry" data-i18n-aria-label="Close compute-node telemetry">×</button>
           </div>
         </header>
         <div class="compute-metrics">
@@ -900,49 +1396,58 @@
             <span class="compute-metric-icon" id="compKpiCpuSpan" aria-hidden="true"></span>
             <div class="compute-metric-copy">
               <span class="compute-metric-label" data-compute-label data-i18n="CPU temp">CPU temp</span>
-              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiCpuUnit">°C</span></div>
+            <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit
+                id="compKpiCpuUnit">°C</span></div>
             </div>
           </div>
           <div class="compute-metric ok" id="compKpiVolt">
             <span class="compute-metric-icon" id="compKpiVoltSpan" aria-hidden="true"></span>
             <div class="compute-metric-copy">
               <span class="compute-metric-label" data-compute-label data-i18n="Voltage">Voltage</span>
-              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiVoltUnit">V</span></div>
+            <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit
+                id="compKpiVoltUnit">V</span></div>
             </div>
           </div>
           <div class="compute-metric ok" id="compKpiCurr">
             <span class="compute-metric-icon" id="compKpiCurrSpan" aria-hidden="true"></span>
             <div class="compute-metric-copy">
               <span class="compute-metric-label" data-compute-label data-i18n="Current">Current</span>
-              <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit id="compKpiCurrUnit">A</span></div>
+            <div class="compute-metric-value"><strong data-compute-value>--</strong><span data-compute-unit
+                id="compKpiCurrUnit">A</span></div>
             </div>
           </div>
         </div>
         <div class="compute-charts">
           <div class="compute-chart">
-            <div class="compute-chart-head"><span data-compute-label data-i18n="CPU temp">CPU temp</span><span class="compute-chart-unit">°C</span></div>
+          <div class="compute-chart-head"><span data-compute-label data-i18n="CPU temp">CPU temp</span><span
+              class="compute-chart-unit">°C</span></div>
             <div class="compute-chart-canvas"><canvas id="compChartCpu"></canvas></div>
           </div>
           <div class="compute-chart">
-            <div class="compute-chart-head"><span data-compute-label data-i18n="Voltage">Voltage</span><span class="compute-chart-unit">V</span></div>
+          <div class="compute-chart-head"><span data-compute-label data-i18n="Voltage">Voltage</span><span
+              class="compute-chart-unit">V</span></div>
             <div class="compute-chart-canvas"><canvas id="compChartVolt"></canvas></div>
           </div>
           <div class="compute-chart">
-            <div class="compute-chart-head"><span data-compute-label data-i18n="Current">Current</span><span class="compute-chart-unit">A</span></div>
+          <div class="compute-chart-head"><span data-compute-label data-i18n="Current">Current</span><span
+              class="compute-chart-unit">A</span></div>
             <div class="compute-chart-canvas"><canvas id="compChartCurr"></canvas></div>
           </div>
         </div>
       </section>
     </div>
 
-    <div class="modal-backdrop" id="activeRtdlModal" role="dialog" aria-modal="true" aria-labelledby="activeRtdlTitle" hidden>
+  <div class="modal-backdrop" id="activeRtdlModal" role="dialog" aria-modal="true" aria-labelledby="activeRtdlTitle"
+    hidden>
       <section class="active-rtdl-modal">
         <header class="rtdl-history-modal-header">
           <div>
             <h2 id="activeRtdlTitle" data-i18n="Plan overview">Plan overview</h2>
-            <span id="activeRtdlModalSummary" data-i18n="Live plans reported by Executor">Live plans reported by Executor</span>
+          <span id="activeRtdlModalSummary" data-i18n="Live plans reported by Executor">Live plans reported by
+            Executor</span>
           </div>
-          <button class="icon-button modal-close" id="closeActiveRtdl" type="button" aria-label="Close active RTDL" data-i18n-aria-label="Close active RTDL">×</button>
+        <button class="icon-button modal-close" id="closeActiveRtdl" type="button" aria-label="Close active RTDL"
+          data-i18n-aria-label="Close active RTDL">×</button>
         </header>
         <div class="active-rtdl-modal-body">
           <section class="overview-section">
@@ -951,8 +1456,10 @@
           </section>
           <section class="overview-section">
             <div class="overview-section-head">
-              <h3 class="overview-section-title" data-i18n="Saved plans for all tasks in this conversation">Saved plans for all tasks in this conversation</h3>
-              <p class="overview-section-note" data-i18n="Saved locally; not a robot-wide execution history.">Saved locally; not a robot-wide execution history.</p>
+            <h3 class="overview-section-title" data-i18n="Saved plans for all tasks in this conversation">Saved plans
+              for all tasks in this conversation</h3>
+            <p class="overview-section-note" data-i18n="Saved locally; not a robot-wide execution history.">Saved
+              locally; not a robot-wide execution history.</p>
             </div>
             <div id="savedRtdlList"></div>
           </section>
@@ -960,14 +1467,17 @@
       </section>
     </div>
 
-    <div class="modal-backdrop" id="rtdlHistoryModal" role="dialog" aria-modal="true" aria-labelledby="rtdlHistoryTitle" hidden>
+  <div class="modal-backdrop" id="rtdlHistoryModal" role="dialog" aria-modal="true" aria-labelledby="rtdlHistoryTitle"
+    hidden>
       <section class="rtdl-history-modal">
         <header class="rtdl-history-modal-header">
           <div>
             <h2 id="rtdlHistoryTitle" data-i18n="Other plans for this task">Other plans for this task</h2>
-            <span data-i18n="Other plans belonging to the selected task, including active plans">Other plans belonging to the selected task, including active plans</span>
+          <span data-i18n="Other plans belonging to the selected task, including active plans">Other plans belonging to
+            the selected task, including active plans</span>
           </div>
-          <button class="icon-button modal-close" id="closeRtdlHistory" type="button" aria-label="Close execution history" data-i18n-aria-label="Close execution history">×</button>
+        <button class="icon-button modal-close" id="closeRtdlHistory" type="button" aria-label="Close execution history"
+          data-i18n-aria-label="Close execution history">×</button>
         </header>
         <div class="rtdl-history-modal-body">
           <div class="history-plan-tree" id="rtdlHistoryTrees"></div>
@@ -978,7 +1488,8 @@
               <div><span data-i18n="Started">Started</span><strong id="historyActiveStarted">-</strong></div>
               <div><span data-i18n="Duration">Duration</span><strong id="historyActiveDuration">-</strong></div>
             </div>
-            <pre class="args history-args" id="historyActiveArgs" data-i18n="Select an RTDL node to inspect its arguments and result.">Select an RTDL node to inspect its arguments and result.</pre>
+          <pre class="args history-args" id="historyActiveArgs"
+            data-i18n="Select an RTDL node to inspect its arguments and result.">Select an RTDL node to inspect its arguments and result.</pre>
           </aside>
         </div>
       </section>
@@ -987,19 +1498,23 @@
     <dialog id="callDetailModal" class="node-detail-modal call-detail-modal" aria-labelledby="callDetailTitle">
       <header class="rtdl-history-modal-header">
         <h2 id="callDetailTitle" data-i18n="View call details">View call details</h2>
-        <button type="button" class="icon-button modal-close" id="closeCallDetail" aria-label="Close" data-i18n-aria-label="Close">×</button>
+      <button type="button" class="icon-button modal-close" id="closeCallDetail" aria-label="Close"
+        data-i18n-aria-label="Close">×</button>
       </header>
       <div class="call-detail-body" id="callDetailBody"></div>
     </dialog>
 
-    <div class="modal-backdrop" id="nodeDetailModal" role="dialog" aria-modal="true" aria-labelledby="executionDetailTitle" hidden>
+  <div class="modal-backdrop" id="nodeDetailModal" role="dialog" aria-modal="true"
+    aria-labelledby="executionDetailTitle" hidden>
       <section class="node-detail-modal">
         <header class="rtdl-history-modal-header">
           <div>
             <h2 id="executionDetailTitle" data-i18n="Node detail">Node detail</h2>
-            <span data-i18n="Provider, timing and arguments of the selected node.">Provider, timing and arguments of the selected node.</span>
+          <span data-i18n="Provider, timing and arguments of the selected node.">Provider, timing and arguments of the
+            selected node.</span>
           </div>
-          <button class="icon-button modal-close" id="closeNodeDetail" type="button" aria-label="Close node detail" data-i18n-aria-label="Close node detail">×</button>
+        <button class="icon-button modal-close" id="closeNodeDetail" type="button" aria-label="Close node detail"
+          data-i18n-aria-label="Close node detail">×</button>
         </header>
         <div class="node-detail-modal-body">
           <div class="detail-grid">
@@ -1012,29 +1527,35 @@
       </section>
     </div>
 
-    <div class="modal-backdrop session-dialog-backdrop" id="sessionDialog" role="dialog" aria-modal="true" aria-labelledby="sessionDialogTitle" hidden>
+  <div class="modal-backdrop session-dialog-backdrop" id="sessionDialog" role="dialog" aria-modal="true"
+    aria-labelledby="sessionDialogTitle" hidden>
       <section class="session-dialog">
         <header class="session-dialog-header">
           <div>
             <span class="session-dialog-kicker" id="sessionDialogKicker" data-i18n="Session">Session</span>
             <h2 id="sessionDialogTitle" data-i18n="Rename session">Rename session</h2>
           </div>
-          <button class="icon-button modal-close" id="sessionDialogClose" type="button" aria-label="Close" data-i18n-aria-label="Close">×</button>
+        <button class="icon-button modal-close" id="sessionDialogClose" type="button" aria-label="Close"
+          data-i18n-aria-label="Close">×</button>
         </header>
         <form class="session-dialog-form" id="sessionDialogForm">
-          <label class="session-dialog-label" id="sessionDialogLabel" for="sessionDialogInput" data-i18n="Session name">Session name</label>
+        <label class="session-dialog-label" id="sessionDialogLabel" for="sessionDialogInput"
+          data-i18n="Session name">Session name</label>
           <input class="session-dialog-input" id="sessionDialogInput" type="text" maxlength="120" autocomplete="off" />
           <p class="session-dialog-description" id="sessionDialogDescription" aria-live="polite"></p>
           <div class="session-dialog-actions">
-            <button class="session-dialog-button secondary" id="sessionDialogCancel" type="button" data-i18n="Cancel">Cancel</button>
-            <button class="session-dialog-button primary" id="sessionDialogSubmit" type="submit" data-i18n="Save name">Save name</button>
+          <button class="session-dialog-button secondary" id="sessionDialogCancel" type="button"
+            data-i18n="Cancel">Cancel</button>
+          <button class="session-dialog-button primary" id="sessionDialogSubmit" type="submit"
+            data-i18n="Save name">Save name</button>
           </div>
         </form>
       </section>
     </div>
 
-    <script src="/static/i18n.js?v=20261108a"></script>
-    <script src="/static/app.js?v=20261108a"></script>
-    <script src="/static/vitals.bundle.js?v=20261108a"></script>
+  <script src="/static/i18n.js?v=20261123g"></script>
+  <script src="/static/app.js?v=20261123g"></script>
+    <script src="/static/vitals.bundle.js?v=20261119a"></script>
   </body>
+
 </html>

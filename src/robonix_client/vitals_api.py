@@ -92,7 +92,9 @@ async def vitals_ws(ws: WebSocket) -> None:
             {"type": "alerts", "data": vitals_alert_store.payload()}
         )
         alert_tracker = VitalsAlertTracker(vitals_alert_store)
-        async for event in stream_vitals_events(settings):
+        async for event in stream_vitals_events(
+            settings, refresh_model=payload.get("refreshModel") is True
+        ):
             await ws.send_json(event)
             alert_event = alert_tracker.observe(event)
             if alert_event is not None:

@@ -84,6 +84,10 @@ desktop's PipeWire, PulseAudio, or ALSA devices through PortAudio. In the UI:
 - `--host 127.0.0.1` controls where this Web UI listens.
 - `--robot-host ROBOT_IP` selects the remote Robonix machine.
 
+Explicit `--robot-host` and `--atlas-port` values override their saved settings
+for this launch without changing them. Omit either flag to use its saved value
+or, if none is saved, its default.
+
 Most users only need `--robot-host`.
 
 ## Connecting to a Robonix Machine
@@ -130,9 +134,13 @@ the robot. The deployment does not store the Mac IP. The client discovers the
 bridge endpoint through Atlas, opens one outbound WebSocket, and carries both
 microphone and speaker PCM over that connection.
 
-In **Audio**, select `audio_client_bridge` for input and/or output, choose the
-client machine's devices, click **Apply Route**, then run **Test microphone** and **Test
-speaker**. Hands-free mode is disabled until explicitly enabled in the UI.
+In **Audio**, select `audio_client_bridge` for input and/or output, then choose
+the client machine's devices in **Primitive Devices**; each change applies
+immediately. Start voice or hands-free, or use **Connect** in the bridge row, to
+hand this machine's audio to the robot. If another client holds the bridge, the
+client asks before taking it over. Run **Test microphone** and **Test speaker**
+to confirm the route. Hands-free mode is disabled until explicitly enabled in
+the UI.
 
 ## Testing with the Robonix Webots Example
 
@@ -208,8 +216,8 @@ order:
 4. Inspect the RTDL tree and execution history for one plan/call per request.
 5. Open **Vitals** and confirm the TIAGo body, hardware components, module
    health, and Atlas providers update without refreshing the page.
-6. If audio bridge is enabled, apply the route and test microphone, speaker,
-   one Voice turn, then hands-free wake detection.
+6. If audio bridge is enabled, select the route and devices, then test
+   microphone, speaker, one Voice turn, then hands-free wake detection.
 7. Only after those checks, test simulated camera/navigation capabilities.
 
 Stop the environment with:

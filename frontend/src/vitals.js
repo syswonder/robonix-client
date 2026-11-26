@@ -34,6 +34,8 @@ const HEALTH_COLORS = {
 };
 // Redraw rate of the selection pulse; see RobotViewport.setActive.
 const PULSE_FPS = 15;
+const MODEL_LOAD_TIMEOUT_MS = 15000;
+const MODEL_RETRY_DELAY_MS = 1000;
 const SOURCE_LABELS = {
   soma: "Soma",
   hardware: "Hardware",
@@ -425,7 +427,11 @@ class RobotViewport {
     this.componentHealth = new Map();
     this.selectedComponentId = "body";
     this.selectionHelper = null;
-    this.modelToken = 0;
+    this.modelLoad = null;
+    this.modelKey = null;
+    this.failedModelKey = null;
+    this.modelMode = "procedural";
+    this.modelStats = this.emptyModelStats();
     this.active = false;
     this.frame = 0;
     this.pulseTimer = 0;
@@ -435,14 +441,6 @@ class RobotViewport {
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.container);
-    this.modelStats = {
-      source: "",
-      meshCount: 0,
-      linkCount: 0,
-      jointCount: 0,
-      mappedComponents: 0,
-      fallbackReason: "",
-    };
     this.resize();
   }
 
@@ -514,19 +512,39 @@ class RobotViewport {
     this.renderOnce();
   }
 
+  disposeModel(model) {
+    model.traverse((object) => {
+      object.geometry?.dispose?.();
+      if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+      else object.material?.dispose?.();
+    });
+  }
+
   clearRobot() {
     this.disposeSelectionHelper();
     while (this.robotRoot.children.length) {
       const child = this.robotRoot.children.at(-1);
       this.robotRoot.remove(child);
-      child.traverse((object) => {
-        object.geometry?.dispose?.();
-        if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
-        else object.material?.dispose?.();
-      });
+      this.disposeModel(child);
     }
     this.componentObjects.clear();
     this.invalidateShadows();
+  }
+
+  emptyModelStats() {
+    return { source: "", meshCount: 0, linkCount: 0, jointCount: 0, mappedComponents: 0, fallbackReason: "" };
+  }
+
+  resetModel() {
+    this.modelLoad?.controller.abort();
+    this.modelLoad = null;
+    this.modelKey = null;
+    this.failedModelKey = null;
+    this.modelMode = "procedural";
+    this.proceduralKind = "";
+    this.modelStats = this.emptyModelStats();
+    this.clearRobot();
+    this.renderOnce();
   }
 
   registerComponent(componentId, object) {
@@ -560,128 +578,171 @@ class RobotViewport {
   }
 
 
-  async loadUrdfXml(urdfXml, workingPath = "") {
-    const failedAssets = [];
-    let assetsStarted = false;
-    let resolveAssets;
-    const assetsReady = new Promise((resolve) => {
-      resolveAssets = resolve;
-    });
-    const manager = new THREE.LoadingManager();
-    manager.onStart = () => {
-      assetsStarted = true;
-    };
-    manager.onLoad = () => resolveAssets();
-    manager.onError = (url) => failedAssets.push(url);
+  async loadUrdfXml(description, manager) {
+    const failedAssets = new Set();
+    const assetsReady = new Promise((resolve) => { manager.onLoad = resolve; });
+    manager.onError = (url) => failedAssets.add(url);
     const loader = new URDFLoader(manager);
-    const robot = loader.parse(urdfXml, workingPath);
-    if (assetsStarted) await assetsReady;
-    if (failedAssets.length) {
-      throw new Error(`failed to load ${failedAssets.length} URDF asset(s)`);
+    // Keep the manager open until parsing has registered every asset. Track
+    // mesh callbacks too: Three can share the underlying file request.
+    manager.itemStart("urdf");
+    loader.loadMeshCb = (path, meshManager, material, done) => {
+      if (!/\.(stl|dae)$/i.test(path)) {
+        failedAssets.add(path);
+        return;
+      }
+      meshManager.itemStart(path);
+      loader.defaultMeshLoader(path, meshManager, material, (mesh, error) => {
+        if (error) failedAssets.add(path);
+        done(mesh, error);
+        meshManager.itemEnd(path);
+      });
+    };
+    let robot;
+    try {
+      robot = loader.parse(description.urdfXml, description.urdfAssetBaseUrl || "");
+    } finally {
+      manager.itemEnd("urdf");
     }
+    await assetsReady;
+    if (failedAssets.size || !robot.getObjectByProperty("isMesh", true)) {
+      this.disposeModel(robot);
+      throw new Error(failedAssets.size
+        ? `failed to load ${failedAssets.size} URDF asset(s)`
+        : "URDF contains no renderable visual geometry");
+    }
+    robot.rotation.x = -Math.PI / 2;
     return robot;
   }
 
-  async loadUrdfDescription(description) {
-    return this.loadUrdfXml(
-      String(description?.urdfXml || ""),
-      String(description?.urdfAssetBaseUrl || ""),
-    );
+  async loadModelWithRetry(load, signal) {
+    for (let attempt = 0; ; attempt += 1) {
+      if (signal.aborted) throw signal.reason;
+      const manager = new THREE.LoadingManager();
+      let timer;
+      let onAbort;
+      let abandoned = false;
+      try {
+        const deadline = new Promise((_resolve, reject) => {
+          onAbort = () => reject(signal.reason);
+          signal.addEventListener("abort", onAbort, { once: true });
+          timer = setTimeout(() => reject(new Error("model load timed out")), MODEL_LOAD_TIMEOUT_MS);
+        });
+        const pending = load(manager).then((model) => {
+          if (abandoned) this.disposeModel(model);
+          return model;
+        });
+        return await Promise.race([pending, deadline]);
+      } catch (error) {
+        abandoned = true;
+        manager.abort();
+        if (signal.aborted || attempt === 1) throw error;
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+      }
+      await new Promise((resolve) => setTimeout(resolve, MODEL_RETRY_DELAY_MS));
+    }
   }
 
-  async loadDescription(description) {
-    const token = ++this.modelToken;
-    this.clearRobot();
-    this.proceduralKind = "";
-    this.modelStats = {
-      source: "",
-      meshCount: 0,
-      linkCount: 0,
-      jointCount: 0,
-      mappedComponents: 0,
-      fallbackReason: "",
-    };
+  loadDescription(description, retry = false) {
+    // A reconnect can deliver a text-only description while Soma retries
+    // its mesh download. Keep displaying the complete model for this robot.
+    if (description.urdfWarning && this.modelMode !== "procedural") {
+      return Promise.resolve(this.modelMode);
+    }
+    const key = JSON.stringify([
+      description.id, description.family, description.dimensions,
+      description.components, description.render, description.urdfXml,
+      description.urdfAssetBaseUrl, description.urdfWarning,
+    ]);
+    if (this.modelLoad?.key === key) return this.modelLoad.promise;
+    this.modelLoad?.controller.abort();
+    this.modelLoad = null;
+    if (key === this.modelKey && !(retry && key === this.failedModelKey)) {
+      if (key !== this.failedModelKey) this.modelStats.fallbackReason = "";
+      return Promise.resolve(this.modelMode);
+    }
+    if (!retry && key === this.failedModelKey) return Promise.resolve(this.modelMode);
+
+    const controller = new AbortController();
+    const promise = this.replaceModel(description, key, controller.signal).finally(() => {
+      if (this.modelLoad?.controller === controller) this.modelLoad = null;
+    });
+    this.modelLoad = { key, controller, promise };
+    return promise;
+  }
+
+  async replaceModel(description, key, signal) {
     let model = null;
     let mode = "procedural";
-    const render = description?.render || {};
-    const fallbackReasons = [];
-    const recordFallback = (source, error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      fallbackReasons.push(`${source}: ${message}`);
-      console.warn(`Vitals model source "${source}" failed; using the next available renderer.`, error);
-    };
-
+    let source = "procedural";
+    const render = description.render || {};
+    const candidates = [];
     if (render.modelUrl) {
+      candidates.push(["asset", `asset:${render.modelUrl}`, async (manager) => (
+        await new GLTFLoader(manager).loadAsync(render.modelUrl)
+      ).scene]);
+    }
+    if (description.urdfXml && (render.mode === "urdf" || render.mode === "asset")) {
+      candidates.push(["urdf", "soma:urdf", (manager) => this.loadUrdfXml(description, manager)]);
+    }
+    const failures = [];
+    for (const [candidateMode, candidateSource, load] of candidates) {
       try {
-        const gltf = await new GLTFLoader().loadAsync(render.modelUrl);
-        if (token !== this.modelToken) return "superseded";
-        model = gltf.scene;
-        mode = "asset";
-        this.registerComponent("body", model);
-        this.modelStats = {
-          source: `asset:${render.modelUrl}`,
-          meshCount: model.getObjectsByProperty("isMesh", true).length,
-          linkCount: 0,
-          jointCount: 0,
-          mappedComponents: 1,
-          fallbackReason: "",
-        };
+        model = await this.loadModelWithRetry(load, signal);
+        mode = candidateMode;
+        source = candidateSource;
+        break;
       } catch (error) {
-        recordFallback("modelUrl", error);
+        if (signal.aborted) return "superseded";
+        failures.push(`${candidateSource}: ${error.message || error}`);
       }
     }
+    if (signal.aborted) {
+      if (model) this.disposeModel(model);
+      return "superseded";
+    }
 
-    const hasInlineUrdf = Boolean(description?.urdfXml && render.mode === "urdf");
-    if (!model && hasInlineUrdf) {
-      const source = "soma:urdf";
-      try {
-        const urdfRobot = await this.loadUrdfDescription(description);
-        if (token !== this.modelToken) return "superseded";
-        urdfRobot.rotation.x = -Math.PI / 2;
-        urdfRobot.updateMatrixWorld(true);
-        const meshCount = urdfRobot.getObjectsByProperty("isMesh", true).length;
-        if (!meshCount) throw new Error("URDF contains no renderable visual geometry");
+    const fallbackReason = failures.join("; ");
+    this.failedModelKey = failures.length ? key : null;
+    if (fallbackReason) console.warn(`Vitals model load failed: ${fallbackReason}`);
+    if (!model && failures.length && this.modelMode !== "procedural") {
+      this.modelStats.fallbackReason = fallbackReason;
+      return this.modelMode;
+    }
 
-        model = urdfRobot;
-        mode = "urdf";
-        this.registerComponent("body", model);
-        let mappedComponents = 0;
-        (description.components || []).forEach((component) => {
-          const target = urdfRobot.links?.[component.urdfLink]
-            || urdfRobot.joints?.[component.urdfJoint];
+    // Commit geometry and component mappings together, only after loading.
+    this.clearRobot();
+    this.proceduralKind = "";
+    let mappedComponents = 0;
+    if (model) {
+      this.registerComponent("body", model);
+      mappedComponents = 1;
+      if (mode === "urdf") {
+        mappedComponents = 0;
+        for (const component of description.components || []) {
+          const target = model.links?.[component.urdfLink] || model.joints?.[component.urdfJoint];
           if (target) {
             this.registerComponent(component.id, target);
             mappedComponents += 1;
           }
-        });
-        this.modelStats = {
-          source,
-          meshCount,
-          linkCount: Object.keys(urdfRobot.links || {}).length,
-          jointCount: Object.keys(urdfRobot.joints || {}).length,
-          mappedComponents,
-          fallbackReason: fallbackReasons.join("; "),
-        };
-      } catch (error) {
-        recordFallback(source, error);
-        model = null;
+        }
       }
+    } else {
+      model = this.buildProcedural(description);
+      mappedComponents = this.componentObjects.size;
     }
-
-    if (!model) {
-      model = this.buildProcedural(description || {});
-      mode = "procedural";
-      this.modelStats = {
-        source: "procedural",
-        meshCount: model.getObjectsByProperty("isMesh", true).length,
-        linkCount: 0,
-        jointCount: 0,
-        mappedComponents: this.componentObjects.size,
-        fallbackReason: fallbackReasons.join("; "),
-      };
-    }
-    if (token !== this.modelToken) return "superseded";
-
+    this.modelMode = mode;
+    this.modelKey = key;
+    this.modelStats = {
+      source,
+      meshCount: model.getObjectsByProperty("isMesh", true).length,
+      linkCount: Object.keys(model.links || {}).length,
+      jointCount: Object.keys(model.joints || {}).length,
+      mappedComponents,
+      fallbackReason,
+    };
     this.prepareMaterials(model);
     this.robotRoot.add(model);
     this.placeOnFloor(model);
@@ -1216,6 +1277,9 @@ class VitalsDashboard {
     this.selectedComponentId = "body";
     this.softwareMode = "modules";
     this.socket = null;
+    this.atlasEndpoint = null;
+    this.descriptionProvisional = true;
+    this.retryModelOnDescription = false;
     this.reconnectTimer = 0;
     this.active = false;
     this.everActivated = false;
@@ -1252,7 +1316,7 @@ class VitalsDashboard {
     window.addEventListener("robonix:page", (event) => this.setActive(event.detail?.name === "vitals"));
     window.addEventListener("robonix:i18n", () => this.renderAll());
     window.addEventListener("robonix:settings", () => {
-      if (this.active) this.connect(true);
+      if (this.everActivated) this.connect();
     });
     document.addEventListener("visibilitychange", () => {
       this.viewport?.setActive(this.active && !document.hidden);
@@ -1291,8 +1355,8 @@ class VitalsDashboard {
     socket?.close(1000, "Vitals page closed");
   }
 
-  connect(force = false) {
-    if (!this.everActivated && !force) return;
+  connect(refreshModel = false) {
+    if (!this.everActivated) return;
     if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = 0;
     const oldSocket = this.socket;
@@ -1302,10 +1366,14 @@ class VitalsDashboard {
     byId("vitalsReconnect")?.classList.add("busy");
     this.renderSources();
 
+    this.retryModelOnDescription = refreshModel;
     const socket = new WebSocket(this.websocketUrl("/ws/vitals"));
     this.socket = socket;
-    socket.onopen = () => socket.send(JSON.stringify({ settings: this.settings() }));
+    socket.onopen = () => {
+      if (this.socket === socket) socket.send(JSON.stringify({ settings: this.settings(), refreshModel }));
+    };
     socket.onmessage = (message) => {
+      if (this.socket !== socket) return;
       try {
         this.handleEvent(JSON.parse(message.data));
       } catch (error) {
@@ -1314,6 +1382,7 @@ class VitalsDashboard {
       }
     };
     socket.onerror = () => {
+      if (this.socket !== socket) return;
       this.sources.set("client", { state: "error", error: t("Vitals WebSocket failed") });
       this.renderSources();
     };
@@ -1334,23 +1403,46 @@ class VitalsDashboard {
     return `${protocol}//${location.host}${path}`;
   }
 
+  resetRobot() {
+    this.hardware = null;
+    this.selectedComponentId = "body";
+    this.renderMode = "procedural";
+    this.viewport?.resetModel();
+    this.viewport?.setComponentHealth(new Map());
+  }
+
   handleEvent(event) {
     if (!event || typeof event !== "object") return;
     if (event.type === "accepted") {
+      const endpoint = event.atlasEndpoint;
+      if (endpoint && this.atlasEndpoint !== null && this.atlasEndpoint !== endpoint) {
+        this.resetRobot();
+        this.description = null;
+        this.descriptionProvisional = true;
+        this.renderDescription();
+      }
+      if (endpoint) this.atlasEndpoint = endpoint;
       byId("vitalsReconnect")?.classList.remove("busy");
       return;
     }
     if (event.type === "description") {
-      this.description = event.data;
+      const description = event.data;
+      if (!description || (event.provisional && this.description)) return;
+      if (!this.descriptionProvisional && description.id !== this.description?.id) {
+        this.resetRobot();
+      }
+      this.description = description;
+      this.descriptionProvisional = Boolean(event.provisional);
       if (!this.selectedComponent()) this.selectedComponentId = "body";
-      this.viewport?.loadDescription(this.description).then((mode) => {
-        if (mode && mode !== "superseded") {
-          this.renderMode = mode;
-          this.renderStage();
-          this.viewport?.setComponentHealth(this.componentVisualHealthMap());
-          this.viewport?.selectComponent(this.selectedComponentId);
-        }
-      });
+      const retry = !event.provisional && this.retryModelOnDescription;
+      if (retry) this.retryModelOnDescription = false;
+      this.viewport?.loadDescription(description, retry).then((mode) => {
+        if (mode === "superseded" || this.description !== description) return;
+        this.renderMode = mode;
+        this.renderStage();
+        this.viewport.setComponentHealth(this.componentVisualHealthMap());
+        this.viewport.selectComponent(this.selectedComponentId);
+      }).catch((error) => console.warn("Vitals model update failed", error));
       this.renderDescription();
       return;
     }

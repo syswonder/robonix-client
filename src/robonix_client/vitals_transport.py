@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from contextlib import suppress
+from hashlib import sha256
 from typing import Any, AsyncIterator
 
 import grpc
@@ -11,6 +12,7 @@ import yaml
 from .proto import module_health_client_pb2, soma_client_pb2, vitals_client_pb2
 from .transport import (
     ClientSettings,
+    _TtlCache,
     _unary_unary as _shared_unary_unary,
     discover_endpoint,
     stream_channel,
@@ -26,6 +28,12 @@ CONTRACT_VITALS_MODULES_GET = "robonix/system/vitals/modules/get"
 
 SOMA_GET_YAML_PATH = "/robonix.contracts.RobonixSystemSomaGetYaml/GetYaml"
 SOMA_GET_URDF_PATH = "/robonix.contracts.RobonixSystemSomaGetUrdf/GetUrdf"
+URDF_ASSET_TIMEOUT_SECONDS = 15.0
+DESCRIPTION_CHECK_SECONDS = 30.0
+# The asset store bounds the mesh bytes. This bounded index only holds keys
+# and content IDs; unchanged models do not need a time-based redownload.
+_urdf_resource_ids = _TtlCache(float("inf"))
+
 VITALS_STREAM_PATH = "/robonix.contracts.RobonixSystemVitalsStream/StreamVitals"
 VITALS_GET_PATH = "/robonix.contracts.RobonixSystemVitalsGet/GetVitals"
 
@@ -188,6 +196,7 @@ def normalize_robot_description(
         },
         "urdfXml": urdf_xml,
         "urdfAssetBaseUrl": urdf_asset_base_url,
+        "urdfWarning": "",
         "summary": str(_mapping(document.get("description")).get("summary") or ""),
     }
 
@@ -224,7 +233,9 @@ def fallback_robot_description() -> dict[str, Any]:
     }
 
 
-async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
+async def load_robot_description(
+    settings: ClientSettings, *, refresh_model: bool = False
+) -> dict[str, Any]:
     yaml_endpoint = await discover_endpoint(
         settings.atlas_endpoint, CONTRACT_SOMA_GET_YAML
     )
@@ -242,41 +253,51 @@ async def load_robot_description(settings: ClientSettings) -> dict[str, Any]:
         urdf_endpoint = await discover_endpoint(
             settings.atlas_endpoint, CONTRACT_SOMA_GET_URDF
         )
-        try:
-            urdf_response = await _unary_unary(
-                urdf_endpoint,
-                SOMA_GET_URDF_PATH,
-                soma_client_pb2.GetUrdf_Request(
-                    robot_id=yaml_response.robot_id,
-                    include_assets=True,
-                ),
-                soma_client_pb2.GetUrdf_Response,
-            )
-        except grpc.aio.AioRpcError:
-            # A single missing mesh/texture fails the whole asset request. The
-            # text URDF is still renderable, so retry without assets and say
-            # why the model is text-only instead of silently falling back.
-            urdf_response = await _unary_unary(
-                urdf_endpoint,
-                SOMA_GET_URDF_PATH,
-                soma_client_pb2.GetUrdf_Request(
-                    robot_id=yaml_response.robot_id,
-                    include_assets=False,
-                ),
-                soma_client_pb2.GetUrdf_Response,
-            )
-            urdf_warning = "assets_missing"
+        urdf_response = await _unary_unary(
+            urdf_endpoint,
+            SOMA_GET_URDF_PATH,
+            soma_client_pb2.GetUrdf_Request(robot_id=yaml_response.robot_id),
+            soma_client_pb2.GetUrdf_Response,
+        )
         urdf_xml = urdf_response.urdf_xml
-        if not urdf_warning:
-            resource_set_id = urdf_asset_store.put(
-                (asset.path, asset.data) for asset in urdf_response.assets
-            )
-            if resource_set_id:
-                urdf_asset_base_url = (
-                    f"/api/vitals/urdf-assets/{resource_set_id}/"
-                )
     except (grpc.aio.AioRpcError, RuntimeError):
         urdf_warning = "unavailable"
+    else:
+        key = (
+            settings.atlas_endpoint,
+            urdf_endpoint,
+            yaml_response.robot_id,
+            sha256(urdf_xml.encode()).digest(),
+        )
+        cached_id = _urdf_resource_ids.get(key)
+        if refresh_model or (cached_id and not urdf_asset_store.contains(cached_id)):
+            _urdf_resource_ids.evict(key)
+
+        async def fetch_assets() -> str:
+            response = await _unary_unary(
+                urdf_endpoint,
+                SOMA_GET_URDF_PATH,
+                soma_client_pb2.GetUrdf_Request(
+                    robot_id=yaml_response.robot_id, include_assets=True
+                ),
+                soma_client_pb2.GetUrdf_Response,
+                timeout=URDF_ASSET_TIMEOUT_SECONDS,
+            )
+            if response.urdf_xml != urdf_xml:
+                raise RuntimeError("Soma URDF changed during asset download")
+            return urdf_asset_store.put((asset.path, asset.data) for asset in response.assets)
+
+        try:
+            resource_set_id = await _urdf_resource_ids.get_or_fetch(key, fetch_assets)
+            if resource_set_id:
+                urdf_asset_base_url = f"/api/vitals/urdf-assets/{resource_set_id}/"
+        except grpc.aio.AioRpcError as exc:
+            urdf_warning = (
+                "assets_missing" if exc.code() == grpc.StatusCode.FAILED_PRECONDITION
+                else "unavailable"
+            )
+        except (RuntimeError, ValueError):
+            urdf_warning = "unavailable"
 
     description = normalize_robot_description(
         yaml_response.yaml_text,
@@ -642,15 +663,31 @@ async def _description_loop(
     queue: asyncio.Queue[dict[str, Any]],
     description_state: dict[str, dict[str, Any]],
     hardware_state: dict[str, Any],
+    *,
+    refresh_model: bool = False,
 ) -> None:
-    """Refresh Soma topology and reproject the latest hardware snapshot."""
+    """Check Soma topology and reproject the latest hardware snapshot."""
     retry_seconds = 1.0
     while True:
         try:
-            description = await load_robot_description(settings)
-            changed = description != description_state["value"]
-            description_state["value"] = description
-            if changed:
+            refresh, refresh_model = refresh_model, False
+            description = await load_robot_description(settings, refresh_model=refresh)
+            previous = description_state["value"]
+            warning = description.get("urdfWarning")
+            if (
+                warning and description["id"] == previous["id"]
+                and previous["urdfXml"] and not previous.get("urdfWarning")
+            ):
+                # The new Soma topology still applies when only its geometry failed.
+                description = {
+                    **description,
+                    "render": previous["render"],
+                    "urdfXml": previous["urdfXml"],
+                    "urdfAssetBaseUrl": previous["urdfAssetBaseUrl"],
+                    "urdfWarning": previous["urdfWarning"],
+                }
+            if description != previous:
+                description_state["value"] = description
                 await queue.put({"type": "description", "data": description})
                 snapshot = hardware_state["value"]
                 if snapshot is not None:
@@ -662,15 +699,19 @@ async def _description_loop(
                             ),
                         }
                     )
-            await _put_source(queue, "soma", "ready")
-            retry_seconds = 1.0
-            await asyncio.sleep(30.0)
+            if not warning:
+                await _put_source(queue, "soma", "ready")
+                retry_seconds = 1.0
+                await asyncio.sleep(DESCRIPTION_CHECK_SECONDS)
+                continue
+            error = "URDF assets missing" if warning == "assets_missing" else "URDF unavailable"
+            await _put_source(queue, "soma", "error", error)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             await _put_source(queue, "soma", "error", _error_text(exc))
-            await asyncio.sleep(retry_seconds)
-            retry_seconds = min(retry_seconds * 2.0, 15.0)
+        await asyncio.sleep(retry_seconds)
+        retry_seconds = min(retry_seconds * 2.0, 15.0)
 
 
 async def _hardware_loop(
@@ -825,7 +866,7 @@ async def _providers_loop(
 
 
 async def stream_vitals_events(
-    settings: ClientSettings,
+    settings: ClientSettings, *, refresh_model: bool = False
 ) -> AsyncIterator[dict[str, Any]]:
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=64)
     description_state = {"value": fallback_robot_description()}
@@ -837,7 +878,9 @@ async def stream_vitals_events(
     }
     tasks = [
         asyncio.create_task(
-            _description_loop(settings, queue, description_state, hardware_state)
+            _description_loop(
+                settings, queue, description_state, hardware_state, refresh_model=refresh_model
+            )
         ),
         asyncio.create_task(
             _hardware_loop(settings, queue, description_state, hardware_state)

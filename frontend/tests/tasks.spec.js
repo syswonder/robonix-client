@@ -176,7 +176,7 @@ test('offline Connect fits the shared phone top bar', async ({page}) => {
   }
 });
 
-test('compact hands-free control visibly distinguishes recording from off', async ({page}) => {
+test('compact hands-free control distinguishes unavailable, off, error and recording', async ({page}) => {
   await page.setViewportSize({width: 320, height: 700});
   await page.route('**/api/**', route => route.fulfill({json: {available: false}}));
   await page.goto('/#dashboard');
@@ -188,10 +188,18 @@ test('compact hands-free control visibly distinguishes recording from off', asyn
     Object.assign(state.handsfree, {state: status, enabled: status === 'suspended', busy: false});
     renderHandsfree();
   }, status);
+  await setStatus('unavailable');
+  await expect(button).toHaveAccessibleName('Hands-free unavailable');
+  await expect(button).toHaveCSS('border-top-style', 'dashed');
+  await expect(button).not.toHaveClass(/\berror\b/);
   await setStatus('off');
   await expect(button).toHaveAccessibleName('Hands-free off');
+  await expect(button).toHaveCSS('border-top-style', 'solid');
   await expect(mic).toBeVisible();
   await expect(recording).toBeHidden();
+  await setStatus('error');
+  await expect(button).toHaveAccessibleName('Hands-free error');
+  await expect(button).toHaveClass(/\berror\b/);
   await setStatus('suspended');
   await expect(button).toHaveAccessibleName('Recording');
   await expect(mic).toBeHidden();
@@ -227,7 +235,7 @@ test('settings sections show headings and keep the sidebar selection', async ({p
   await page.locator('#settingsMenuAudio').click();
   await expect(page.locator('#audioTitle')).toHaveText('音频');
   await expect(page.locator('#audioTitle')).toBeVisible();
-  await expect(page.getByText('输入原语', {exact: true})).toBeVisible();
+  await expect(page.getByRole('combobox', {name: '输入提供方', exact: true})).toBeVisible();
   await expect(trigger).toHaveClass(/current-section/);
   await expect(trigger).toHaveAttribute('aria-expanded', 'false');
   await openNavigation();

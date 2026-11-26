@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -20,13 +21,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import audio_server_control, perception
-from .audio_reverse_bridge import AudioReverseBridge
+from .audio_reverse_bridge import AudioReverseBridge, ReverseAudioBusy
 from .health_api import router as health_router
 from .vitals_api import router as vitals_router
 from .transport import (
     reset_connection_caches,
     DEFAULT_ATLAS,
     ClientSettings,
+    _TtlCache,
     ExecutorQueryError,
     abort_turn,
     delete_voiceprint_user,
@@ -40,7 +42,9 @@ from .transport import (
     list_audio_providers,
     list_voiceprints,
     play_tts_test,
+    capture_warning,
     pcm16_stats,
+    peak_dbfs,
     record_pcm,
     select_audio_device,
     start_voice_session,
@@ -52,6 +56,8 @@ from .transport import (
 )
 
 STATIC_DIR = Path(__file__).with_name("static")
+
+log = logging.getLogger(__name__)
 
 app = FastAPI(title="Robonix Client", version="0.1.0")
 
@@ -77,6 +83,13 @@ app.mount("/static", _RevalidatingStaticFiles(directory=STATIC_DIR), name="stati
 app.include_router(vitals_router)
 app.include_router(health_router)
 _reverse_audio: AudioReverseBridge | None = None
+# Provider id behind `_reverse_audio`, so the UI can offer to take it back.
+_reverse_provider = ""
+_reverse_audio_lock = asyncio.Lock()
+# One websockets.connect can spend 3 s in open_timeout and the relay waits 1 s
+# before retrying, so the UI waits for more than one retry cycle.
+REVERSE_AUDIO_CONNECT_WAIT_SECONDS = 10.0
+REVERSE_AUDIO_POLL_SECONDS = 0.1
 SETTINGS_PATH = Path(
     os.environ.get(
         "ROBONIX_CLIENT_SETTINGS",
@@ -129,6 +142,7 @@ class AudioMicTestRequest(BaseModel):
 class AudioReverseConnectRequest(BaseModel):
     settings: dict[str, Any] = {}
     providerId: str
+    takeOver: bool = False
 
 
 class HandsfreeSetRequest(BaseModel):
@@ -147,6 +161,9 @@ class AudioProviderDevicesRequest(BaseModel):
 
 class AudioRouteApplyRequest(BaseModel):
     settings: dict[str, Any] = {}
+    providerId: str | None = None
+    inputId: str | None = None
+    outputId: str | None = None
 
 
 def _payload_steer(payload: dict[str, Any]) -> bool:
@@ -208,10 +225,16 @@ async def index() -> FileResponse:
 async def defaults() -> dict[str, Any]:
     atlas_endpoint = os.environ.get("ROBONIX_ATLAS_ENDPOINT", DEFAULT_ATLAS)
     robot_host, atlas_port = _split_default_atlas(atlas_endpoint)
-    launch_overrides = []
+    robot_host = os.environ.get("ROBONIX_ROBOT_HOST", robot_host)
+    atlas_port = int(os.environ.get("ROBONIX_ATLAS_PORT", str(atlas_port)))
+    cli_endpoint_overrides = os.environ.get("ROBONIX_CLIENT_CLI_ENDPOINT_OVERRIDES", "").split(",")
+    launch_overrides = [
+        key for key in ("ROBONIX_ROBOT_HOST", "ROBONIX_ATLAS_PORT")
+        if key in cli_endpoint_overrides and os.environ.get(key)
+    ]
+    if launch_overrides:
+        atlas_endpoint = f"{robot_host}:{atlas_port}"
     for key in (
-        "ROBONIX_ROBOT_HOST",
-        "ROBONIX_ATLAS_PORT",
         "ROBONIX_CLIENT_USER_ID",
         "ROBONIX_CLIENT_SESSION_ID",
         "ROBONIX_CLIENT_SESSION_TITLE",
@@ -225,8 +248,8 @@ async def defaults() -> dict[str, Any]:
             launch_overrides.append(key)
     return {
         "atlasEndpoint": atlas_endpoint,
-        "robotHost": os.environ.get("ROBONIX_ROBOT_HOST", robot_host),
-        "atlasPort": int(os.environ.get("ROBONIX_ATLAS_PORT", str(atlas_port))),
+        "robotHost": robot_host,
+        "atlasPort": atlas_port,
         "liaisonEndpoint": os.environ.get("ROBONIX_LIAISON_ENDPOINT", ""),
         "userId": os.environ.get("ROBONIX_CLIENT_USER_ID", ""),
         "sessionId": os.environ.get("ROBONIX_CLIENT_SESSION_ID", ""),
@@ -543,6 +566,11 @@ async def handsfree_set(req: HandsfreeSetRequest) -> dict[str, Any]:
         if bridge is not None:
             response["audioBridge"] = bridge
         return response
+    except ReverseAudioBusy as exc:
+        return {
+            "available": False, "ok": False, "enabled": False, "state": "unavailable",
+            "busy": True, "providerId": exc.provider_id, "error": str(exc),
+        }
     except Exception as exc:
         return {"available": False, "ok": False, "enabled": False, "state": "unavailable", "error": str(exc)}
 
@@ -563,38 +591,129 @@ async def audio_route_providers(req: ClientSettingsRequest) -> dict[str, Any]:
         return {"micProviders": [], "speakerProviders": [], "error": str(exc)}
 
 
+# The audio page asks for each provider's devices in a burst; the provider
+# list behind that answer only changes when a provider registers.
+_bridge_ids_cache = _TtlCache(2.0)
+
+
+async def _bridge_provider_ids(settings: ClientSettings) -> set[str]:
+    async def fetch() -> set[str]:
+        providers = await list_audio_providers(settings)
+        return {
+            str(provider.get("id") or "")
+            for provider in providers.get("bridgeProviders", [])
+            if isinstance(provider, dict)
+        }
+
+    return await _bridge_ids_cache.get_or_fetch(settings.atlas_endpoint, fetch)
+
+
+async def _provider_devices(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
+    """List devices for one provider.
+
+    A reverse bridge is answered from this machine's own audio server: asking
+    the bridge would return whichever client holds it, not necessarily us.
+    """
+    if provider_id in await _bridge_provider_ids(settings):
+        return await audio_server_control.local_devices(provider_id)
+    return await list_audio_devices(settings, provider_id)
+
+
+async def _active_device(
+    settings: ClientSettings, provider_id: str, kind: str
+) -> dict[str, str] | None:
+    """The device a provider is using right now, or None when it cannot say.
+
+    `list_devices` is an optional contract, so a provider without it, or one
+    that is unreachable, yields None rather than failing the test around it.
+    An empty current id means the provider is on the OS default.
+    """
+    if not provider_id:
+        return None
+    try:
+        listing = await _provider_devices(settings, provider_id)
+    except Exception:
+        return None
+    current = str(listing.get("currentInputId" if kind == "input" else "currentOutputId") or "")
+    name = next(
+        (str(d.get("name") or current) for d in listing.get("devices", []) if str(d.get("id")) == current),
+        current,
+    )
+    return {"id": current, "name": name or "OS default"}
+
+
+async def _speaker_test_device(settings: ClientSettings) -> dict[str, str] | None:
+    """The device the speaker test played on, as far as this client can tell.
+
+    A bridge plays on whichever client holds it. Report this machine's device
+    only when that is us; otherwise this machine's device would be a wrong answer.
+    """
+    provider_id = settings.speaker_node_id
+    if provider_id and provider_id in await _bridge_provider_ids(settings):
+        if _reverse_audio is None or _reverse_provider != provider_id or not _reverse_audio.status().get("connected"):
+            return None
+    return await _active_device(settings, provider_id, "output")
+
+
 @app.post("/api/audio-route/devices")
 async def audio_route_devices(req: AudioProviderDevicesRequest) -> dict[str, Any]:
     try:
-        return await list_audio_devices(ClientSettings.from_payload(req.settings), req.providerId)
+        settings = ClientSettings.from_payload(req.settings)
+        if req.providerId not in await _bridge_provider_ids(settings):
+            result = await list_audio_devices(settings, req.providerId)
+            return {**result, "isBridge": False}
+
+        result = {"providerId": req.providerId, "devices": [], "isBridge": True}
+        try:
+            result.update(await audio_server_control.local_devices(req.providerId))
+        except Exception as exc:
+            result["deviceError"] = str(exc)
+
+        try:
+            bridge = await discover_audio_bridge(settings, req.providerId)
+            result["bridgeConnected"] = bridge["connected"]
+            result["bridgeDetail"] = bridge["detail"]
+            result["mine"] = _reverse_audio is not None and _reverse_audio.holds(bridge["endpoint"])
+        except Exception as exc:
+            result["bridgeError"] = str(exc)
+        return result
     except Exception as exc:
         return {"providerId": req.providerId, "devices": [], "error": str(exc)}
 
 
 @app.post("/api/audio-route/apply")
 async def audio_route_apply(req: AudioRouteApplyRequest) -> dict[str, Any]:
+    """Select the chosen devices without taking the audio bridge.
+
+    A bridge route changes this machine's device server only; whether the robot
+    uses it depends on this client holding the bridge.
+    """
     try:
         settings = ClientSettings.from_payload(req.settings)
-        await _connect_selected_reverse_audio(settings)
-        selected: list[dict[str, Any]] = []
-        if settings.mic_node_id and settings.mic_device_id:
-            selected.append(
-                await select_audio_device(
-                    settings,
-                    settings.mic_node_id,
-                    "input",
-                    settings.mic_device_id,
+        bridge_ids = await _bridge_provider_ids(settings)
+        if req.providerId:
+            routes = [
+                (req.providerId, kind, device_id)
+                for kind, device_id in (("input", req.inputId), ("output", req.outputId))
+                if device_id is not None
+            ]
+        else:
+            routes = [
+                (node_id, kind, device_id)
+                for node_id, kind, device_id in (
+                    (settings.mic_node_id, "input", settings.mic_device_id),
+                    (settings.speaker_node_id, "output", settings.speaker_device_id),
                 )
-            )
-        if settings.speaker_node_id and settings.speaker_device_id:
-            selected.append(
-                await select_audio_device(
-                    settings,
-                    settings.speaker_node_id,
-                    "output",
-                    settings.speaker_device_id,
-                )
-            )
+                if node_id and device_id
+            ]
+
+        selected = []
+        for node_id, kind, device_id in routes:
+            if node_id in bridge_ids:
+                await audio_server_control.select_local_device(kind, device_id)
+                selected.append({"ok": True, "providerId": node_id, "kind": kind, "deviceId": device_id})
+            else:
+                selected.append(await select_audio_device(settings, node_id, kind, device_id))
         return {"ok": True, "selected": selected}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -618,10 +737,11 @@ async def audio_server_status() -> dict[str, Any]:
 @app.post("/api/audio-reverse/connect")
 async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, Any]:
     try:
-        bridge = await _connect_reverse_audio(
-            ClientSettings.from_payload(req.settings), req.providerId
-        )
+        settings = ClientSettings.from_payload(req.settings)
+        bridge = await _connect_reverse_audio(settings, req.providerId, take_over=req.takeOver)
         return {"ok": True, **bridge}
+    except ReverseAudioBusy as exc:
+        return {"ok": False, "busy": True, "providerId": exc.provider_id, "error": str(exc)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -629,31 +749,82 @@ async def audio_reverse_connect(req: AudioReverseConnectRequest) -> dict[str, An
 @app.get("/api/audio-reverse/status")
 async def audio_reverse_status() -> dict[str, Any]:
     if _reverse_audio is None:
-        return {"connected": False, "target": "", "lastError": "reverse audio is disabled"}
-    return _reverse_audio.status()
+        return {"connected": False, "target": "", "lastError": "", "takenOver": False, "providerId": ""}
+    return {**_reverse_audio.status(), "providerId": _reverse_provider}
 
 
-async def _connect_reverse_audio(settings: ClientSettings, provider_id: str) -> dict[str, Any]:
+async def _connect_reverse_audio(
+    settings: ClientSettings, provider_id: str, *, take_over: bool = False
+) -> dict[str, Any]:
     """Discover and connect one selected reverse-audio provider via Atlas."""
-    global _reverse_audio
-    bridge = await discover_audio_bridge(settings, provider_id)
-    if _reverse_audio is None:
-        _reverse_audio = AudioReverseBridge(
-            bridge["endpoint"], audio_server_control.DEFAULT_BRIDGE_PORT
+    global _reverse_audio, _reverse_provider
+    async with _reverse_audio_lock:
+        bridge = await discover_audio_bridge(settings, provider_id)
+        endpoint = bridge["endpoint"]
+        relay = _reverse_audio
+        if relay is not None and relay.holds(endpoint):
+            status = relay.status()
+            if status["connected"]:
+                return {**bridge, **status, "fresh": False}
+        if bridge["connected"] and not take_over:
+            if relay is not None and relay.status()["target"] == endpoint:
+                # A relay that is still retrying in the background would take
+                # the slot without asking; stop it until the user decides.
+                relay.disconnect()
+            raise ReverseAudioBusy(provider_id)
+        if relay is None:
+            relay = AudioReverseBridge(endpoint, audio_server_control.local_port())
+            _reverse_audio = relay
+        else:
+            relay.local_port = audio_server_control.local_port()
+        relay.connect(endpoint)
+        _reverse_provider = provider_id
+
+        try:
+            for _ in range(
+                int(REVERSE_AUDIO_CONNECT_WAIT_SECONDS / REVERSE_AUDIO_POLL_SECONDS)
+            ):
+                status = relay.status()
+                if status["takenOver"]:
+                    raise ReverseAudioBusy(provider_id)
+                if status["connected"] and relay.holds(endpoint):
+                    await _restore_saved_devices(settings, provider_id)
+                    status = relay.status()
+                    if status["connected"]:
+                        return {**bridge, **status, "fresh": True}
+                    if status["takenOver"]:
+                        raise ReverseAudioBusy(provider_id)
+                    break
+                await asyncio.sleep(REVERSE_AUDIO_POLL_SECONDS)
+        except asyncio.CancelledError:
+            relay.disconnect()
+            raise
+
+        status = relay.status()
+        relay.disconnect()
+        raise RuntimeError(
+            f"audio bridge did not connect to {endpoint}: {status['lastError'] or 'timeout'}"
         )
-        _reverse_audio.start()
-    else:
-        _reverse_audio.set_target(bridge["endpoint"])
-    for _ in range(20):
-        status = _reverse_audio.status()
-        if status.get("connected"):
-            return {**bridge, **status}
-        await asyncio.sleep(0.1)
-    status = _reverse_audio.status()
-    raise RuntimeError(
-        f"audio bridge did not connect to {bridge['endpoint']}: "
-        f"{status.get('lastError') or 'timeout'}"
-    )
+
+
+async def _restore_saved_devices(settings: ClientSettings, provider_id: str) -> None:
+    """Re-apply the saved device choice after a new connection.
+
+    The device server keeps its selection in memory, so after it restarts it
+    is back on the OS default; the saved choice is put back on this machine's
+    server, the same path audio_route_apply uses for a bridge.
+    """
+    for node_id, kind, device_id in (
+        (settings.mic_node_id, "input", settings.mic_device_id),
+        (settings.speaker_node_id, "output", settings.speaker_device_id),
+    ):
+        if node_id != provider_id or not device_id:
+            continue
+        try:
+            await audio_server_control.select_local_device(kind, device_id)
+        except Exception as exc:  # noqa: BLE001
+            # The relay still works on the OS default; the device list shows what is in use.
+            log.warning("could not restore saved %s device %s: %s", kind, device_id, exc)
 
 
 async def _connect_selected_reverse_audio(settings: ClientSettings) -> dict[str, Any] | None:
@@ -721,9 +892,15 @@ async def voiceprint_delete(req: VoiceprintDeleteRequest) -> dict[str, Any]:
 async def audio_play_test(req: AudioPlayTestRequest) -> dict[str, Any]:
     try:
         settings = ClientSettings.from_payload(req.settings)
-        return await play_tts_test(settings, req.text)
+        result = await play_tts_test(settings, req.text)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+    try:
+        result["device"] = await _speaker_test_device(settings)
+    except Exception:
+        result["device"] = None
+    return result
 
 
 @app.post("/api/audio/mic-test")
@@ -740,7 +917,10 @@ async def audio_mic_test(req: AudioMicTestRequest) -> dict[str, Any]:
                 "ok": False,
                 "error": "Hands-free is listening on this microphone. Turn it off before running an exclusive microphone test.",
             }
-        await _connect_selected_reverse_audio(settings)
+        try:
+            await _connect_selected_reverse_audio(settings)
+        except ReverseAudioBusy as exc:
+            return {"ok": False, "busy": True, "providerId": exc.provider_id, "error": str(exc)}
         seconds = min(3.0, max(0.5, float(req.seconds)))
         started = time.monotonic()
         pcm = await record_pcm(settings, seconds)
@@ -752,9 +932,12 @@ async def audio_mic_test(req: AudioMicTestRequest) -> dict[str, Any]:
             "seconds": seconds,
             "rms": round(float(stats["rms"]), 4),
             "peak": stats["peak"],
+            "peakDbfs": peak_dbfs(int(stats["peak"])),
             "nonzeroRatio": round(float(stats["nonzeroRatio"]), 6),
             "captureMs": capture_ms,
             "providerId": settings.mic_node_id or "auto",
+            "warning": capture_warning(stats),
+            "device": await _active_device(settings, settings.mic_node_id, "input"),
         }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -817,7 +1000,13 @@ async def voice_ws(ws: WebSocket) -> None:
         settings = ClientSettings.from_payload(payload.get("settings"))
         steer = _payload_steer(payload)
         expected_turn_id = _payload_expected_turn_id(payload)
-        await _connect_selected_reverse_audio(settings)
+        try:
+            await _connect_selected_reverse_audio(settings)
+        except ReverseAudioBusy as exc:
+            await ws.send_json(
+                {"type": "bridge_busy", "providerId": exc.provider_id, "message": str(exc)}
+            )
+            return
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
 
         async def relay_voice() -> None:
@@ -885,7 +1074,15 @@ async def handsfree_events_ws(ws: WebSocket) -> None:
     try:
         payload = await ws.receive_json()
         settings = ClientSettings.from_payload(payload.get("settings"))
-        await _connect_selected_reverse_audio(settings)
+        # Hands-free may already be on at the robot after this client restarts; without
+        # the bridge the wake word hears nothing. A free slot is taken; a held one is left
+        # alone, since taking it needs the user's consent.
+        try:
+            await _connect_selected_reverse_audio(settings)
+        except ReverseAudioBusy as exc:
+            await ws.send_json({"type": "bridge_busy", "providerId": exc.provider_id, "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("audio bridge auto-connect failed: %s", exc)
         await ws.send_json({"type": "accepted", "sessionId": settings.session_id})
         async for item in watch_handsfree_events(settings):
             await ws.send_json(item)
